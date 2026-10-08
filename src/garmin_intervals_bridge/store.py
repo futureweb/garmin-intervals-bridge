@@ -231,6 +231,15 @@ class Store:
         """The copy Intervals holds for this activity, kept next to the original for audits."""
         return self.fit_path(garmin_id).with_suffix(".partner.fit")
 
+    def activity_json_path(self, garmin_id: str) -> Path:
+        return self.fit_path(garmin_id).parent.parent / "raw" / "activities" / f"{garmin_id}.json"
+
+    def save_activity_json(self, garmin_id: str, obj: dict) -> Path:
+        path = self.activity_json_path(garmin_id)
+        self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
+                                + "\n").encode())
+        return path
+
     def save_snapshot(self, day: date, snapshot: dict) -> Path:
         path = self.base / "raw" / f"{day.isoformat()}.json"
         self.atomic_save(path, (json.dumps(snapshot, indent=2, ensure_ascii=False,

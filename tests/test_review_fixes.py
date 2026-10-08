@@ -417,7 +417,17 @@ def test_archive_only_downloads_originals_and_leaves_intervals_alone(tmp_path):
     out = sync_enrich(settings(tmp_path), g, i, st, apply=False, date_range=(date(2026, 10, 1), date(2026, 10, 8)),
                       archive_only=True)
     assert out["archived"] == 3 and g.requested == ["41", "42", "43"]
+    assert st.activity_json_path("42").is_file() and st.fit_path("42").is_file()
     again = sync_enrich(settings(tmp_path), g, i, st, apply=False, date_range=(date(2026, 10, 1), date(2026, 10, 8)),
                         archive_only=True)
     assert again["on_disk"] == 3 and again["archived"] == 0 and len(g.requested) == 3
     st.close()
+
+
+def test_endpoint_list_parsing():
+    from garmin_intervals_bridge.garmin import ESSENTIAL_ENDPOINTS, parse_endpoints
+    assert parse_endpoints("all") is None and parse_endpoints(None) is None
+    assert parse_endpoints("essential") == ESSENTIAL_ENDPOINTS
+    assert parse_endpoints("heart_rates, floors") == ("heart_rates", "floors")
+    with pytest.raises(ValueError):
+        parse_endpoints("heart_rates,nope")

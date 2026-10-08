@@ -54,7 +54,15 @@ garmin-intervals-bridge backfill --scope activities --from 2026-03-01           
 garmin-intervals-bridge backfill --scope activities --from 2026-03-01 --apply
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 --apply
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --from-archive --apply   # after new fields
+garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --endpoints heart_rates,floors --force-wellness --apply   # add endpoints to fetched days
+garmin-intervals-bridge backfill --scope activities --from 2020-01-01 --archive-only --pause 3   # mirror every original FIT + summary, no Intervals
 ```
+
+The archive is yours: `raw/<day>.json` holds every endpoint's full answer for
+that day (28 of them with `--endpoints all`, intraday series included),
+`raw/activities/<id>.json` Garmin's summary of an activity and
+`fits/<id>.fit` the recording itself. Nothing is ever deleted; later fields
+or other targets can be fed from it without asking Garmin again.
 
 Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and

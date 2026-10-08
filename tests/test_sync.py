@@ -30,6 +30,9 @@ class GarminFake:
         self.download_count += 1
         return minimal_fit()
 
+    def activity(self, activity_id):
+        return next(a for a in self.acts if str(a["activityId"]) == str(activity_id))
+
     def snapshot(self, day, endpoints=None):
         return sample()
 

@@ -100,7 +100,28 @@ DAY_ENDPOINTS = {
     "blood_pressure": "get_blood_pressure",
     "lactate_threshold": "get_lactate_threshold",
     "nutrition": "get_nutrition_daily_food_log",   # logged food: calories, carbs, fat, protein
+    # Intraday series and events: nothing of these is mapped to Intervals today; they are kept in
+    # the local archive so that the past can be worked on later without asking Garmin again.
+    "heart_rates": "get_heart_rates",              # all-day heart rate, two-minute values
+    "steps_intraday": "get_steps_data",            # steps per 15 minutes
+    "floors": "get_floors",                        # floors climbed/descended per 15 minutes
+    "body_battery_events": "get_body_battery_events",
+    "all_day_events": "get_all_day_events",
+    "training_load_balance": "get_training_four_week_load_balance",
 }
+
+
+def parse_endpoints(text: str | None) -> tuple[str, ...] | None:
+    """`--endpoints`: "essential", "all" (None: every endpoint) or a comma-separated list of keys."""
+    if text is None or text == "all":
+        return None
+    if text == "essential":
+        return ESSENTIAL_ENDPOINTS
+    keys = tuple(k.strip() for k in text.split(",") if k.strip())
+    unknown = [k for k in keys if k not in DAY_ENDPOINTS]
+    if not keys or unknown:
+        raise ValueError(f"Unknown endpoints {unknown}; known: {', '.join(DAY_ENDPOINTS)}")
+    return keys
 
 # For backfilling the past: the endpoints that carry per-day measurements. The
 # rest (training status, scores, predictions, fitness age, lactate, blood pressure,

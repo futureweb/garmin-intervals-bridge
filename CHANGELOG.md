@@ -56,6 +56,12 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - `run`: the three timers in one long-running process, for Windows and
   anything without systemd; `.env` file support; file locks on Windows;
   `python -m garmin_intervals_bridge`. Step-by-step Windows guide.
+- A complete local mirror: six more daily endpoints in the archive
+  (all-day heart rate, intraday steps and floors, Body Battery and all-day
+  events, four-week load balance), `--endpoints` takes a list of keys to add
+  to days fetched earlier, and `backfill --scope activities --archive-only`
+  downloads every original FIT plus Garmin's summary JSON without touching
+  Intervals.
 
 ### Fixed after the code review
 
