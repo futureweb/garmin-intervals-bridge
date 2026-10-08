@@ -8,6 +8,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from .charts import setup_charts
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, extract_original_fit, sha256
@@ -62,6 +63,9 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--force-wellness", action="store_true", help="Re-fetch days already fetched")
     backfill.add_argument("--endpoints", choices=["essential", "all"], default="essential",
                           help="Wellness: per-day measurement endpoints only (default) or every endpoint")
+    charts = sub.add_parser("setup-charts", help="Create private Intervals fitness charts for the synced "
+                                                 "Garmin values (dry run unless --apply)")
+    charts.add_argument("--apply", action="store_true")
     pending = sub.add_parser("reset-pending", help="After manual duplicate check, clear a pending upload lock")
     pending.add_argument("--activity-id", required=True)
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
@@ -102,6 +106,10 @@ def main(argv: list[str] | None = None) -> int:
                         raise ValueError("Activity must have numeric ID and pending status")
                     store.record_activity(args.activity_id, "downloaded")
                     print(f"Pending lock cleared locally for {args.activity_id}. Next sync will recheck remote.")
+                    return 0
+                if args.cmd == "setup-charts":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    print(json.dumps(setup_charts(intervals, apply=args.apply), indent=2))
                     return 0
                 if args.cmd == "setup-fields":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
