@@ -17,20 +17,24 @@ from typing import Any
 # steps, respiration, spo2, calories, kcal_consumed, carbohydrates, protein, fatTotal,
 # weight, body_fat, vo2max, sleep, sleep_score, hydration_volume, systolic, diastolic.
 # Each chart: name, title, y-axis label, height, plots. A plot is either
-#   ("custom", code, text, type, agg, days, fill, stroke, stack)
+#   ("custom", code, text, type, agg, days, fill, stroke, stack[, scale[, filter]])
+# Intervals draws one y axis per distinct plot `scale` (a second axis from two scales, a third
+# from three), so plots with different units get different scale names. `filter` formats the
+# legend value: dec0/dec1/dec2, hours, percent, interval_time (seconds as a duration).
 #   ("native", field, scale, filter, text, type, agg, days, fill, stroke)
 CHARTS: list[dict[str, Any]] = [
     {
         "name": "Garmin readiness & recovery",
         "title": "Readiness, recovery time, acute load (Garmin)",
-        "y": "Score / hours",
+        "y": "Readiness",
+        "y2": "Recovery (min)",
         "height": 180,
         "plots": [
             ("custom", "GarminTrainingReadiness", "Ready", "bars", "none",
-             None, "#009E0040", "#009E00FF", ""),
+             None, "#009E0040", "#009E00FF", "", "score"),
             ("custom", "GarminRecoveryTimeMinutes", "Recov.", "line", "none",
-             None, "#D6272800", "#D62728FF", ""),
-            ("custom", "GarminAcuteLoad", "Load7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
+             None, "#D6272800", "#D62728FF", "", "minutes"),
+            ("custom", "GarminAcuteLoad", "Load7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", "", "load"),
         ],
     },
     {
@@ -86,37 +90,43 @@ CHARTS: list[dict[str, Any]] = [
     {
         "name": "Garmin scores",
         "title": "Endurance score, hill score (strength / endurance)",
-        "y": "Score",
+        "y": "Endurance",
+        "y2": "Hill",
         "height": 180,
         "plots": [
-            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
-            ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", ""),
-            ("custom", "GarminHillStrength", "HillStr", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", ""),
-            ("custom", "GarminHillEndurance", "HillEnd", "dot", "none", None, "#FFBB7866", "#FFBB7888", ""),
+            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", "", "endurance"),
+            ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "", "hill"),
+            ("custom", "GarminHillStrength", "HillStr", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", "", "hill"),
+            ("custom", "GarminHillEndurance", "HillEnd", "dot", "none", None, "#FFBB7866", "#FFBB7888", "", "hill"),
         ],
     },
     {
         "name": "Garmin VO2max & fitness age",
         "title": "Daily VO2max estimate (Garmin wellness: run / bike), fitness age",
-        "y": "ml/kg/min · years",
+        "y": "ml/kg/min",
+        "y2": "Years",
         "height": 180,
         "plots": [
             ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
-            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "none", None, "#9467BD00", "#9467BDFF", ""),
-            ("custom", "GarminFitnessAge", "FitAge", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", ""),
+            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "none", None, "#9467BD00", "#9467BDFF", "", "vo2max"),
+            ("custom", "GarminFitnessAge", "FitAge", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", "", "years"),
         ],
     },
     {
         "name": "Garmin race predictions",
-        "title": "Predicted 5K / 10K / half / marathon (seconds)",
-        "y": "Seconds",
+        "title": "Predicted race times: 5K / 10K (left axis), half / marathon (right axis)",
+        "y": "5K / 10K",
+        "y2": "Half / Marathon",
         "height": 180,
         "plots": [
-            ("custom", "GarminPredicted5KSeconds", "5K", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
-            ("custom", "GarminPredicted10KSeconds", "10K", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
-            ("custom", "GarminPredictedHalfSeconds", "Half", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", ""),
+            ("custom", "GarminPredicted5KSeconds", "5K", "line", "none", None, "#2CA02C00", "#2CA02CFF", "",
+             "short", "interval_time"),
+            ("custom", "GarminPredicted10KSeconds", "10K", "line", "none", None, "#1F77B400", "#1F77B4FF", "",
+             "short", "interval_time"),
+            ("custom", "GarminPredictedHalfSeconds", "Half", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "",
+             "long", "interval_time"),
             ("custom", "GarminPredictedMarathonSeconds", "Mara.", "line", "none",
-             None, "#D6272800", "#D62728FF", ""),
+             None, "#D6272800", "#D62728FF", "", "long", "interval_time"),
         ],
     },
     {
@@ -171,12 +181,13 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
     kind = spec[0]
     if kind == "custom":
         _, code, text, ptype, agg, days, fill, stroke, stack = spec[:9]
-        scale = spec[9] if len(spec) > 9 else None       # Intervals groups axes by scale
+        scale = spec[9] if len(spec) > 9 else None       # one y axis per distinct scale
         item = inputs.get(code)
         if item is None:
             return None                       # field not created yet: plot would be empty
         decimals = any(k in code for k in ("Litres", "TempDeviation", "VO2Max", "FitnessAge"))
-        plot = {"id": index, "field": code, "filter": "dec1" if decimals else "dec0", "customInput": item,
+        filt = spec[10] if len(spec) > 10 else ("dec1" if decimals else "dec0")
+        plot = {"id": index, "field": code, "filter": filt, "customInput": item,
                 "text": text, "title": item.get("name") or code, "type": ptype, "agg": agg,
                 "fill": fill, "stroke": stroke, "strokeWidth": 1, "radius": 3, "gauge": True,
                 "scale": scale, "stack": stack, "band": 0, "min": None, "extras": [], "filters": [],
