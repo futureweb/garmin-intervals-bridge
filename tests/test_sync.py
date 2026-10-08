@@ -132,8 +132,7 @@ def test_successful_upload_is_only_once(tmp_path):
 def test_wellness_dryrun_does_not_write(tmp_path):
     st = Store(tmp_path)
     g, i = GarminFake(), IntervalsFake()
-    i.current_wellness = {"locked": False, "restingHR": 44,
-                          "customFields": {"BodyBatteryMax": 95, "TrainingAdvice": 2}}
+    i.current_wellness = {"locked": False, "restingHR": 44, "BodyBatteryMax": 95, "TrainingAdvice": 2}
     result = sync_wellness(settings(tmp_path), g, i, st, apply=False, wellness_days=2,
                            today=date(2026, 10, 8))
     assert result["days_checked"] == 2
@@ -147,13 +146,15 @@ def test_wellness_dryrun_does_not_write(tmp_path):
 def test_wellness_apply_never_overwrites_existing_and_respects_lock(tmp_path):
     st = Store(tmp_path)
     g, i = GarminFake(), IntervalsFake()
-    i.current_wellness = {"locked": False, "hrv": 55, "customFields": {"BodyBatteryMax": 99}}
+    i.current_wellness = {"locked": False, "hrv": 55, "BodyBatteryMax": 99}
     result = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=1,
                            today=date(2026, 10, 8))
     assert result["writes"] == 1
     day, patch = i.wellness_writes[0]
-    assert "hrv" not in patch
-    assert "BodyBatteryMax" not in patch.get("customFields", {}) or patch["customFields"]["BodyBatteryMax"] == 99
+    assert "hrv" not in patch and "BodyBatteryMax" not in patch
+    assert "customFields" not in patch
+    # Readiness may be written on the same day; running totals like Body Battery may not.
+    assert patch["GarminTrainingReadiness"] == 72 and "BodyBatteryMin" not in patch
     assert st.wellness_recent(date(2026, 10, 8), 8)
     i.current_wellness = {"locked": True}
     result = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=1,

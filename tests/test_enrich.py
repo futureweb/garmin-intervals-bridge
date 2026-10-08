@@ -10,6 +10,14 @@ def test_match_by_external_id_wins_regardless_of_source():
     assert match_activity(GARMIN, [{"id": "i1", "external_id": "42"}])["id"] == "i1"
 
 
+def test_match_recognises_manual_upload_file_names():
+    remote = [{"id": "i9", "source": "UPLOAD", "external_id": "42_ACTIVITY.fit",
+               "start_date": "2026-10-07T08:00:00Z"}]
+    assert match_activity(GARMIN, remote)["id"] == "i9"
+    # A different activity whose ID merely starts with the same digits must not match.
+    assert match_activity({**GARMIN, "activityId": 4}, remote) is None
+
+
 def test_match_requires_garmin_source_start_and_duration():
     ok = {"id": "i2", "source": "GARMIN_CONNECT", "start_date": "2026-10-07T08:01:30Z", "elapsed_time": 3590}
     wrong_source = {**ok, "id": "i3", "source": "STRAVA"}

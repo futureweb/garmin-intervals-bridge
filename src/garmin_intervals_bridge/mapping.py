@@ -206,19 +206,15 @@ def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]
 def merge_wellness(existing: dict, native: dict, custom: dict) -> dict:
     """Add missing values only. Never overwrite locked, manually entered, or synced values.
 
-    Explicitly preserve *all* existing nested custom fields when sending a map,
-    since server-side semantics for nested partial map replacement can vary.
+    Custom wellness fields are ordinary top-level keys named by their code:
+    verified against the live API on 2026-10-08, where `BodyBatteryMax` sits
+    next to `restingHR` and no `customFields` object exists. v0.1.1 assumed a
+    nested object; every custom write would have been silently ignored.
     """
     if existing.get("locked") is True:
         return {}
     patch: dict = {}
-    for key, value in native.items():
+    for key, value in {**native, **custom}.items():
         if existing.get(key) is None:
             patch[key] = value
-    current = existing.get("customFields") or {}
-    if not isinstance(current, dict):
-        raise ValueError("Intervals wellness.customFields must be an object")
-    missing = {k: v for k, v in custom.items() if current.get(k) is None and existing.get(k) is None}
-    if missing:
-        patch["customFields"] = {**current, **missing}
     return patch

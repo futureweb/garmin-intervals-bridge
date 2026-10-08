@@ -66,19 +66,40 @@ without a manual browser export.
 5. Smaller: compose lacks `cap_drop`/`no-new-privileges`/`read_only`; CI has
    no lint or dependency audit; HTTP 429 on writes is not handled.
 
-### Open questions, and how each one closes
+### Open questions: answered 2026-10-08 with read-only calls
 
-All three are answered by **read-only** calls with the Intervals API key,
-before any mapping code is written:
-
-- What `external_id` and `source` does the official Garmin sync set on an
-  activity? (`GET /athlete/0/activities`)
-- What does a stream look like in `GET /activity/{id}/streams.json`? That is
-  the template for the `PUT`.
-- Do custom fields appear top-level or nested, for wellness and for
-  activities? A 2023 forum post suggests custom *activity* fields may not be
-  exposed through the API at all. If so, the scalar enrichment falls back to a
-  compact, idempotent block in `description`.
+- **Original download is genuine.** The file fetched through the private
+  Garmin API is byte-identical (same SHA-256) to the file the user exported
+  manually from Garmin Connect web for the same activity.
+- **`external_id` of the official sync** is the plain Garmin activity ID
+  (`24544097680`, `source: GARMIN_CONNECT`). Manually uploaded files carry
+  `<garmin id>_ACTIVITY.fit` with `source: UPLOAD`. Matching uses both.
+- **Custom fields are top-level keys named by their code**, on wellness days
+  (`BodyBatteryMax` next to `restingHR`) and on activities (`AerobicEffect`,
+  `RecoveryTime`, `Sweatloss`, `PerformanceCondition`, `VO2MaxGarmin`,
+  `Staminaatstart`, ... as keys of `GET /activity/{id}`). No `customFields`
+  object exists; v0.1.1's nested shape was wrong and is fixed.
+- **Streams** come back as `[{type, name, custom, data: [N values], ...}]`,
+  every stream aligned to the `time` stream. Custom streams carry
+  `custom: true` and use their custom-item code as `type` (`Battery`,
+  `Elapsedtime`). That is the template for `PUT /activity/{id}/streams`.
+- **Athlete id `0`** addresses the key owner on every athlete-scoped endpoint.
+- **Garmin does not filter every activity.** A hike synced on 2026-09-29 is
+  byte-identical between original and partner copy, `user_profile` included.
+  The gap must be measured per activity, which `gap` does; it must never
+  assume a gap exists.
+- **The account already defines the target fields.** The user's Intervals
+  account has custom activity fields and custom streams for exactly the
+  stripped data (`AerobicEffect`, `AnaerobicEffect`, `RecoveryTime`,
+  `PerformanceCondition`, `VO2MaxGarmin`, `Sweatloss`, `Stamina`,
+  `PotentialStamina`, `Staminaatstart`, `Staminaatend`, `MinimumStamina`,
+  ...). Many are public community items. Intervals fills them itself when
+  the file contains the data; the bridge's job in enrich mode is to supply
+  the values when the partner copy does not.
+- **Current workflow on this account:** the official activity import is off
+  since early October; recent activities are manual uploads of the original.
+  So both modes have a real user: `upload` automates exactly that workflow,
+  `enrich` serves accounts that keep the official import on.
 
 ## 2. Phases
 

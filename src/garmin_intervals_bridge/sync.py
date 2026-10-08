@@ -11,7 +11,7 @@ from .fit import sha256, validate_fit
 from .garmin import GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
-from .times import parse_utc
+from .times import external_id_names, parse_utc
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def activity_match(garmin: dict, remote: list[dict], tolerance_seconds: int = 18
         if not isinstance(item, dict):
             continue
         external = str(item.get("external_id") or "")
-        if gid and external in (gid, f"garmin:{gid}"):
+        if external_id_names(external, gid):
             return item
         it = _time(item.get("start_date"), garmin_gmt=True)
         if not it and not external:
@@ -187,7 +187,7 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
         if changes:
             metrics["days_with_changes"] += 1
             log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
-            missing_custom = set(custom).intersection(changes.get("customFields", {}))
+            missing_custom = set(custom).intersection(changes)
             if missing_custom:
                 # Create only needed, nonexisting fields. The private custom-field
                 # list is queried before writes; no global athlete config reset.

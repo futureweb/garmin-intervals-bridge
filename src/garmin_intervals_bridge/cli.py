@@ -108,7 +108,9 @@ def main(argv: list[str] | None = None) -> int:
                         matched = {"id": remote_id, "how": "matched", "source": found.get("source"),
                                    "external_id": found.get("external_id"), "start_date": found.get("start_date")}
                     partner = extract_original_fit(intervals.activity_file(remote_id))
+                    store.atomic_save(store.partner_path(gid), partner)
                     print(json.dumps({"activity_id": gid, "matched": matched,
+                                      "partner_file": str(store.partner_path(gid)),
                                       "report": gap_report(original, partner)}, indent=2, default=str))
                     return 0
                 if args.cmd == "probe":

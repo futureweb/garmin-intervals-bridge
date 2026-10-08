@@ -44,14 +44,14 @@ def test_today_not_written_incomplete_daily_totals():
 
 
 def test_merge_preserves_manual_and_custom_values():
-    existing = {"locked": False, "restingHR": 47,
-                "customFields": {"BodyBatteryMax": 88, "TrainingAdvice": 3}}
+    # Custom codes are top-level keys in the live API (verified 2026-10-08).
+    existing = {"locked": False, "restingHR": 47, "BodyBatteryMax": 88, "TrainingAdvice": 3,
+                "BodyBatteryMin": None}
     patch = merge_wellness(existing, {"restingHR": 49, "hrv": 40},
-                          {"BodyBatteryMax": 91, "GarminTrainingReadiness": 72})
-    assert "restingHR" not in patch
-    assert patch["hrv"] == 40
-    assert patch["customFields"] == {"BodyBatteryMax": 88,
-                                      "TrainingAdvice": 3, "GarminTrainingReadiness": 72}
+                          {"BodyBatteryMax": 91, "BodyBatteryMin": 20, "GarminTrainingReadiness": 72})
+    assert "restingHR" not in patch and "BodyBatteryMax" not in patch
+    assert patch == {"hrv": 40, "BodyBatteryMin": 20, "GarminTrainingReadiness": 72}
+    assert "customFields" not in patch
     assert merge_wellness({"locked": True}, {"hrv": 30}, {"GarminHillScore": 70}) == {}
 
 

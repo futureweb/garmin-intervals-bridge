@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from .fit import decode_fit, sha256
-from .times import parse_utc
+from .times import external_id_names, parse_utc
 
 # Matching tolerances for *writing into* an activity. Tighter than the
 # upload blocker in sync.py: a wrong match would put one ride's data on
@@ -37,8 +37,7 @@ def match_activity(garmin: dict, remote: list[dict]) -> dict | None:
     for item in remote:
         if not isinstance(item, dict) or not item.get("id"):
             continue
-        external = str(item.get("external_id") or "")
-        if external in (gid, f"garmin:{gid}"):
+        if external_id_names(item.get("external_id"), gid):
             return item
         if str(item.get("source") or "").upper() != "GARMIN_CONNECT":
             continue
