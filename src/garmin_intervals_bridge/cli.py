@@ -173,15 +173,23 @@ def main(argv: list[str] | None = None) -> int:
                        else () if args.cmd == "status"                  # reads only
                        else ("activities",))
         locks = ExitStack()
-        try:
-            locks.enter_context(single_instance(settings.data_dir, lock_scopes))
-        except InstanceBusy as exc:
-            if args.cmd == "watch":
-                # The sync or a backfill holds the activities lock for a while: that is not a
-                # failure of the watch, the next poll comes in a minute (no OnFailure alert).
-                log.info("%s; this poll is skipped", exc)
-                return 0
-            raise
+        held: list[str] = []
+        for lock_scope in lock_scopes:
+            try:
+                locks.enter_context(single_instance(settings.data_dir, (lock_scope,)))
+                held.append(lock_scope)
+            except InstanceBusy as exc:
+                if args.cmd not in ("watch", "sync"):
+                    locks.close()
+                    raise
+                # A backfill holds this scope for hours: the scheduled runs do what is free and
+                # come back later (no failure, no OnFailure alert).
+                log.info("%s; %s skipped this time", exc, lock_scope)
+        if lock_scopes and not held:
+            locks.close()
+            return 0
+        if args.cmd == "sync" and scope == "all" and held != ["activities", "wellness"]:
+            args.scope = held[0]
         with locks:
             store = Store(settings.data_dir)
             try:

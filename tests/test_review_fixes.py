@@ -101,7 +101,8 @@ def test_watch_skips_the_poll_when_the_lock_is_held(tmp_path, monkeypatch):
     with single_instance(tmp_path, ("activities",)):
         assert main(["watch"]) == 0                        # skipped, no error exit, no alert
         assert main(["status"]) == 0                       # reads only, needs no lock
-        assert main(["sync", "--scope", "activities"]) == 1
+        assert main(["sync", "--scope", "activities"]) == 0           # nothing free: a quiet no-op
+        assert main(["backfill", "--scope", "activities", "--from", "2026-10-01"]) == 1   # a person's command fails loudly
         with pytest.raises(InstanceBusy):
             with single_instance(tmp_path, ("activities",)):
                 pass
@@ -372,3 +373,17 @@ def test_run_loop_survives_a_block_and_other_errors(tmp_path, monkeypatch):
     assert cli.run_loop(_loop_settings(tmp_path), st, apply=False, poll_seconds=60, sync_minutes=30, iterations=4) == 0
     assert [r["command"] for r in st.recent_runs(1)].count("watch") >= 2
     st.close()
+
+
+def test_sync_scope_all_does_the_free_scope_while_a_backfill_holds_the_other(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import cli
+    monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
+    monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+    ran = []
+    monkeypatch.setattr(cli, "sync_enrich", lambda *a, **k: ran.append("activities") or {"seen": 0})
+    monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: ran.append("wellness") or {"writes": 0})
+    monkeypatch.setattr(cli.GarminSource, "login", lambda self, interactive=True: None)
+    with single_instance(tmp_path, ("wellness",)):                      # a wellness backfill is running
+        assert main(["sync", "--scope", "all"]) == 0
+    assert ran == ["activities"]
