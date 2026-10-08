@@ -131,12 +131,12 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Garmin hydration & sweat loss",
-        "title": "Hydration logged and estimated sweat loss (litres)",
+        "title": "Estimated sweat loss per day; hydration if you log it (litres)",
         "y": "Litres",
         "height": 160,
         "plots": [
+            ("custom", "GarminSweatLossLitres", "Sweat", "bars", "none", None, "#FF7F0E66", "#FF7F0EFF", ""),
             ("native", "hydration_volume", "L", "dec1", "Hydr.", "line", "none", None, "#17BECF40", "#17BECFFF"),
-            ("custom", "GarminSweatLossLitres", "Sweat", "dot", "none", None, "#FF7F0E66", "#FF7F0EFF", ""),
         ],
     },
     {
