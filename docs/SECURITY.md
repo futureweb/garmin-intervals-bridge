@@ -1,12 +1,13 @@
 # Security and privacy
 
-This project handles GPS tracks, detailed medical/fitness/health metrics, Garmin session tokens and the Intervals API key.
+This project handles GPS tracks, detailed medical/fitness/health metrics (including logged nutrition and sleep data), Garmin session tokens and the Intervals API key.
 
 **Must**
 
 - Never commit `.env`, `data/`, FIT exports, JSON snapshots, OAuth tokens, logs, or raw API responses.
 - Restrict data/tokens folder permissions (0700) and backup encrypted at rest. FIT files and JSON (0600) contain personal information.
-- Use a non-root Docker container; bind mount the private storage to `/data`.
+- Run as an unprivileged user: the systemd units in `deploy/` or the non-root container; keep the virtualenv outside any web document root and the data directory at mode 0700.
+- Writing custom streams marks the activity's intervals as edited in Intervals (see README, known limitations); nothing is ever deleted.
 - Use the Intervals API key only over HTTPS. Do not put it into CLI arguments or screenshots.
 - Never paste Garmin passwords, session tokens, Intervals API keys or private FITs into public GitHub issues.
 - Run `login` once in a local interactive terminal and let Garmin session tokens refresh. Do not store Garmin account password in cron or compose environment variables.
