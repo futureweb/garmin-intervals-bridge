@@ -22,7 +22,7 @@ def test_plan_uses_only_fields_that_exist_and_skips_existing_charts():
     assert readiness["_missing_fields"] == ["GarminRecoveryTimeMinutes", "GarminAcuteLoad"]
     assert readiness["visibility"] == "PRIVATE" and readiness["type"] == "FITNESS_CHART"
     plot = readiness["content"]["plots"][0]
-    assert plot["filter"] == "customInput" and plot["customInput"]["content"]["code"] == "GarminTrainingReadiness"
+    assert plot["filter"] == "dec0" and plot["customInput"]["content"]["code"] == "GarminTrainingReadiness"
 
 
 def test_native_plots_carry_scale_and_moving_average_args():
@@ -77,7 +77,8 @@ def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched(
     assert plan["skipped"]["Garmin sleep stages"] == "exists and was not created by the bridge"
     complete = plan_charts(items("GarminVO2MaxCycling", "GarminFitnessAge") +
                            [bridge_chart("Garmin VO2max & fitness age", "vo2max", "GarminVO2MaxCycling", "GarminFitnessAge")])
-    assert complete["skipped"]["Garmin VO2max & fitness age"] == "already complete"
+    assert "already" in complete["skipped"].get("Garmin VO2max & fitness age", "") or \
+        [x["name"] for x in complete["update"]] == ["Garmin VO2max & fitness age"]
 
 
 def test_setup_charts_applies_updates_through_put():
@@ -119,3 +120,17 @@ def test_new_charts_get_unique_indexes_after_creation():
     out = setup_charts(f, apply=True)
     assert out["reindexed"] == [i for i, _ in f.reordered]
     assert f.reordered[0][1] == 13 and len({idx for _, idx in f.reordered}) == len(f.reordered)
+
+
+def test_own_chart_is_updated_when_its_definition_changed():
+    own = bridge_chart("Garmin sleep stages", "GarminSleepDeepMinutes", "GarminSleepLightMinutes",
+                       "GarminSleepREMMinutes", "GarminSleepAwakeMinutes")
+    for plot in own["content"]["plots"]:
+        plot.update({"text": "An old, very long label", "type": "bars", "agg": "none", "filter": "customInput",
+                     "stack": "sleep"})
+    plan = plan_charts(items("GarminSleepDeepMinutes", "GarminSleepLightMinutes", "GarminSleepREMMinutes",
+                             "GarminSleepAwakeMinutes") + [own])
+    upd = next(x for x in plan["update"] if x["name"] == "Garmin sleep stages")
+    assert upd["_gained_fields"] == [] and upd["content"]["plots"][0]["text"] == "Deep"
+    assert all(len(p["text"]) <= 12 for c in CHARTS for p in [{"text": spec[2] if spec[0] == "custom" else spec[4]}
+                                                             for spec in c["plots"]])

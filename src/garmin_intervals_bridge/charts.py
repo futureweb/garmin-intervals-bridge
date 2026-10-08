@@ -22,11 +22,11 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Score / hours",
         "height": 180,
         "plots": [
-            ("custom", "GarminTrainingReadiness", "Training readiness", "bars", "none",
+            ("custom", "GarminTrainingReadiness", "Readiness", "bars", "none",
              None, "#009E0040", "#009E00FF", ""),
-            ("custom", "GarminRecoveryTimeMinutes", "Recovery time (min)", "line", "none",
+            ("custom", "GarminRecoveryTimeMinutes", "Recovery min", "line", "none",
              None, "#D6272800", "#D62728FF", ""),
-            ("custom", "GarminAcuteLoad", "Acute load", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
+            ("custom", "GarminAcuteLoad", "Load 7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
         ],
     },
     {
@@ -49,7 +49,7 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             ("custom", "BodyBatteryMax", "BB max", "line", "none", None, "#009E0030", "#009E00FF", ""),
             ("custom", "BodyBatteryMin", "BB min", "line", "none", None, "#D6272830", "#D62728FF", ""),
-            ("custom", "GarminStressAvg", "Stress avg", "bars", "none", None, "#FF7F0E40", "#FF7F0EFF", ""),
+            ("custom", "GarminStressAvg", "Stress", "bars", "none", None, "#FF7F0E40", "#FF7F0EFF", ""),
             ("custom", "GarminBodyBatteryCharged", "Charged", "dot", "none", None, "#2CA02C66", "#2CA02CFF", ""),
             ("custom", "GarminBodyBatteryDrained", "Drained", "dot", "none", None, "#8C564B66", "#8C564BFF", ""),
         ],
@@ -62,9 +62,9 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             # `kcal_consumed` follows Intervals' chart-id pattern (restingHR -> resting_hr,
             # spO2 -> spo2); it is the one id here not yet seen in a real chart definition.
-            ("native", "kcal_consumed", "kcal", "dec0", "kcal consumed",
+            ("native", "kcal_consumed", "kcal", "dec0", "kcal in",
              "bars", "none", None, "#2CA02C66", "#2CA02CFF"),
-            ("native", "calories", "kcal", "dec0", "Calories burned", "line", "none", None, "#D6272800", "#D62728FF"),
+            ("native", "calories", "kcal", "dec0", "kcal out", "line", "none", None, "#D6272800", "#D62728FF"),
         ],
     },
     {
@@ -75,8 +75,8 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             ("custom", "GarminEnduranceScore", "Endurance", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
             ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", ""),
-            ("custom", "GarminHillStrength", "Hill strength", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", ""),
-            ("custom", "GarminHillEndurance", "Hill endurance", "dot", "none", None, "#FFBB7866", "#FFBB7888", ""),
+            ("custom", "GarminHillStrength", "Hill str.", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", ""),
+            ("custom", "GarminHillEndurance", "Hill end.", "dot", "none", None, "#FFBB7866", "#FFBB7888", ""),
         ],
     },
     {
@@ -85,9 +85,9 @@ CHARTS: list[dict[str, Any]] = [
         "y": "ml/kg/min · years",
         "height": 180,
         "plots": [
-            ("native", "vo2max", "vo2max", "dec1", "VO2max (run)", "line", "none", None, "#1F77B400", "#1F77B4FF"),
-            ("custom", "GarminVO2MaxCycling", "VO2max (bike)", "line", "none", None, "#9467BD00", "#9467BDFF", ""),
-            ("custom", "GarminFitnessAge", "Fitness age", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", ""),
+            ("native", "vo2max", "vo2max", "dec1", "VO2 run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
+            ("custom", "GarminVO2MaxCycling", "VO2 bike", "line", "none", None, "#9467BD00", "#9467BDFF", ""),
+            ("custom", "GarminFitnessAge", "Fit. age", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", ""),
         ],
     },
     {
@@ -109,12 +109,12 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Minutes · litres",
         "height": 180,
         "plots": [
-            ("custom", "GarminIntensityModerateMinutes", "Moderate min", "bars", "none",
+            ("custom", "GarminIntensityModerateMinutes", "Mod. min", "bars", "none",
              None, "#1F77B466", "#1F77B4FF", "im"),
-            ("custom", "GarminIntensityVigorousMinutes", "Vigorous min", "bars", "none",
+            ("custom", "GarminIntensityVigorousMinutes", "Vig. min", "bars", "none",
              None, "#D6272866", "#D62728FF", "im"),
-            ("custom", "GarminSweatLossLitres", "Sweat loss (L)", "dot", "none", None, "#17BECF66", "#17BECFFF", ""),
-            ("native", "hydration_volume", "litres", "dec1", "Hydration (L)",
+            ("custom", "GarminSweatLossLitres", "Sweat L", "dot", "none", None, "#17BECF66", "#17BECFFF", ""),
+            ("native", "hydration_volume", "litres", "dec1", "Hydr. L",
              "line", "none", None, "#17BECF00", "#17BECF88"),
         ],
     },
@@ -124,8 +124,8 @@ CHARTS: list[dict[str, Any]] = [
         "y": "°C",
         "height": 140,
         "plots": [
-            ("custom", "GarminSkinTempDeviationC", "Skin temp Δ", "bars", "none", None, "#E377C266", "#E377C2FF", ""),
-            ("custom", "GarminSkinTempDeviationC", "7d", "line", "moving_avg", 7, "#E377C200", "#E377C2FF", ""),
+            ("custom", "GarminSkinTempDeviationC", "Skin Δ", "bars", "none", None, "#E377C266", "#E377C2FF", ""),
+            ("custom", "GarminSkinTempDeviationC", "Skin 7d", "line", "moving_avg", 7, "#E377C200", "#E377C2FF", ""),
         ],
     },
     {
@@ -134,9 +134,9 @@ CHARTS: list[dict[str, Any]] = [
         "y": "ms",
         "height": 180,
         "plots": [
-            ("native", "hrv", "ms", "dec0", "HRV rMSSD", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
+            ("native", "hrv", "ms", "dec0", "HRV", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
             ("custom", "GarminHRV5MinHigh", "5-min high", "dot", "none", None, "#9467BD66", "#9467BDFF", ""),
-            ("custom", "GarminHRV7DayAvg", "Garmin 7d avg", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
+            ("custom", "GarminHRV7DayAvg", "7d avg", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
         ],
     },
 ]
@@ -149,7 +149,8 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
         item = inputs.get(code)
         if item is None:
             return None                       # field not created yet: plot would be empty
-        plot = {"id": index, "field": code, "filter": "customInput", "customInput": item,
+        decimals = any(k in code for k in ("Litres", "TempDeviation", "VO2Max", "FitnessAge"))
+        plot = {"id": index, "field": code, "filter": "dec1" if decimals else "dec0", "customInput": item,
                 "text": text, "title": item.get("name") or code, "type": ptype, "agg": agg,
                 "fill": fill, "stroke": stroke, "strokeWidth": 1, "radius": 3, "gauge": True,
                 "scale": None, "stack": stack, "band": 0, "min": None, "extras": [], "filters": [],
@@ -166,6 +167,14 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
 
 
 BRIDGE_MARK = "Created by garmin-intervals-bridge for the values it syncs."
+
+
+_PLOT_KEYS = ("field", "text", "type", "agg", "filter", "stack", "fill", "stroke", "aggArgs")
+
+
+def _normalise(plots: list[dict]) -> list[tuple]:
+    """What makes a plot definition: the keys the bridge sets, minus the embedded item."""
+    return [tuple((k, str(p.get(k))) for k in _PLOT_KEYS) for p in plots]
 
 
 def plan_charts(custom_items: list[dict]) -> dict:
@@ -190,13 +199,16 @@ def plan_charts(custom_items: list[dict]) -> dict:
             if present.get("description") != BRIDGE_MARK:
                 skipped[chart["name"]] = "exists and was not created by the bridge"
                 continue
-            have = {p.get("field") for p in (present.get("content") or {}).get("plots", [])}
+            current_plots = (present.get("content") or {}).get("plots", [])
+            have = {p.get("field") for p in current_plots}
             gained = [p["field"] for p in plots if p["field"] not in have]
-            if not gained:
-                skipped[chart["name"]] = "already complete"
+            if _normalise(current_plots) == _normalise(plots) and not gained:
+                skipped[chart["name"]] = "already up to date"
                 continue
             content = dict(present.get("content") or {})
             content["plots"] = plots
+            content["title"] = chart["title"]
+            content["yAxisLabel"] = chart["y"]
             update.append({"id": present["id"], "name": chart["name"], "type": "FITNESS_CHART",
                            "visibility": present.get("visibility", "PRIVATE"),
                            "description": BRIDGE_MARK, "content": content,
