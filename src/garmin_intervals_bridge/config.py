@@ -26,6 +26,7 @@ class Settings:
     wellness_days: int
     wellness_refresh_hours: int
     garmin_request_delay: float
+    wellness_profile: str = "recommended"
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -35,6 +36,9 @@ class Settings:
         delay = float(os.getenv("BRIDGE_GARMIN_REQUEST_DELAY", "0.5"))
         if delay < 0.25:
             raise ValueError("BRIDGE_GARMIN_REQUEST_DELAY must be >= 0.25 seconds")
+        profile = os.getenv("BRIDGE_WELLNESS_PROFILE", "recommended").strip().lower()
+        if profile not in ("recommended", "all"):
+            raise ValueError("BRIDGE_WELLNESS_PROFILE must be 'recommended' or 'all'")
         athlete_id = os.getenv("INTERVALS_ATHLETE_ID", "0").strip()
         if re.fullmatch(r"i?\d+", athlete_id) is None:
             raise ValueError("Invalid INTERVALS_ATHLETE_ID")
@@ -48,6 +52,7 @@ class Settings:
             wellness_days=_positive_int("BRIDGE_WELLNESS_LOOKBACK_DAYS", 3, 30),
             wellness_refresh_hours=_positive_int("BRIDGE_WELLNESS_REFRESH_HOURS", 8, 72),
             garmin_request_delay=delay,
+            wellness_profile=profile,
         )
 
     def ensure_data_dir(self) -> None:

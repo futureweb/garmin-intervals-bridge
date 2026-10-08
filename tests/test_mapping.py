@@ -17,6 +17,7 @@ def sample():
         "hill_score": [{"calendarDate": "2026-10-07", "overallScore": 73,
                         "strengthScore": 68, "enduranceScore": 80}],
         "body_battery": [{"date": "2026-10-07", "charged": 73, "drained": 64}],
+        "nutrition": {"dailyNutritionContent": {"calories": 2410, "carbs": 280.5, "fat": 90.2, "protein": 118.0}},
     }}
 
 
@@ -33,11 +34,13 @@ def test_wellness_maps_scales_without_conflation():
     assert custom["GarminRecoveryTimeMinutes"] == 1440
     assert custom["BodyBatteryMax"] == 91
     assert custom["GarminHRV5MinHigh"] == 78
+    assert nat["kcalConsumed"] == 2410 and nat["carbohydrates"] == 280.5
+    assert nat["protein"] == 118.0 and nat["fatTotal"] == 90.2
 
 
 def test_today_not_written_incomplete_daily_totals():
     nat, custom = map_wellness(sample(), date(2026, 10, 8), date(2026, 10, 8))
-    assert "steps" not in nat
+    assert "steps" not in nat and "kcalConsumed" not in nat
     assert "BodyBatteryMax" not in custom
     assert "GarminEnduranceScore" not in custom
     assert nat["readiness"] == 72
@@ -100,3 +103,35 @@ def test_extended_metrics_known_units():
     assert nat["hydrationVolume"] == 2.1
     assert nat["spO2"] == 96.7 and nat["respiration"] == 13.5
     assert custom["GarminSweatLossLitres"] == 1.675
+
+
+def test_unlogged_nutrition_day_is_not_written_as_zero():
+    source = sample()
+    source["data"]["nutrition"] = {"dailyNutritionContent": {"calories": 0, "carbs": 0, "fat": 0, "protein": 0}}
+    source["data"]["stats"]["consumedKilocalories"] = 0
+    nat, _ = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8))
+    assert not {"kcalConsumed", "carbohydrates", "protein", "fatTotal"} & set(nat)
+
+
+def test_sleep_heart_rate_floors_and_scale_natives():
+    source = sample()
+    source["data"]["sleep"]["dailySleepDTO"]["avgHeartRate"] = 52
+    source["data"]["stats"]["floorsAscended"] = 14
+    source["data"]["body_composition"] = {"dateWeightList": [{"calendarDate": "2026-10-07", "weight": 78400, "bodyFat": 17.3}]}
+    nat, _ = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8))
+    assert nat["avgSleepingHR"] == 52 and nat["floorsClimbed"] == 14
+    assert nat["weight"] == 78.4 and nat["bodyFat"] == 17.3
+
+
+def test_recommended_profile_drops_duplicates_goals_and_subscores():
+    source = sample()
+    source["data"].update({"hill_score": [{"calendarDate": "2026-10-07", "overallScore": 73, "strengthScore": 68, "enduranceScore": 80}],
+                           "hydration": {"valueInML": 2100, "goalInML": 2800},
+                           "sleep": {"dailySleepDTO": {"sleepTimeSeconds": 27500, "averageSpO2Value": 96.7}}})
+    _, all_custom = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "all")
+    nat, rec = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "recommended")
+    assert {"GarminHillStrength", "GarminHillEndurance", "GarminHydrationGoalLitres", "GarminStepsGoal",
+            "GarminSleepSpO2Avg"} <= set(all_custom)
+    assert not {"GarminHillStrength", "GarminHillEndurance", "GarminHydrationGoalLitres", "GarminStepsGoal",
+                "GarminSleepSpO2Avg"} & set(rec)
+    assert rec["GarminHillScore"] == 73 and nat["spO2"] == 96.7      # the score and the native stay

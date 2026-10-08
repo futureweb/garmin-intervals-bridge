@@ -56,7 +56,16 @@ DAY_ENDPOINTS = {
     "lifestyle": "get_lifestyle_logging_data",
     "blood_pressure": "get_blood_pressure",
     "lactate_threshold": "get_lactate_threshold",
+    "nutrition": "get_nutrition_daily_food_log",   # logged food: calories, carbs, fat, protein
 }
+
+# For backfilling the past: the endpoints that carry per-day measurements. The
+# rest (training status, scores, predictions, fitness age, lactate, blood pressure,
+# lifestyle, readiness) change slowly or are not meaningful retroactively, and each
+# one costs a Garmin request per day.
+ESSENTIAL_ENDPOINTS = ("stats", "sleep", "hrv", "respiration", "spo2", "hydration",
+                       "body_composition", "nutrition", "intensity_minutes", "stress",
+                       "body_battery", "morning_readiness")
 
 
 class GarminSource:
@@ -122,14 +131,16 @@ class GarminSource:
             time.sleep(self.delay)
         return extract_original_fit(raw)
 
-    def snapshot(self, day: date) -> dict:
-        """Fetch every supported day endpoint, preserving raw responses locally.
+    def snapshot(self, day: date, endpoints: tuple[str, ...] | None = None) -> dict:
+        """Fetch the day endpoints (all, or a named subset), preserving raw responses locally.
 
         Individual unavailable endpoints are recorded as errors; 429/auth failures
         abort the day to avoid hammering Garmin or masking an expired session.
         """
         raw: dict = {"date": day.isoformat(), "data": {}, "errors": {}}
         for key, method in DAY_ENDPOINTS.items():
+            if endpoints is not None and key not in endpoints:
+                continue
             fn = getattr(self._client(), method, None)
             if fn is None:
                 raw["errors"][key] = "MethodNotAvailable"

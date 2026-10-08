@@ -59,6 +59,16 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
 }
 
 
+# Custom codes the "recommended" profile leaves out: duplicates of native fields,
+# goals rather than measurements, and sub-scores of a score that is kept.
+RECOMMENDED_EXCLUDES = frozenset({
+    "GarminSleepSpO2Avg", "GarminSleepRespirationAvg",      # native spO2 / respiration carry these
+    "GarminStepsGoal", "GarminHydrationGoalLitres",         # targets, not measurements
+    "GarminAchievableFitnessAge",                           # derived from GarminFitnessAge
+    "GarminHillStrength", "GarminHillEndurance",            # components of GarminHillScore
+})
+
+
 def get(obj: Any, *path: str, default: Any = None) -> Any:
     for key in path:
         if not isinstance(obj, dict):
@@ -100,11 +110,12 @@ def _day_record(raw: Any, target: date) -> dict:
     return {}
 
 
-def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]:
+def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all") -> tuple[dict, dict]:
     """Return (native, custom) value dicts; absent/invalid values are omitted.
 
     Today's accumulating totals are excluded; their final values can be
     imported tomorrow. Sleep/HRV/Readiness may be imported today.
+    `profile` "recommended" drops the custom codes in RECOMMENDED_EXCLUDES.
     """
     data = snapshot.get("data", {})
     stats = data.get("stats") or {}
@@ -133,6 +144,7 @@ def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]
     put(native, "restingHR", choose(stats, ("restingHeartRate",), high=220)
         or choose(data.get("sleep"), ("restingHeartRate",), high=220), high=220)
     put(native, "hrv", choose(hrv, ("lastNightAvg",), high=400), high=400)
+    put(native, "avgSleepingHR", choose(sleep, ("avgHeartRate",), low=20, high=220), low=20, high=220)
     put(native, "sleepSecs", choose(sleep, ("sleepTimeSeconds",), high=86400), high=86400)
     sleep_score = choose(sleep, ("sleepScores", "overall", "value"),
                          ("sleepScores", "overall", "score"), high=100)
@@ -172,6 +184,22 @@ def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]
     # Energy totals change all day; only import after the day has finished.
     if target < today:
         put(native, "steps", choose(stats, ("totalSteps",), high=100000), high=100000)
+        put(native, "floorsClimbed", choose(stats, ("floorsAscended",), high=5000), high=5000)
+        # Logged food. A day without entries reports 0, which is "not logged", not "ate nothing".
+        nutrition = get(data, "nutrition", "dailyNutritionContent") or {}
+        put(native, "kcalConsumed", choose(nutrition, ("calories",), low=1, high=20000)
+            or choose(stats, ("consumedKilocalories",), low=1, high=20000), low=1, high=20000)
+        put(native, "carbohydrates", choose(nutrition, ("carbs",), low=0.1, high=3000), low=0.1, high=3000)
+        put(native, "protein", choose(nutrition, ("protein",), low=0.1, high=1500), low=0.1, high=1500)
+        put(native, "fatTotal", choose(nutrition, ("fat",), low=0.1, high=1500), low=0.1, high=1500)
+        # Scale data, only where Intervals has nothing yet (the official sync usually brings weight).
+        # get_body_composition() answers {"dateWeightList": [{calendarDate, weight (g), bodyFat, ...}], ...}
+        composition = (_day_record(get(data, "body_composition", "dateWeightList"), target)
+                       or _day_record(data.get("body_composition"), target))
+        put(native, "weight", choose(composition, ("weight",), low=20000, high=400000), low=20000, high=400000)
+        if "weight" in native:
+            native["weight"] = round(native["weight"] / 1000, 2)        # Garmin stores grams
+        put(native, "bodyFat", choose(composition, ("bodyFat",), low=1, high=70), low=1, high=70)
         put(custom, "GarminStepsGoal", choose(stats, ("dailyStepGoal",), high=100000), high=100000)
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
@@ -204,6 +232,8 @@ def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]
         if sweat_ml is not None:
             put(custom, "GarminSweatLossLitres", round(sweat_ml / 1000, 3), high=30)
 
+    if profile == "recommended":
+        custom = {k: v for k, v in custom.items() if k not in RECOMMENDED_EXCLUDES}
     return native, custom
 
 

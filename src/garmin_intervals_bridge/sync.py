@@ -218,7 +218,7 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,
                   today: date | None = None, days: list[date] | None = None,
-                  pause_seconds: float = 0.0) -> dict:
+                  pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None) -> dict:
     """Daily wellness. `days` (a backfill) replaces the lookback; `pause_seconds`
     is slept between days because each day costs ~22 Garmin requests."""
     current = today or datetime.now(settings.timezone).date()
@@ -232,13 +232,13 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
         if not force and store.wellness_recent(day, settings.wellness_refresh_hours):
             metrics["days_skipped_recent"] += 1
             continue
-        raw = garmin.snapshot(day)
+        raw = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))
         store.save_snapshot(day, raw)
         metrics["days_checked"] += 1
         if not raw.get("data"):
             log.warning("No Garmin wellness payload for %s; not marking complete", day)
             continue
-        native, custom = map_wellness(raw, day, current)
+        native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
         if not native and not custom:
             log.info("No supported Garmin scalar wellness data for %s", day)
             if apply:
