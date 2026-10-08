@@ -19,7 +19,8 @@ class IntervalsClient:
     def __init__(self, api_key: str, athlete_id: str = "0", session: requests.Session | None = None):
         if not api_key:
             raise ValueError("INTERVALS_API_KEY required for Intervals requests")
-        self.base = f"https://intervals.icu/api/v1/athlete/{athlete_id}"
+        self.root = "https://intervals.icu/api/v1"
+        self.base = f"{self.root}/athlete/{athlete_id}"
         self.session = session or requests.Session()
         self.session.auth = ("API_KEY", api_key)
         self.session.headers["User-Agent"] = "garmin-intervals-bridge/0.1"
@@ -30,11 +31,43 @@ class IntervalsClient:
             self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
-        response = self.session.request(method, f"{self.base}{path}", timeout=(10, 75), **kwargs)
+        return self._api(method, f"/athlete/{self.base.rsplit('/', 1)[1]}{path}", **kwargs)
+
+    def _api(self, method: str, path: str, **kwargs) -> Any:
+        """Request relative to /api/v1 (activity endpoints are not athlete-scoped)."""
+        response = self.session.request(method, f"{self.root}{path}", timeout=(10, 75), **kwargs)
         response.raise_for_status()
         if response.status_code == 204 or not response.content:
             return None
         return response.json()
+
+    # ---- single activities: /api/v1/activity/{id}... ----
+
+    def activity(self, activity_id: str) -> dict:
+        obj = self._api("GET", f"/activity/{activity_id}")
+        if not isinstance(obj, dict):
+            raise ValueError("Intervals activity API did not return an object")
+        return obj
+
+    def activity_file(self, activity_id: str) -> bytes:
+        """The file Intervals received for this activity (for Garmin: the partner copy)."""
+        response = self.session.get(f"{self.root}/activity/{activity_id}/file", timeout=(10, 75))
+        response.raise_for_status()
+        return response.content
+
+    def streams(self, activity_id: str, types: list[str] | None = None) -> list[dict]:
+        params = {"types": ",".join(types)} if types else {}
+        obj = self._api("GET", f"/activity/{activity_id}/streams.json", params=params)
+        if not isinstance(obj, list):
+            raise ValueError("Intervals streams API did not return a list")
+        return obj
+
+    def put_streams(self, activity_id: str, streams: list[dict]) -> Any:
+        """PUT /activity/{id}/streams with ActivityStream[]; returns UpdateStreamsResult."""
+        return self._api("PUT", f"/activity/{activity_id}/streams", json=streams)
+
+    def update_activity(self, activity_id: str, fields: dict) -> Any:
+        return self._api("PUT", f"/activity/{activity_id}", json=fields)
 
     def activities(self, oldest: date, newest: date) -> list[dict]:
         result = self._request("GET", "/activities", params={"oldest": oldest.isoformat(), "newest": newest.isoformat()})

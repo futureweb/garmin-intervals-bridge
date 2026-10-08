@@ -99,6 +99,17 @@ class GarminSource:
             raise ValueError("Unexpected Garmin activity response")
         return [x for x in result if isinstance(x, dict) and x.get("activityId") is not None]
 
+    def activity(self, activity_id: int | str) -> dict:
+        result = self._client().get_activity(str(activity_id))
+        time.sleep(self.delay)
+        if not isinstance(result, dict) or result.get("activityId") is None:
+            raise ValueError("Unexpected Garmin activity response")
+        # get_activity() nests the start time differently from the list endpoint.
+        if "startTimeGMT" not in result and isinstance(result.get("summaryDTO"), dict):
+            result["startTimeGMT"] = result["summaryDTO"].get("startTimeGMT")
+            result.setdefault("duration", result["summaryDTO"].get("duration"))
+        return result
+
     def original_fit(self, activity_id: int | str) -> bytes:
         api = self._client()
         try:
