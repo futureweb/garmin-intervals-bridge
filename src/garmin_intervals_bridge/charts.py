@@ -12,6 +12,10 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+# Native wellness chart ids, read from Intervals' app bundle (`{id:..., fn:..., scale:...}`
+# definitions), so none of them is a guess: hrv, resting_hr, avg_sleeping_hr, readiness,
+# steps, respiration, spo2, calories, kcal_consumed, carbohydrates, protein, fatTotal,
+# weight, body_fat, vo2max, sleep, sleep_score, hydration_volume, systolic, diastolic.
 # Each chart: name, title, y-axis label, height, plots. A plot is either
 #   ("custom", code, text, type, agg, days, fill, stroke, stack)
 #   ("native", field, scale, filter, text, type, agg, days, fill, stroke)
@@ -22,11 +26,11 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Score / hours",
         "height": 180,
         "plots": [
-            ("custom", "GarminTrainingReadiness", "Readiness", "bars", "none",
+            ("custom", "GarminTrainingReadiness", "Ready", "bars", "none",
              None, "#009E0040", "#009E00FF", ""),
-            ("custom", "GarminRecoveryTimeMinutes", "Recovery min", "line", "none",
+            ("custom", "GarminRecoveryTimeMinutes", "Recov.", "line", "none",
              None, "#D6272800", "#D62728FF", ""),
-            ("custom", "GarminAcuteLoad", "Load 7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
+            ("custom", "GarminAcuteLoad", "Load7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
         ],
     },
     {
@@ -47,11 +51,11 @@ CHARTS: list[dict[str, Any]] = [
         "y": "0–100",
         "height": 180,
         "plots": [
-            ("custom", "BodyBatteryMax", "BB max", "line", "none", None, "#009E0030", "#009E00FF", ""),
-            ("custom", "BodyBatteryMin", "BB min", "line", "none", None, "#D6272830", "#D62728FF", ""),
+            ("custom", "BodyBatteryMax", "BBmax", "line", "none", None, "#009E0030", "#009E00FF", ""),
+            ("custom", "BodyBatteryMin", "BBmin", "line", "none", None, "#D6272830", "#D62728FF", ""),
             ("custom", "GarminStressAvg", "Stress", "bars", "none", None, "#FF7F0E40", "#FF7F0EFF", ""),
-            ("custom", "GarminBodyBatteryCharged", "Charged", "dot", "none", None, "#2CA02C66", "#2CA02CFF", ""),
-            ("custom", "GarminBodyBatteryDrained", "Drained", "dot", "none", None, "#8C564B66", "#8C564BFF", ""),
+            ("custom", "GarminBodyBatteryCharged", "Charge", "dot", "none", None, "#2CA02C66", "#2CA02CFF", ""),
+            ("custom", "GarminBodyBatteryDrained", "Drain", "dot", "none", None, "#8C564B66", "#8C564BFF", ""),
         ],
     },
     {
@@ -68,26 +72,38 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
+        "name": "Nutrition: macros (Garmin)",
+        "title": "Carbohydrates / protein / fat logged in Garmin (g)",
+        "y": "g",
+        "height": 180,
+        "plots": [
+            ("native", "carbohydrates", "g", "dec0", "Carbs", "bars", "none", None, "#70663180", "#706631FF"),
+            ("native", "protein", "g", "dec0", "Protein", "bars", "none", None, "#9B033280", "#9B0332FF"),
+            ("native", "fatTotal", "g", "dec0", "Fat", "bars", "none", None, "#DA6C0B80", "#DA6C0BFF"),
+        ],
+        "stack": "food",
+    },
+    {
         "name": "Garmin scores",
         "title": "Endurance score, hill score (strength / endurance)",
         "y": "Score",
         "height": 180,
         "plots": [
-            ("custom", "GarminEnduranceScore", "Endurance", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
+            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
             ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", ""),
-            ("custom", "GarminHillStrength", "Hill str.", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", ""),
-            ("custom", "GarminHillEndurance", "Hill end.", "dot", "none", None, "#FFBB7866", "#FFBB7888", ""),
+            ("custom", "GarminHillStrength", "HillStr", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", ""),
+            ("custom", "GarminHillEndurance", "HillEnd", "dot", "none", None, "#FFBB7866", "#FFBB7888", ""),
         ],
     },
     {
         "name": "Garmin VO2max & fitness age",
-        "title": "VO2max run / bike, fitness age",
+        "title": "Daily VO2max estimate (Garmin wellness: run / bike), fitness age",
         "y": "ml/kg/min · years",
         "height": 180,
         "plots": [
-            ("native", "vo2max", "vo2max", "dec1", "VO2 run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
-            ("custom", "GarminVO2MaxCycling", "VO2 bike", "line", "none", None, "#9467BD00", "#9467BDFF", ""),
-            ("custom", "GarminFitnessAge", "Fit. age", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", ""),
+            ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
+            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "none", None, "#9467BD00", "#9467BDFF", ""),
+            ("custom", "GarminFitnessAge", "FitAge", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", ""),
         ],
     },
     {
@@ -99,7 +115,7 @@ CHARTS: list[dict[str, Any]] = [
             ("custom", "GarminPredicted5KSeconds", "5K", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
             ("custom", "GarminPredicted10KSeconds", "10K", "line", "none", None, "#1F77B400", "#1F77B4FF", ""),
             ("custom", "GarminPredictedHalfSeconds", "Half", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", ""),
-            ("custom", "GarminPredictedMarathonSeconds", "Marathon", "line", "none",
+            ("custom", "GarminPredictedMarathonSeconds", "Mara.", "line", "none",
              None, "#D6272800", "#D62728FF", ""),
         ],
     },
@@ -109,12 +125,12 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Minutes · litres",
         "height": 180,
         "plots": [
-            ("custom", "GarminIntensityModerateMinutes", "Mod. min", "bars", "none",
+            ("custom", "GarminIntensityModerateMinutes", "Mod", "bars", "none",
              None, "#1F77B466", "#1F77B4FF", "im"),
-            ("custom", "GarminIntensityVigorousMinutes", "Vig. min", "bars", "none",
+            ("custom", "GarminIntensityVigorousMinutes", "Vig", "bars", "none",
              None, "#D6272866", "#D62728FF", "im"),
-            ("custom", "GarminSweatLossLitres", "Sweat L", "dot", "none", None, "#17BECF66", "#17BECFFF", ""),
-            ("native", "hydration_volume", "litres", "dec1", "Hydr. L",
+            ("custom", "GarminSweatLossLitres", "Sweat", "dot", "none", None, "#17BECF66", "#17BECFFF", ""),
+            ("native", "hydration_volume", "litres", "dec1", "Hydr.",
              "line", "none", None, "#17BECF00", "#17BECF88"),
         ],
     },
@@ -124,8 +140,8 @@ CHARTS: list[dict[str, Any]] = [
         "y": "°C",
         "height": 140,
         "plots": [
-            ("custom", "GarminSkinTempDeviationC", "Skin Δ", "bars", "none", None, "#E377C266", "#E377C2FF", ""),
-            ("custom", "GarminSkinTempDeviationC", "Skin 7d", "line", "moving_avg", 7, "#E377C200", "#E377C2FF", ""),
+            ("custom", "GarminSkinTempDeviationC", "SkinΔ", "bars", "none", None, "#E377C266", "#E377C2FF", ""),
+            ("custom", "GarminSkinTempDeviationC", "Skin7d", "line", "moving_avg", 7, "#E377C200", "#E377C2FF", ""),
         ],
     },
     {
@@ -135,7 +151,7 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("native", "hrv", "ms", "dec0", "HRV", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
-            ("custom", "GarminHRV5MinHigh", "5-min high", "dot", "none", None, "#9467BD66", "#9467BDFF", ""),
+            ("custom", "GarminHRV5MinHigh", "5min", "dot", "none", None, "#9467BD66", "#9467BDFF", ""),
             ("custom", "GarminHRV7DayAvg", "7d avg", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
         ],
     },
@@ -193,6 +209,9 @@ def plan_charts(custom_items: list[dict]) -> dict:
     create, update, skipped = [], [], {}
     for chart in CHARTS:
         plots = [p for i, spec in enumerate(chart["plots"], 1) if (p := _plot(i, spec, inputs))]
+        if chart.get("stack"):
+            for plot in plots:
+                plot["stack"] = chart["stack"]
         missing = [spec[1] for spec in chart["plots"] if spec[0] == "custom" and spec[1] not in inputs]
         present = existing.get(chart["name"])
         if present is not None:
