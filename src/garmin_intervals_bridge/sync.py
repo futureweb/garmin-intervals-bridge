@@ -157,12 +157,15 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
 
 def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
                 activity_days: int | None = None, today: date | None = None,
-                date_range: tuple[date, date] | None = None, pause_seconds: float = 0.0) -> dict:
+                date_range: tuple[date, date] | None = None, pause_seconds: float = 0.0,
+                archive_only: bool = False) -> dict:
     """Scheduled enrich mode: for every recent Garmin activity, add to the officially
     synced Intervals activity what the partner copy lacks. Never uploads, never deletes.
 
     `date_range` replaces the lookback for a backfill; `pause_seconds` spaces the
-    activities out so a long backfill stays polite towards Garmin.
+    activities out so a long backfill stays polite towards Garmin. `archive_only`
+    downloads the originals that are not on disk yet and leaves Intervals alone: a
+    local mirror of every recording, for whatever is extracted from it later.
     """
     if date_range:
         start, current = date_range
@@ -173,10 +176,12 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     activities = garmin.activities(start, current)
     metrics = {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
                "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
-               "fields_written": 0, "streams_written": 0}
-    remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1),
-                                  fields=["id", "external_id", "source", "start_date", "moving_time", "elapsed_time"])
-    mappings = load_field_mappings(intervals.custom_items())
+               "fields_written": 0, "streams_written": 0, "archived": 0, "on_disk": 0}
+    if not archive_only:
+        remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1),
+                                      fields=["id", "external_id", "source", "start_date", "moving_time",
+                                              "elapsed_time"])
+        mappings = load_field_mappings(intervals.custom_items())
     for activity in sorted(activities, key=lambda a: str(a.get("startTimeGMT") or "")):
         gid = str(activity["activityId"])
         if not gid.isdecimal():
@@ -189,6 +194,18 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             metrics["deferred"] += 1
             continue
         try:
+            if archive_only:
+                path = store.fit_path(gid)
+                if path.is_file():
+                    metrics["on_disk"] += 1
+                    continue
+                store.atomic_save(path, garmin.original_fit(gid))
+                metrics["archived"] += 1
+                log.info("Archived original of %s (%s)", gid, str(activity.get("startTimeLocal") or "")[:10])
+                if pause_seconds:
+                    time.sleep(pause_seconds)
+                store.clear_failure(gid)
+                continue
             result = enrich_activity(gid, garmin, intervals, store, apply=apply,
                                      remote_candidates=remote, mappings=mappings)
             if pause_seconds and result["outcome"] not in ("already_enriched",):

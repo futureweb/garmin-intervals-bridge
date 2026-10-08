@@ -89,7 +89,7 @@ def test_three_consecutive_endpoint_failures_abort_the_day(tmp_path):
 
     src.client = _Client(failing={"get_hrv_data"})
     raw = src.snapshot(date(2026, 10, 8))
-    assert raw["errors"] == {"hrv": "RuntimeError"} and len(raw["data"]) == len(DAY_ENDPOINTS) - 1
+    assert raw["errors"] == {"hrv": "RuntimeError 503"} and len(raw["data"]) == len(DAY_ENDPOINTS) - 1
 
 
 # ---- a held lock is not a failure of the watch ----
@@ -387,3 +387,37 @@ def test_sync_scope_all_does_the_free_scope_while_a_backfill_holds_the_other(tmp
     with single_instance(tmp_path, ("wellness",)):                      # a wellness backfill is running
         assert main(["sync", "--scope", "all"]) == 0
     assert ran == ["activities"]
+
+
+def test_a_404_answer_is_not_an_outage(tmp_path):
+    from garmin_intervals_bridge.garmin import _is_transient
+
+    class NotFound(Exception):
+        status_code = 404
+    assert not _is_transient(NotFound("API Error 404"))
+    assert _is_transient(RuntimeError("API Error 503 Service Unavailable"))
+    assert _is_transient(TimeoutError("Read timed out"))
+    src = GarminSource(tmp_path, 0)
+    client = _Client(failing=set())
+    for method in ("get_training_readiness", "get_endurance_score", "get_hill_score", "get_max_metrics"):
+        def gone(*a, **k):
+            raise NotFound("API Error 404 Not Found")
+        setattr(client, method, gone)
+    src.client = client
+    raw = src.snapshot(date(2021, 6, 1))                    # four 4xx in a row: the day goes on
+    assert len(raw["errors"]) == 4 and len(raw["data"]) == len(DAY_ENDPOINTS) - 4
+
+
+def test_archive_only_downloads_originals_and_leaves_intervals_alone(tmp_path):
+    from test_sync import FlakyGarmin
+    st = Store(tmp_path)
+    g = FlakyGarmin()
+    i = IntervalsFake()
+    i.custom_items = lambda: (_ for _ in ()).throw(AssertionError("Intervals must not be asked"))
+    out = sync_enrich(settings(tmp_path), g, i, st, apply=False, date_range=(date(2026, 10, 1), date(2026, 10, 8)),
+                      archive_only=True)
+    assert out["archived"] == 3 and g.requested == ["41", "42", "43"]
+    again = sync_enrich(settings(tmp_path), g, i, st, apply=False, date_range=(date(2026, 10, 1), date(2026, 10, 8)),
+                        archive_only=True)
+    assert again["on_disk"] == 3 and again["archived"] == 0 and len(g.requested) == 3
+    st.close()

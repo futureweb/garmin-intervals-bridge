@@ -31,9 +31,10 @@ class GarminLoginNeeded(GarminBlocked):
 # How many day endpoints may fail in a row before the day is treated as a Garmin outage.
 MAX_CONSECUTIVE_ENDPOINT_ERRORS = 3
 
-_TRANSIENT_NAMES = re.compile(r"TooManyRequests|Connection|Timeout|RemoteDisconnected|ProtocolError|MaxRetry")
-_TRANSIENT_TEXT = re.compile(r"API Error 5\d\d|5\d\d Server Error|timed out|Connection (aborted|reset|refused)")
+_TRANSIENT_NAMES = re.compile(r"Timeout|RemoteDisconnected|ProtocolError|MaxRetry|ConnectionReset")
+_TRANSIENT_TEXT = re.compile(r"timed out|Connection (aborted|reset|refused)|Max retries exceeded")
 _BLOCK_TEXT = re.compile(r"(?<!\d)(401|429)(?!\d)")        # a status code, not digits inside an id
+_STATUS_TEXT = re.compile(r"(?<!\d)([45]\d\d)(?!\d)")
 
 
 def _chain(exc: BaseException):
@@ -50,9 +51,26 @@ def _is_blocked(exc: BaseException) -> bool:
                or _BLOCK_TEXT.search(str(e)) for e in _chain(exc))
 
 
+def _status_code(exc: BaseException) -> int | None:
+    """The HTTP status behind an exception, from the response the library keeps or from its text."""
+    for e in _chain(exc):
+        for candidate in (getattr(e, "status_code", None), getattr(getattr(e, "response", None), "status_code", None)):
+            if isinstance(candidate, int):
+                return candidate
+    m = _STATUS_TEXT.search(str(exc))
+    return int(m.group(1)) if m else None
+
+
 def _is_transient(exc: BaseException) -> bool:
-    """Garmin unreachable or failing (5xx, timeouts, connection errors), nothing wrong with our session."""
-    return any(_TRANSIENT_NAMES.search(type(e).__name__) or _TRANSIENT_TEXT.search(str(e)) for e in _chain(exc))
+    """Garmin unreachable or failing (5xx, timeouts, connection errors), nothing wrong with our
+    session. A 4xx is an answer, not an outage: an endpoint that did not exist for an old date
+    says 404 and the day goes on. The library wraps every HTTP failure in one class, so the
+    status code decides where there is one."""
+    code = _status_code(exc)
+    if code is not None:
+        return code >= 500
+    return any((not type(e).__name__.startswith("GarminConnect") and _TRANSIENT_NAMES.search(type(e).__name__))
+               or _TRANSIENT_TEXT.search(str(e)) for e in _chain(exc))
 
 
 # Source snapshot: all available fields are retained in a *local* JSON archive.
@@ -228,8 +246,11 @@ class GarminSource:
                 raise
             except Exception as exc:
                 name = type(exc).__name__
-                raw["errors"][key] = name
-                log.warning("Garmin endpoint %s unavailable: %s", key, name)
+                code = _status_code(exc)
+                raw["errors"][key] = f"{name} {code}" if code else name
+                log.warning("Garmin endpoint %s unavailable: %s%s", key, name, f" ({code})" if code else "")
+                if not _is_transient(exc):
+                    continue                  # a 4xx answer for this endpoint and date; not an outage
                 consecutive += 1
                 if consecutive >= MAX_CONSECUTIVE_ENDPOINT_ERRORS:
                     raise GarminBlocked(f"{consecutive} Garmin endpoints failed in a row on {day} "

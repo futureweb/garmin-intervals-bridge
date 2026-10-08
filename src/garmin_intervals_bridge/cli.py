@@ -73,6 +73,9 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--force-wellness", action="store_true", help="Re-fetch days already fetched")
     backfill.add_argument("--endpoints", choices=["essential", "all"], default="essential",
                           help="Wellness: per-day measurement endpoints only (default) or every endpoint")
+    backfill.add_argument("--archive-only", action="store_true",
+                          help="Activities: download the original FIT files that are not on disk yet and "
+                               "leave Intervals alone (a local mirror of every recording)")
     backfill.add_argument("--from-archive", action="store_true",
                           help="Wellness: map the locally archived snapshots instead of asking Garmin "
                                "(completes the past after the mapping gained fields; no Garmin requests)")
@@ -302,10 +305,11 @@ def main(argv: list[str] | None = None) -> int:
                                             pause_seconds=0 if args.from_archive else args.pause,
                                             endpoints=endpoints, from_archive=args.from_archive)
                     else:
-                        log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause",
-                                 start, end, args.pause)
+                        log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause%s",
+                                 start, end, args.pause, " (archive only)" if args.archive_only else "")
                         out = sync_enrich(settings, garmin, intervals, store, apply=args.apply,
-                                          date_range=(start, end), pause_seconds=args.pause)
+                                          date_range=(start, end), pause_seconds=args.pause,
+                                          archive_only=args.archive_only)
                     store.record_run("backfill", {"apply": args.apply, "scope": args.scope, "from": str(start),
                                                   "to": str(end), "garmin_requests": garmin.requests, **out})
                     print(json.dumps({"apply": args.apply, "scope": args.scope, "from": str(start), "to": str(end),
