@@ -42,6 +42,15 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - Hardened systemd units (`deploy/`), container image smoke-tested with
   Podman, CI with ruff, pip-audit and pytest.
 
+- `setup-charts`: eleven private fitness charts for the synced values, using
+  Intervals' real chart field ids (read from its app bundle), unique item
+  indexes (otherwise the chart picker hides them), and completion of the
+  bridge's own charts when fields appear later.
+- Past days are re-read once after local midnight so finished totals do not
+  wait for the throttle; default throttle 4 h.
+- The watcher logs in to Garmin lazily: a poll that finds nothing new makes
+  no Garmin request at all.
+
 ### Known limitations
 
 - Writing streams sets `icu_intervals_edited` on the activity; the API

@@ -117,7 +117,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"apply": args.apply, "missing_codes": fields}, indent=2))
                     return 0
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                garmin.login(interactive=False)
+                if args.cmd != "watch":
+                    garmin.login(interactive=False)      # fail early for one-off commands
                 if args.cmd == "gap":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     gid = args.activity_id

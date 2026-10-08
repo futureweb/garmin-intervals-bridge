@@ -98,7 +98,10 @@ class GarminSource:
 
     def _client(self) -> Any:
         if self.client is None:
-            raise RuntimeError("Not logged in")
+            # Lazy: a watch run that finds nothing new never touches Garmin at all.
+            # Loading the token store costs two profile requests, so it is deferred
+            # to the first real call instead of being paid on every poll.
+            self.login(interactive=False)
         return self.client
 
     def activities(self, start: date, end: date) -> list[dict]:
