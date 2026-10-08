@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import Settings
 from .fit import sha256, validate_fit
+from .enrich import enrich_activity, load_field_mappings
 from .garmin import GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
@@ -153,6 +154,54 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
             log.warning("Activity %s failed with %s (attempt %d); retrying later with backoff",
                         gid, type(exc).__name__, attempts)
     return metrics
+
+def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
+                activity_days: int | None = None, today: date | None = None) -> dict:
+    """Scheduled enrich mode: for every recent Garmin activity, add to the officially
+    synced Intervals activity what the partner copy lacks. Never uploads, never deletes."""
+    current = today or datetime.now(settings.timezone).date()
+    lookback = activity_days or settings.activity_days
+    start = current - timedelta(days=lookback - 1)
+    activities = garmin.activities(start, current)
+    metrics = {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
+               "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
+               "fields_written": 0, "streams_written": 0}
+    remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1))
+    mappings = load_field_mappings(intervals.custom_items())
+    for activity in sorted(activities, key=lambda a: str(a.get("startTimeGMT") or "")):
+        gid = str(activity["activityId"])
+        if not gid.isdecimal():
+            continue
+        metrics["seen"] += 1
+        if activity.get("manualActivity") is True:
+            metrics["skipped"] += 1
+            continue
+        if store.is_deferred(gid):
+            metrics["deferred"] += 1
+            continue
+        try:
+            result = enrich_activity(gid, garmin, intervals, store, apply=apply,
+                                     remote_candidates=remote, mappings=mappings)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}")
+            metrics["failed"] += 1
+            log.warning("Enrich %s failed with %s (attempt %d); retrying later", gid, type(exc).__name__, attempts)
+            continue
+        outcome = result["outcome"]
+        metrics[outcome] += 1
+        if outcome == "unmatched":
+            log.info("Activity %s has no Intervals counterpart yet; will look again next run", gid)
+        elif outcome in ("planned", "enriched"):
+            fields = sorted(result["fields"]["writes"])
+            streams = [w["type"] for w in result["streams"]["writes"]]
+            metrics["fields_written" if outcome == "enriched" else "fields_written"] += len(fields) if outcome == "enriched" else 0
+            metrics["streams_written"] += len(streams) if outcome == "enriched" else 0
+            log.info("%s %s -> %s: fields %s, streams %s", "ENRICHED" if outcome == "enriched" else "DRY-RUN would enrich",
+                     gid, result["intervals_id"], fields, streams)
+    return metrics
+
 
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,

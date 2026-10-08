@@ -78,6 +78,10 @@ ITEMS = [
                                            "script": "total = activity.calories; ..."}},
     {"type": "ACTIVITY_FIELD", "content": {"code": "TrainingEffectSelect", "fit_session_field": "188", "type": "select",
                                            "options": [{"value": 1.0}, {"value": 2.0}, {"value": 3.0}]}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "LTPaceDetected", "fit_session_field": "140.16",
+                                           "script": "activity.isNew ? (activity.LTPaceDetected == 0 ? NaN : activity.LTPaceDetected / 36) :  (activity.LTPaceDetected == 0 ? NaN : activity.LTPaceDetected)"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "LTHRdetected", "fit_session_field": "140.14",
+                                           "script": "activity.LTHRdetected == 0 ? NaN : activity.LTHRdetected"}},
     {"type": "ACTIVITY_FIELD", "content": {"code": "Weird", "fit_session_field": "181",
                                            "script": "activity.isNew ? someOtherThing(activity.Weird) : activity.Weird"}},
     {"type": "ACTIVITY_STREAM", "content": {"code": "Stamina", "script": "{\n for (let m of icu.fit.record) {\n let f = m.f_138\n if (f) data.setAt(m.timestamp.value, f.value)\n }\n}"}},
@@ -113,7 +117,8 @@ def test_scalar_plan_converts_and_never_overwrites_without_a_partner_copy():
     assert plan["writes"] == {"Sweatloss": 1240.0, "TrainingEffectSelect": 2.0,
                               "VO2MaxGarmin": round(936228 * 3.5 / 65536, 4)}
     assert plan["kept_existing"] == {"AerobicEffect": 2.9, "RecoveryTime": 0}
-    assert plan["replaced_filtered"] == {} and plan["absent_in_original"] == []
+    assert plan["replaced_filtered"] == {}
+    assert set(plan["absent_in_original"]) == {"LTPaceDetected", "LTHRdetected"}   # message 140 lacks 14/16 here
 
 
 def test_scalar_plan_replaces_values_that_cannot_come_from_data():
@@ -139,6 +144,17 @@ def test_second_run_writes_nothing_when_values_are_already_there():
     second = plan_scalars(original, after, m, partner)
     assert second["writes"] == {} and second["replaced_filtered"] == {}
     assert second["kept_existing"] == after
+
+
+def test_zero_guard_scripts_mean_no_value_and_keep_their_conversion():
+    m = load_field_mappings(ITEMS)
+    by = {x.code: x for x in m.scalars}
+    assert by["LTPaceDetected"].convert == (("/", 36.0),) and by["LTPaceDetected"].zero_is_null
+    assert by["LTHRdetected"].convert == () and by["LTHRdetected"].zero_is_null
+    plan = plan_scalars({"140": [{16: 0, 14: 0}]}, {}, m)
+    assert "LTPaceDetected" in plan["absent_in_original"] and "LTHRdetected" in plan["absent_in_original"]
+    plan = plan_scalars({"140": [{16: 3600, 14: 165}]}, {}, m)
+    assert plan["writes"]["LTPaceDetected"] == 100.0 and plan["writes"]["LTHRdetected"] == 165.0
 
 
 def test_select_fields_only_accept_their_options():
