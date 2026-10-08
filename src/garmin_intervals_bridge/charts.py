@@ -179,7 +179,8 @@ def plan_charts(custom_items: list[dict]) -> dict:
     """
     existing = {it.get("name"): it for it in custom_items if it.get("type") == "FITNESS_CHART"}
     inputs = {it["content"]["code"]: it for it in custom_items
-              if it.get("type") == "INPUT_FIELD" and isinstance(it.get("content"), dict) and it["content"].get("code")}
+              if it.get("type") == "INPUT_FIELD" and isinstance(it.get("content"), dict)
+              and it["content"].get("code")}
     create, update, skipped = [], [], {}
     for chart in CHARTS:
         plots = [p for i, spec in enumerate(chart["plots"], 1) if (p := _plot(i, spec, inputs))]
@@ -197,8 +198,9 @@ def plan_charts(custom_items: list[dict]) -> dict:
             content = dict(present.get("content") or {})
             content["plots"] = plots
             update.append({"id": present["id"], "name": chart["name"], "type": "FITNESS_CHART",
-                           "visibility": present.get("visibility", "PRIVATE"), "description": BRIDGE_MARK,
-                           "content": content, "_gained_fields": gained, "_missing_fields": missing})
+                           "visibility": present.get("visibility", "PRIVATE"),
+                           "description": BRIDGE_MARK, "content": content,
+                           "_gained_fields": gained, "_missing_fields": missing})
             continue
         if not plots:
             skipped[chart["name"]] = f"none of its fields exist yet: {missing}"
