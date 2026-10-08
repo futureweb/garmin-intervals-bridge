@@ -7,7 +7,7 @@ def sample():
     return {"data": {
         "stats": {"totalSteps": 9001, "restingHeartRate": 49, "bodyBatteryHighestValue": 91,
                   "bodyBatteryLowestValue": 19, "averageStressLevel": 38,
-                  "activeKilocalories": 455, "dailyStepGoal": 10000},
+                  "activeKilocalories": 455, "totalKilocalories": 2355, "dailyStepGoal": 10000},
         "hrv": {"hrvSummary": {"lastNightAvg": 40, "lastNight5MinHigh": 78,
                                "weeklyAvg": 38}},
         "sleep": {"dailySleepDTO": {"sleepTimeSeconds": 27600,
@@ -32,10 +32,12 @@ def test_wellness_maps_scales_without_conflation():
     assert custom["GarminEnduranceScore"] == 5320
     assert custom["GarminHillScore"] == 73
     assert custom["GarminRecoveryTimeMinutes"] == 1440
+    assert custom["GarminTotalCalories"] == 2355
     assert custom["BodyBatteryMax"] == 91
     assert custom["GarminHRV5MinHigh"] == 78
     assert nat["kcalConsumed"] == 2410 and nat["carbohydrates"] == 280.5
     assert nat["protein"] == 118.0 and nat["fatTotal"] == 90.2
+    assert custom["GarminCarbsKcal"] == 1122 and custom["GarminProteinKcal"] == 472 and custom["GarminFatKcal"] == 812
 
 
 def test_today_not_written_incomplete_daily_totals():

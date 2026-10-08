@@ -55,13 +55,22 @@ garmin-intervals-bridge backfill --scope activities --from 2026-03-01 --apply
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 --apply
 ```
 
-Each wellness day costs about 22 Garmin requests, each activity one original
+Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and
 activities already handled are skipped.
 
 ## Failure alerts
 
-Both service units carry `OnFailure=garmin-intervals-bridge-alert@%n.service`.
+All three service units carry `OnFailure=garmin-intervals-bridge-alert@%n.service`.
+The alert unit runs as root (it reads the journal and calls `sendmail`) and
+needs the script installed next to the units:
+
+```bash
+install -m 755 deploy/systemd/gib-alert /usr/local/sbin/gib-alert
+cp deploy/systemd/garmin-intervals-bridge-alert@.service /etc/systemd/system/
+systemctl daemon-reload
+```
+
 That unit mails the failed unit's status and last 40 journal lines through
 the local `sendmail`, at most once every six hours (a Garmin outage would
 otherwise produce a mail per minute from the watcher). Configure the

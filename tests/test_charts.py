@@ -136,8 +136,9 @@ def test_own_chart_is_updated_when_its_definition_changed():
                                                             for spec in c["plots"]])
 
 
-def test_macro_chart_stacks_native_gram_plots():
-    plan = plan_charts(items())
+def test_macro_chart_stacks_energy_plots():
+    # Stacked by energy (custom kcal fields), so the stack percentage is the energy share, not the gram share.
+    plan = plan_charts(items("GarminCarbsKcal", "GarminProteinKcal", "GarminFatKcal"))
     macros = next(c for c in plan["create"] if c["name"] == "Nutrition: macros (Garmin)")
-    assert [(p["field"], p["stack"], p["scale"]) for p in macros["content"]["plots"]] == \
-        [("carbohydrates", "food", "g"), ("protein", "food", "g"), ("fatTotal", "food", "g")]
+    assert [(p["field"], p["stack"], p["filter"]) for p in macros["content"]["plots"]] == \
+        [("GarminCarbsKcal", "food", "dec0"), ("GarminProteinKcal", "food", "dec0"), ("GarminFatKcal", "food", "dec0")]

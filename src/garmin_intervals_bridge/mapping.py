@@ -35,6 +35,10 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminHillEndurance": CustomField("Garmin Hill Endurance", None, 100),
     "GarminStressAvg": CustomField("Garmin Stress Average", None, 100),
     "GarminActiveCalories": CustomField("Garmin Active Calories", "kcal"),
+    "GarminTotalCalories": CustomField("Garmin Total Calories", "kcal"),       # BMR + active, Garmin's daily burn
+    "GarminCarbsKcal": CustomField("Garmin Carbs Energy", "kcal"),             # grams x 4 (Atwater), for energy share
+    "GarminProteinKcal": CustomField("Garmin Protein Energy", "kcal"),         # grams x 4
+    "GarminFatKcal": CustomField("Garmin Fat Energy", "kcal"),                 # grams x 9
     "GarminIntensityModerateMinutes": CustomField("Garmin Moderate Intensity", "min"),
     "GarminIntensityVigorousMinutes": CustomField("Garmin Vigorous Intensity", "min"),
     "GarminStepsGoal": CustomField("Garmin Daily Steps Goal", "steps"),
@@ -191,6 +195,13 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(native, "carbohydrates", choose(nutrition, ("carbs",), low=0.1, high=3000), low=0.1, high=3000)
         put(native, "protein", choose(nutrition, ("protein",), low=0.1, high=1500), low=0.1, high=1500)
         put(native, "fatTotal", choose(nutrition, ("fat",), low=0.1, high=1500), low=0.1, high=1500)
+        # The same macros as energy (Atwater factors 4/4/9 kcal per g, what Garmin's own percentages use).
+        # Intervals shows a stacked bar's share by value, so stacking grams would make a gram share;
+        # stacking these gives the energy share nutrition apps display.
+        for code, native_key, factor in (("GarminCarbsKcal", "carbohydrates", 4),
+                                         ("GarminProteinKcal", "protein", 4), ("GarminFatKcal", "fatTotal", 9)):
+            if native_key in native:
+                put(custom, code, round(native[native_key] * factor), low=1, high=30000)
         # Scale data, only where Intervals has nothing yet (the official sync usually brings weight).
         # get_body_composition() answers {"dateWeightList": [{calendarDate, weight (g), bodyFat, ...}], ...}
         composition = (_day_record(get(data, "body_composition", "dateWeightList"), target)
@@ -202,6 +213,7 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(custom, "GarminStepsGoal", choose(stats, ("dailyStepGoal",), high=100000), high=100000)
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
+        put(custom, "GarminTotalCalories", choose(stats, ("totalKilocalories",), low=1, high=30000), low=1, high=30000)
         put(custom, "GarminIntensityModerateMinutes",
             choose(stats, ("moderateIntensityMinutes",), high=1440), high=1440)
         put(custom, "GarminIntensityVigorousMinutes",

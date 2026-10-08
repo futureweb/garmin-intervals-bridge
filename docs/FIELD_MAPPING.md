@@ -58,6 +58,8 @@ wait until tomorrow.
 | `hydrationVolume` | `hydration.valueInML / 1000` | litres |
 | `kcalConsumed` | nutrition `dailyNutritionContent.calories` (fallback `stats.consumedKilocalories`) | kcal; `0` = not logged, never written |
 | `carbohydrates`, `protein`, `fatTotal` | nutrition `dailyNutritionContent.carbs/protein/fat` | g |
+| `GarminCarbsKcal`, `GarminProteinKcal`, `GarminFatKcal` (custom) | the same grams x 4 / 4 / 9 (Atwater factors) | kcal; only for the stacked macro chart, whose percentages are then the energy share Garmin shows |
+| `GarminTotalCalories` (custom) | `stats.totalKilocalories` (BMR + active) | kcal; the "burn" side of intake vs. burn |
 | `weight` | `body_composition.dateWeightList[].weight / 1000` | kg |
 | `bodyFat` | `body_composition.dateWeightList[].bodyFat` | % |
 
@@ -78,7 +80,7 @@ definitions with the same code are reused, never changed.
 | `GarminHRV5MinHigh`, `GarminHRV7DayAvg` | `hrv.hrvSummary` | both |
 | `GarminSleepDeepMinutes`, `…REMMinutes`, `…LightMinutes`, `…AwakeMinutes` | sleep stages / 60 | both |
 | `GarminSleepStressAvg`, `GarminSkinTempDeviationC` | sleep | both |
-| `GarminStressAvg`, `GarminActiveCalories`, `GarminIntensityModerateMinutes`, `GarminIntensityVigorousMinutes` | `stats` | both |
+| `GarminStressAvg`, `GarminActiveCalories`, `GarminTotalCalories`, `GarminIntensityModerateMinutes`, `GarminIntensityVigorousMinutes` | `stats` | both |
 | `GarminEnduranceScore`, `GarminHillScore`, `GarminHillStrength`, `GarminHillEndurance` | scores | both |
 | `GarminFitnessAge` | fitness age | both |
 | `GarminPredicted5KSeconds`, `…10KSeconds`, `…HalfSeconds`, `…MarathonSeconds` | race predictions | both |

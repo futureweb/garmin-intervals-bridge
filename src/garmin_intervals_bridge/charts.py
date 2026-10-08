@@ -60,28 +60,28 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Nutrition: intake vs. burn (Garmin)",
-        "title": "kcal consumed (logged in Garmin) vs. calories burned",
+        "title": "kcal consumed (logged in Garmin) vs. Garmin's total daily burn (BMR + active); active part as bars",
         "y": "kcal",
         "height": 180,
         "plots": [
             # `kcal_consumed` follows Intervals' chart-id pattern (restingHR -> resting_hr,
             # spO2 -> spo2); it is the one id here not yet seen in a real chart definition.
-            ("native", "kcal_consumed", "kcal", "dec0", "kcal in",
-             "bars", "none", None, "#2CA02C66", "#2CA02CFF"),
-            ("native", "calories", "kcal", "dec0", "kcal out", "line", "none", None, "#D6272800", "#D62728FF"),
+            ("native", "kcal_consumed", "kcal", "dec0", "In",
+             "line", "none", None, "#2CA02C00", "#2CA02CFF"),
+            ("custom", "GarminTotalCalories", "Out", "line", "none", None, "#D6272800", "#D62728FF", ""),
+            ("custom", "GarminActiveCalories", "Active", "bars", "none", None, "#D6272833", "#D6272880", ""),
         ],
     },
     {
         "name": "Nutrition: macros (Garmin)",
-        "title": "Carbohydrates / protein / fat logged in Garmin (g)",
-        "y": "g",
+        "title": "Energy from carbohydrates / protein / fat (g x 4/4/9); the percentage is the share of intake energy",
+        "y": "kcal",
         "height": 180,
         "plots": [
-            ("native", "carbohydrates", "g", "dec0", "Carbs", "bars", "none", None, "#70663180", "#706631FF"),
-            ("native", "protein", "g", "dec0", "Protein", "bars", "none", None, "#9B033280", "#9B0332FF"),
-            ("native", "fatTotal", "g", "dec0", "Fat", "bars", "none", None, "#DA6C0B80", "#DA6C0BFF"),
+            ("custom", "GarminCarbsKcal", "Carbs", "bars", "none", None, "#70663180", "#706631FF", "food"),
+            ("custom", "GarminProteinKcal", "Protein", "bars", "none", None, "#9B033280", "#9B0332FF", "food"),
+            ("custom", "GarminFatKcal", "Fat", "bars", "none", None, "#DA6C0B80", "#DA6C0BFF", "food"),
         ],
-        "stack": "food",
     },
     {
         "name": "Garmin scores",
