@@ -157,3 +157,20 @@ def test_readiness_is_the_mornings_recovery_the_days_last_reading():
     existing = {"GarminRecoveryTimeMinutes": 1, "GarminAcuteLoad": 192, "restingHR": 44}
     patch = merge_wellness(existing, {"restingHR": 50}, custom, rewrite={"GarminRecoveryTimeMinutes", "restingHR"})
     assert patch["GarminRecoveryTimeMinutes"] == 5757 and "restingHR" not in patch and "GarminAcuteLoad" not in patch
+
+
+def test_values_final_only_at_the_end_of_the_day_and_unlogged_hydration_stays_empty():
+    from garmin_intervals_bridge.mapping import map_wellness
+    src = sample()
+    src["data"]["hydration"] = {"calendarDate": "2026-10-07", "valueInML": 0.0, "goalInML": 3000.0, "sweatLossInML": 722.0}
+    src["data"]["stats"]["floorsAscended"] = 14.4895
+    src["data"]["max_metrics"] = [{"generic": {"vo2MaxPreciseValue": 47.4}, "cycling": {"vo2MaxPreciseValue": 51.2}}]
+    src["data"]["body_composition"] = {"dateWeightList": [{"calendarDate": "2026-10-08", "weight": 83350, "bodyFat": 23.5},
+                                                          {"calendarDate": "2026-10-07", "weight": 83100, "bodyFat": 23.6}]}
+    today, past = date(2026, 10, 8), date(2026, 10, 7)
+    nat_today, cus_today = map_wellness(src, today, today)
+    nat_past, cus_past = map_wellness(src, past, today)
+    assert "vo2max" not in nat_today and "vo2max" in nat_past               # a run later today may revise it
+    assert "weight" in nat_today and "weight" in nat_past                    # a weigh-in is final at once
+    assert "hydrationVolume" not in nat_past and cus_past["GarminSweatLossLitres"] == 0.722
+    assert nat_past["floorsClimbed"] == 14

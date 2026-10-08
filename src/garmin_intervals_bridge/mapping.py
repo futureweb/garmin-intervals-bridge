@@ -176,10 +176,20 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         if "GarminRecoveryTimeMinutes" in custom:
             custom["GarminRecoveryTimeHours"] = round(custom["GarminRecoveryTimeMinutes"] / 60, 1)
         put(custom, "GarminAcuteLoad", choose(end_of_day, ("acuteLoad",)), high=3000)
-    put(native, "vo2max", choose(maximum, ("generic", "vo2MaxPreciseValue"),
-                                  ("generic", "vo2MaxValue"), high=100), high=100)
-    put(custom, "GarminVO2MaxCycling", choose(maximum, ("cycling", "vo2MaxPreciseValue"),
-                                               ("cycling", "vo2MaxValue"), high=100), high=100)
+    if target < today:
+        # a run or ride later today may revise the day's estimate: final once the day is over
+        put(native, "vo2max", choose(maximum, ("generic", "vo2MaxPreciseValue"),
+                                      ("generic", "vo2MaxValue"), high=100), high=100)
+        put(custom, "GarminVO2MaxCycling", choose(maximum, ("cycling", "vo2MaxPreciseValue"),
+                                                   ("cycling", "vo2MaxValue"), high=100), high=100)
+    # Scale data: a weigh-in is final the moment it is taken (the official sync usually brings weight).
+    # get_body_composition() answers {"dateWeightList": [{calendarDate, weight (g), bodyFat, ...}], ...}
+    composition = (_day_record(get(data, "body_composition", "dateWeightList"), target)
+                   or _day_record(data.get("body_composition"), target))
+    put(native, "weight", choose(composition, ("weight",), low=20000, high=400000), low=20000, high=400000)
+    if "weight" in native:
+        native["weight"] = round(native["weight"] / 1000, 2)        # Garmin stores grams
+    put(native, "bodyFat", choose(composition, ("bodyFat",), low=1, high=70), low=1, high=70)
     for key, source_name in (
         ("GarminSleepDeepMinutes", "deepSleepSeconds"),
         ("GarminSleepREMMinutes", "remSleepSeconds"),
@@ -202,7 +212,9 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     # Energy totals change all day; only import after the day has finished.
     if target < today:
         put(native, "steps", choose(stats, ("totalSteps",), high=100000), high=100000)
-        put(native, "floorsClimbed", choose(stats, ("floorsAscended",), high=5000), high=5000)
+        floors = choose(stats, ("floorsAscended",), high=5000)
+        if floors is not None:
+            put(native, "floorsClimbed", round(floors), high=5000)      # Garmin reports a fraction
         # Logged food. A day without entries reports 0, which is "not logged", not "ate nothing".
         nutrition = get(data, "nutrition", "dailyNutritionContent") or {}
         put(native, "kcalConsumed", choose(nutrition, ("calories",), low=1, high=20000)
@@ -217,14 +229,6 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
                                          ("GarminProteinKcal", "protein", 4), ("GarminFatKcal", "fatTotal", 9)):
             if native_key in native:
                 put(custom, code, round(native[native_key] * factor), low=1, high=30000)
-        # Scale data, only where Intervals has nothing yet (the official sync usually brings weight).
-        # get_body_composition() answers {"dateWeightList": [{calendarDate, weight (g), bodyFat, ...}], ...}
-        composition = (_day_record(get(data, "body_composition", "dateWeightList"), target)
-                       or _day_record(data.get("body_composition"), target))
-        put(native, "weight", choose(composition, ("weight",), low=20000, high=400000), low=20000, high=400000)
-        if "weight" in native:
-            native["weight"] = round(native["weight"] / 1000, 2)        # Garmin stores grams
-        put(native, "bodyFat", choose(composition, ("bodyFat",), low=1, high=70), low=1, high=70)
         put(custom, "GarminStepsGoal", choose(stats, ("dailyStepGoal",), high=100000), high=100000)
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
@@ -254,7 +258,8 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
             ("GarminPredictedMarathonSeconds", "timeMarathon", 120000),
         ):
             put(custom, code, choose(race, (key,), high=max_sec), high=max_sec)
-        volume_ml = choose(hydration, ("valueInML",), high=30000)
+        # 0 ml is "nothing logged", not "drank nothing": leave the day empty (as with food)
+        volume_ml = choose(hydration, ("valueInML",), low=1, high=30000)
         if volume_ml is not None:
             put(native, "hydrationVolume", round(volume_ml / 1000, 3), high=30)
         goal_ml = choose(hydration, ("goalInML",), high=30000)
