@@ -34,6 +34,9 @@ class Store:
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
             day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, command TEXT NOT NULL, started REAL NOT NULL,
+            metrics TEXT NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS meta (
             key TEXT PRIMARY KEY, value TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS intervals_seen (
@@ -142,6 +145,18 @@ class Store:
         if not garmin_id.isdecimal():
             raise ValueError("Garmin activity ID must be numeric")
         return self.base / "fits" / f"{garmin_id}.fit"
+
+    def record_run(self, command: str, metrics: dict) -> None:
+        self.db.execute("INSERT INTO runs (command, started, metrics) VALUES (?,?,?)",
+                        (command, time.time(), json.dumps(metrics, default=str)))
+        self.db.execute("DELETE FROM runs WHERE started < ?", (time.time() - 30 * 86400,))
+        self.db.commit()
+
+    def recent_runs(self, hours: float, command: str | None = None) -> list[dict]:
+        rows = self.db.execute("SELECT command, started, metrics FROM runs WHERE started >= ? "
+                               + ("AND command = ? " if command else "") + "ORDER BY started",
+                               (time.time() - hours * 3600,) + ((command,) if command else ()))
+        return [{"command": r[0], "started": r[1], "metrics": json.loads(r[2])} for r in rows]
 
     def set_meta(self, key: str, value: str = "") -> None:
         self.db.execute("INSERT INTO meta VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, "

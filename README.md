@@ -113,7 +113,7 @@ run is exactly what `--apply` would send.
 | `setup-fields [--apply]` | Create the private custom wellness fields the mapping uses. |
 | `setup-charts [--apply]` | Create (and later complete) private fitness charts for the synced values. |
 | `status` | Pending uploads and failed activities with their retry time. |
-| `health` | One probe per service; exit 2 after `BRIDGE_STALE_HOURS` (24) of failures, for a daily timer with an alert. |
+| `health` | Daily digest: probes both services and reports errors that would otherwise stay silent (dead timers, endpoints failing for days, fields Garmin stopped delivering, activities failing repeatedly). Exit 2 only when a human is needed. |
 
 ## Modes
 

@@ -77,12 +77,14 @@ the service user), Intervals API key revoked, no network.
 
 ## Daily health probe
 
-`garmin-intervals-bridge health` logs in to Garmin with the stored tokens and
-makes one small Intervals request. It exits 2 only when a service has been
-failing for longer than `BRIDGE_STALE_HOURS` (default 24), so a single bad
-night is a warning in the journal while an expired Garmin session becomes
-one alert mail a day through the same `OnFailure=` hook. The timer runs it
-once a day:
+`garmin-intervals-bridge health` logs in to Garmin with the stored tokens, makes
+one small Intervals request, and then looks for errors the scheduled runs
+handle quietly: timers that stopped running, a Garmin endpoint erroring on
+each of the last three days, wellness fields Garmin delivered all week but
+not in the last two days (a changed response, a stopped sensor), activities
+failing repeatedly, uploads pending reconciliation. It exits 2 only for those,
+so a single bad night stays a journal warning while a real problem becomes
+one mail a day through the same `OnFailure=` hook. The timer runs it once a day:
 
 ```bash
 systemctl enable --now garmin-intervals-bridge-health.timer
