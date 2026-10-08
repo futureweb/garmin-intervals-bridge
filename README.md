@@ -13,7 +13,18 @@
 > chart library. Runs on Linux (systemd timers), in a container, or on **Windows with one
 > command** ([guide](docs/WINDOWS.md)).
 
-<!-- screenshots: docs/images/activity-before-after.png, docs/images/wellness-day.png, docs/images/fitness-chart.png -->
+<p align="center">
+<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/activity-fields.png" alt="Activity fields filled from the original FIT: training effect, VO2max, performance condition, recovery time, stamina, sweat loss" width="900"><br>
+<sub>An officially imported run after the bridge: Training Effect, VO₂max, Performance Condition, Recovery Time, Stamina at start/end, Sweat Loss — all stripped by Garmin, all back.</sub>
+</p>
+<p align="center">
+<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/activity-stream-ga-speed.png" alt="Grade-adjusted speed stream added to the activity" width="900"><br>
+<sub>A custom stream (grade-adjusted speed) written into the same activity, aligned by timestamp.</sub>
+</p>
+<p align="center">
+<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/fitness-charts.png" alt="Fitness page with Garmin Bridge charts: sleep stages, stress and Body Battery, kcal consumed vs. burned" width="900"><br>
+<sub>Three of the nineteen charts from the chart library: sleep stages, stress & Body Battery, intake vs. total burn.</sub>
+</p>
 
 Since the end of September 2026 the file Garmin hands to partners is not
 the file your device recorded. (Garmin first switched the filter on in
