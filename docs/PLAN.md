@@ -96,10 +96,13 @@ without a manual browser export.
   ...). Many are public community items. Intervals fills them itself when
   the file contains the data; the bridge's job in enrich mode is to supply
   the values when the partner copy does not.
-- **Current workflow on this account:** the official activity import is off
-  since early October; recent activities are manual uploads of the original.
-  So both modes have a real user: `upload` automates exactly that workflow,
-  `enrich` serves accounts that keep the official import on.
+- **Current workflow on this account:** the official activity import is
+  **on**. The user deletes each auto-imported (filtered) activity and uploads
+  the Garmin original by hand, which is why recent activities show
+  `source: UPLOAD`. That is the workaround the forum thread calls painful,
+  and it is what `enrich` mode removes: the filtered copy stays, the bridge
+  fills in what it lacks. `upload` mode remains for accounts that switch the
+  official import off.
 
 ## 2. Phases
 
