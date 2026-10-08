@@ -34,6 +34,8 @@ def build_parser() -> argparse.ArgumentParser:
     enrich.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
     enrich.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
     enrich.add_argument("--apply", action="store_true", help="Actually PUT fields and streams")
+    enrich.add_argument("--refresh-own-streams", action="store_true",
+                        help="Rewrite streams this bridge wrote before (e.g. after a mapping fix)")
     setup = sub.add_parser("setup-fields", help="Preview/create missing private numeric custom fields")
     setup.add_argument("--apply", action="store_true", help="Actually create missing custom fields")
     sync = sub.add_parser("sync", help="Synchronize (local archive only / dry-run by default)")
@@ -144,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
                     time_stream = next((st.get("data") for st in intervals.streams(remote_id, ["time"])
                                         if isinstance(st, dict) and st.get("type") == "time"), [])
                     scalars = plan_scalars(messages, remote, mappings, partner_messages)
-                    streams = plan_streams(messages, remote, time_stream or [], mappings)
+                    previous = store.enrichment(gid)
+                    refresh = set(previous["streams"]) if (args.refresh_own_streams and previous) else None
+                    streams = plan_streams(messages, remote, time_stream or [], mappings, refresh=refresh)
                     plan = {"activity_id": gid, "intervals_id": remote_id, "apply": args.apply,
                             "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
                                          "unsupported": mappings.unsupported},
@@ -159,8 +163,9 @@ def main(argv: list[str] | None = None) -> int:
                         if streams["writes"]:
                             body = [{k: v for k, v in w.items() if k != "_stats"} for w in streams["writes"]]
                             result["streams"] = intervals.put_streams(remote_id, body)
-                        store.record_enrichment(gid, remote_id, sha256(original), list(scalars["writes"]),
-                                                [w["type"] for w in streams["writes"]])
+                        written_fields = sorted(set(scalars["writes"]) | set(previous["fields"] if previous else []))
+                        written_streams = sorted({w["type"] for w in streams["writes"]} | set(previous["streams"] if previous else []))
+                        store.record_enrichment(gid, remote_id, sha256(original), written_fields, written_streams)
                         plan["result"] = result
                     print(json.dumps(plan, indent=2, default=str))
                     return 0
