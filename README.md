@@ -111,6 +111,7 @@ run is exactly what `--apply` would send.
 | `sync [--scope all\|activities\|wellness] [--mode enrich\|upload] [--apply]` | Scheduled run over the last days. |
 | `backfill --scope wellness\|activities --from DATE [--to DATE] [--apply]` | Paced, resumable run over the past. |
 | `setup-fields [--apply]` | Create the private custom wellness fields the mapping uses. |
+| `setup-charts [--apply]` | Create (and later complete) private fitness charts for the synced values. |
 | `status` | Pending uploads and failed activities with their retry time. |
 
 ## Modes
@@ -156,6 +157,21 @@ garmin-intervals-bridge backfill --scope wellness --from 2025-01-01 --pause 3 --
 A backfill uses the twelve per-day measurement endpoints by default
 (`--endpoints all` for every endpoint), pauses between days, and skips days
 already fetched, so it can be interrupted and resumed.
+
+## Charts
+
+`setup-charts --apply` creates ten private fitness charts in your account
+for the values the bridge syncs: readiness & recovery, sleep stages, stress
+& Body Battery, HRV detail, nutrition intake vs. burn, Garmin scores, VO₂max
+& fitness age, race predictions, intensity & hydration, skin temperature.
+A chart only gets the fields that exist; run the command again after a
+backfill with every endpoint and the bridge's own charts are completed.
+Charts you made yourself are never touched, even with the same name.
+
+Intervals' API cannot place a chart on a Fitness tab, so that last step is
+yours: Fitness page → the tab you want → *custom charts* → tick the
+`Garmin …` charts. If you like them, you can share them in Intervals'
+chart library from the same dialog.
 
 ## Running it
 
