@@ -225,8 +225,16 @@ docker compose run --rm bridge enrich --activity-id <garmin id>
 docker compose run --rm bridge sync --apply
 ```
 
+`login` is the one interactive step: `run --rm` gives it a terminal, it asks
+for your Garmin e-mail, password and MFA code, uses the password once and
+keeps only Garmin's session tokens in the mounted `data/` volume
+(`data/tokens`), where they refresh themselves for about a year. Every
+other command just uses those tokens. If Garmin answers the login with
+429, wait an hour and try again.
+
 The compose service is deliberately not an always-on daemon; schedule
-`docker compose run --rm -T bridge watch --apply` from cron or a timer.
+`docker compose run --rm -T bridge watch --apply` from cron or a timer, or
+run `docker compose run --rm -T bridge run --apply` as a long-lived process.
 
 ## Configuration
 
