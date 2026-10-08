@@ -32,3 +32,6 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501"]   # fixture literals quoting custom-item scripts are long on purpose
