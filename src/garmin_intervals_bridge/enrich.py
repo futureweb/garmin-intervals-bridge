@@ -163,3 +163,189 @@ def gap_report(original: bytes, partner: bytes | None) -> dict:
         name: [f for f in gap["fields"] if f.isdecimal()]
         for name, gap in field_gaps.items() if any(f.isdecimal() for f in gap["fields"])}
     return report
+
+
+# ---------------------------------------------------------------------------
+# Writing the gap back: field mappings come from the athlete's own custom items
+# ---------------------------------------------------------------------------
+#
+# Intervals fills custom activity fields and custom streams from the FIT file
+# itself, and every definition says where its value comes from:
+#   ACTIVITY_FIELD  content.fit_session_field = "total_training_effect" | "178" | "140.9"
+#   ACTIVITY_STREAM content.fit_record_field  = "step_length"
+#   ACTIVITY_STREAM content.script            = "... for (let m of icu.fit.record) { let f = m.f_138 ..."
+# plus an optional one-off conversion on first import:
+#   content.script = "activity.isNew ? activity.RecoveryTime / 60 : activity.RecoveryTime"
+# The bridge reuses those definitions verbatim, so it writes exactly the
+# fields the athlete has configured, with the same source and the same units.
+# Nothing Garmin-specific is hard-coded here.
+
+import re
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class ScalarMapping:
+    code: str
+    source: str                      # "session:<name>" | "session:<num>" | "mesg:<num>.<field>"
+    convert: tuple = ()              # sequence of ("*"|"/", factor) applied to the raw value
+    note: str = ""
+
+
+@dataclass(frozen=True)
+class StreamMapping:
+    code: str
+    record_field: str | int          # profile name or numeric field id in `record`
+
+
+@dataclass
+class FieldMappings:
+    scalars: list[ScalarMapping] = field(default_factory=list)
+    streams: list[StreamMapping] = field(default_factory=list)
+    unsupported: dict[str, str] = field(default_factory=dict)   # code -> why
+
+
+_CONVERSION = re.compile(
+    r"^\s*activity\.isNew\s*\?\s*activity\.(?P<code>\w+)(?P<ops>(\s*[*/]\s*[0-9.]+)*)\s*:\s*activity\.(?P=code)\s*$")
+_RECORD_SCRIPT = re.compile(r"icu\.fit\.record[\s\S]*?m\.f_(\d+)")
+
+
+def _parse_conversion(script: str | None, code: str) -> tuple | None:
+    """Return the first-import conversion as ("*"/"/", factor) steps, () for none, None if unknown."""
+    if not script or not script.strip():
+        return ()
+    match = _CONVERSION.match(script)
+    if match is None or match.group("code") != code:
+        return None
+    steps = []
+    for op, factor in re.findall(r"([*/])\s*([0-9.]+)", match.group("ops")):
+        steps.append((op, float(factor)))
+    return tuple(steps)
+
+
+def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
+    """Derive what to write, and from where, out of the athlete's custom item definitions."""
+    out = FieldMappings()
+    for item in custom_items:
+        if not isinstance(item, dict) or not isinstance(item.get("content"), dict):
+            continue
+        content = item["content"]
+        code = content.get("code")
+        if not isinstance(code, str) or not code:
+            continue
+        kind = item.get("type")
+        if kind == "ACTIVITY_FIELD":
+            src = content.get("fit_session_field")
+            if not src:
+                continue  # computed from other fields; Intervals evaluates that itself
+            convert = _parse_conversion(content.get("script"), code)
+            if convert is None:
+                out.unsupported[code] = "script with unknown semantics"
+                continue
+            src = str(src).strip()
+            if re.fullmatch(r"\d+\.\d+", src):
+                source = f"mesg:{src}"
+            elif src.isdecimal():
+                source = f"session:{src}"
+            else:
+                source = f"session:{src}"
+            out.scalars.append(ScalarMapping(code, source, convert))
+        elif kind == "ACTIVITY_STREAM":
+            src = content.get("fit_record_field")
+            if src:
+                src = str(src).strip()
+                out.streams.append(StreamMapping(code, int(src) if src.isdecimal() else src))
+                continue
+            script = content.get("script") or ""
+            m = _RECORD_SCRIPT.search(script)
+            if m and "_num" not in script:
+                out.streams.append(StreamMapping(code, int(m.group(1))))
+            elif script.strip():
+                out.unsupported[code] = "stream script not limited to a single record field"
+    return out
+
+
+def _lookup(messages: dict[str, list[dict]], source: str) -> Any:
+    """Resolve a mapping source against decoded FIT messages; last non-null wins."""
+    kind, _, spec = source.partition(":")
+    if kind == "mesg":
+        mesg, _, fld = spec.partition(".")
+        items, key = messages.get(mesg, []), int(fld)
+    else:
+        items = messages.get("session", [])
+        key = int(spec) if spec.isdecimal() else spec
+    value = None
+    for message in items:
+        v = message.get(key)
+        if v is not None:
+            value = v
+    return value
+
+
+def _convert(value: Any, steps: tuple) -> Any:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    result = float(value)
+    for op, factor in steps:
+        result = result * factor if op == "*" else result / factor
+    return round(result, 4)
+
+
+def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings) -> dict:
+    """Fields to PUT on the activity: mapped, present in the original, empty in Intervals."""
+    writes: dict[str, Any] = {}
+    kept: dict[str, Any] = {}
+    absent: list[str] = []
+    for m in mappings.scalars:
+        raw = _lookup(messages, m.source)
+        if raw is None:
+            absent.append(m.code)
+            continue
+        value = _convert(raw, m.convert)
+        if value is None:
+            continue
+        if activity.get(m.code) is not None:
+            kept[m.code] = activity[m.code]          # never overwrite a non-null value
+            continue
+        writes[m.code] = value
+    return {"writes": writes, "kept_existing": kept, "absent_in_original": absent}
+
+
+def align_stream(records: list[dict], time_stream: list, record_field: str | int) -> tuple[list, dict]:
+    """Values of one record field aligned to the Intervals `time` stream (seconds from start).
+
+    Alignment is by timestamp, not by index, so a record Garmin dropped or
+    duplicated cannot shift the whole series.
+    """
+    stamped = [(r.get("timestamp"), r.get(record_field)) for r in records
+               if isinstance(r.get("timestamp"), (int, float))]
+    if not stamped or not time_stream:
+        return [], {"matched": 0, "points": len(time_stream), "non_null": 0}
+    t0 = stamped[0][0]
+    by_offset = {int(ts - t0): val for ts, val in stamped}
+    data = [by_offset.get(int(t)) if isinstance(t, (int, float)) else None for t in time_stream]
+    matched = sum(1 for t in time_stream if isinstance(t, (int, float)) and int(t) in by_offset)
+    non_null = sum(1 for v in data if v is not None)
+    return data, {"matched": matched, "points": len(time_stream), "non_null": non_null}
+
+
+def plan_streams(messages: dict[str, list[dict]], activity: dict, time_stream: list,
+                 mappings: FieldMappings, *, min_alignment: float = 0.95) -> dict:
+    """Custom streams to PUT: mapped, carried by the original, not yet on the activity."""
+    existing = set(activity.get("stream_types") or [])
+    records = messages.get("record", [])
+    writes: list[dict] = []
+    skipped: dict[str, str] = {}
+    for m in mappings.streams:
+        if m.code in existing:
+            skipped[m.code] = "already on activity"
+            continue
+        if not any(r.get(m.record_field) is not None for r in records):
+            skipped[m.code] = "not in original"
+            continue
+        data, stats = align_stream(records, time_stream, m.record_field)
+        if stats["points"] == 0 or stats["matched"] / stats["points"] < min_alignment:
+            skipped[m.code] = f"alignment too poor ({stats['matched']}/{stats['points']} points)"
+            continue
+        writes.append({"type": m.code, "custom": True, "data": data, "_stats": stats})
+    return {"writes": writes, "skipped": skipped}

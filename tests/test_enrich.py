@@ -61,3 +61,75 @@ def test_gap_report_without_partner_is_an_inventory_not_a_gap():
 def test_gap_report_counts_message_differences():
     report = gap_report(build_fit(records=5), build_fit(records=2))
     assert report["message_count_differences"]["record"] == {"original": 5, "partner": 2}
+
+
+# ---- writing the gap back ----
+from garmin_intervals_bridge.enrich import (align_stream, load_field_mappings, plan_scalars,
+                                            plan_streams)
+
+ITEMS = [
+    {"type": "ACTIVITY_FIELD", "content": {"code": "AerobicEffect", "fit_session_field": "total_training_effect"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "Sweatloss", "fit_session_field": "178"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "RecoveryTime", "fit_session_field": "140.9",
+                                           "script": "activity.isNew ? activity.RecoveryTime / 60 : activity.RecoveryTime"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "VO2MaxGarmin", "fit_session_field": "140.7",
+                                           "script": "activity.isNew ? activity.VO2MaxGarmin * 3.5 / 65536 : activity.VO2MaxGarmin"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "ActiveCalories", "fit_session_field": None,
+                                           "script": "total = activity.calories; ..."}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "Weird", "fit_session_field": "181",
+                                           "script": "activity.isNew ? someOtherThing(activity.Weird) : activity.Weird"}},
+    {"type": "ACTIVITY_STREAM", "content": {"code": "Stamina", "script": "{\n for (let m of icu.fit.record) {\n let f = m.f_138\n if (f) data.setAt(m.timestamp.value, f.value)\n }\n}"}},
+    {"type": "ACTIVITY_STREAM", "content": {"code": "GarminGCT", "fit_record_field": "stance_time"}},
+    {"type": "ACTIVITY_STREAM", "content": {"code": "Battery", "script": "for (let m of icu.fit) { if (m._num !== 104) continue; ... }"}},
+    {"type": "INPUT_FIELD", "content": {"code": "BodyBatteryMax", "type": "numeric"}},
+]
+
+
+def test_mappings_come_from_the_athletes_own_definitions():
+    m = load_field_mappings(ITEMS)
+    by_code = {x.code: x for x in m.scalars}
+    assert by_code["AerobicEffect"].source == "session:total_training_effect" and by_code["AerobicEffect"].convert == ()
+    assert by_code["Sweatloss"].source == "session:178"
+    assert by_code["RecoveryTime"].source == "mesg:140.9" and by_code["RecoveryTime"].convert == (("/", 60.0),)
+    assert by_code["VO2MaxGarmin"].convert == (("*", 3.5), ("/", 65536.0))
+    assert "ActiveCalories" not in by_code            # computed by Intervals, not a FIT field
+    assert m.unsupported == {"Weird": "script with unknown semantics",
+                             "Battery": "stream script not limited to a single record field"}
+    streams = {x.code: x.record_field for x in m.streams}
+    assert streams == {"Stamina": 138, "GarminGCT": "stance_time"}
+
+
+def test_scalar_plan_converts_and_never_overwrites():
+    messages = {"session": [{"total_training_effect": 3.2, 178: 1240}],
+                "140": [{9: 2160, 7: 936228}]}
+    m = load_field_mappings(ITEMS)
+    plan = plan_scalars(messages, {"AerobicEffect": 2.9, "Sweatloss": None}, m)
+    assert plan["writes"] == {"Sweatloss": 1240.0, "RecoveryTime": 36.0,
+                              "VO2MaxGarmin": round(936228 * 3.5 / 65536, 4)}
+    assert plan["kept_existing"] == {"AerobicEffect": 2.9}
+    assert plan["absent_in_original"] == []
+
+
+def test_stream_alignment_is_by_timestamp_not_index():
+    records = [{"timestamp": 1000, 138: 90}, {"timestamp": 1001, 138: 89},
+               {"timestamp": 1003, 138: 87}]              # second 1002 missing on the device
+    data, stats = align_stream(records, [0, 1, 2, 3], 138)
+    assert data == [90, 89, None, 87]
+    assert stats == {"matched": 3, "points": 4, "non_null": 3}
+
+
+def test_stream_plan_skips_existing_absent_and_misaligned():
+    m = load_field_mappings(ITEMS)
+    records = [{"timestamp": 1000 + i, 138: 90 - i, "stance_time": 250.0} for i in range(10)]
+    messages = {"record": records}
+    activity = {"stream_types": ["time", "GarminGCT"]}
+    plan = plan_streams(messages, activity, list(range(10)), m)
+    assert [w["type"] for w in plan["writes"]] == ["Stamina"]
+    assert plan["writes"][0]["custom"] is True and plan["writes"][0]["data"][0] == 90
+    assert plan["skipped"] == {"GarminGCT": "already on activity"}
+    # Time stream that does not line up with the records at all -> refuse
+    bad = plan_streams(messages, {"stream_types": []}, [5000 + i for i in range(10)], m)
+    assert "alignment too poor" in bad["skipped"]["Stamina"]
+    # Original without stamina -> nothing to write
+    none = plan_streams({"record": [{"timestamp": 1000, "stance_time": 1.0}]}, {"stream_types": []}, [0], m)
+    assert none["skipped"]["Stamina"] == "not in original"

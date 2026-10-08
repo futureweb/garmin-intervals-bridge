@@ -9,8 +9,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .config import Settings
-from .enrich import gap_report, match_activity
-from .fit import compare_fit, extract_original_fit, sha256
+from .enrich import gap_report, load_field_mappings, match_activity, plan_scalars, plan_streams
+from .fit import compare_fit, decode_fit, extract_original_fit, sha256
 from .garmin import GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
@@ -30,6 +30,10 @@ def build_parser() -> argparse.ArgumentParser:
     gap = sub.add_parser("gap", help="Compare one Garmin original with the copy Intervals received; no writes")
     gap.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
     gap.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
+    enrich = sub.add_parser("enrich", help="Fill the Intervals activity's custom fields/streams from the Garmin original (dry run unless --apply)")
+    enrich.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
+    enrich.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
+    enrich.add_argument("--apply", action="store_true", help="Actually PUT fields and streams")
     setup = sub.add_parser("setup-fields", help="Preview/create missing private numeric custom fields")
     setup.add_argument("--apply", action="store_true", help="Actually create missing custom fields")
     sync = sub.add_parser("sync", help="Synchronize (local archive only / dry-run by default)")
@@ -112,6 +116,48 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"activity_id": gid, "matched": matched,
                                       "partner_file": str(store.partner_path(gid)),
                                       "report": gap_report(original, partner)}, indent=2, default=str))
+                    return 0
+                if args.cmd == "enrich":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    gid = args.activity_id
+                    path = store.fit_path(gid)
+                    if not path.is_file():
+                        store.atomic_save(path, garmin.original_fit(gid))
+                    original = path.read_bytes()
+                    messages, _ = decode_fit(original)
+                    if args.intervals_id:
+                        remote_id = args.intervals_id
+                    else:
+                        activity = garmin.activity(gid)
+                        day = datetime.fromisoformat(activity["startTimeGMT"]).date()
+                        found = match_activity(activity, intervals.activities(day - timedelta(days=1), day + timedelta(days=1)))
+                        if found is None:
+                            raise ValueError("No matching Intervals activity; pass --intervals-id if you are sure")
+                        remote_id = str(found["id"])
+                    remote = intervals.activity(remote_id)
+                    mappings = load_field_mappings(intervals.custom_items())
+                    time_stream = next((st.get("data") for st in intervals.streams(remote_id, ["time"])
+                                        if isinstance(st, dict) and st.get("type") == "time"), [])
+                    scalars = plan_scalars(messages, remote, mappings)
+                    streams = plan_streams(messages, remote, time_stream or [], mappings)
+                    plan = {"activity_id": gid, "intervals_id": remote_id, "apply": args.apply,
+                            "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
+                                         "unsupported": mappings.unsupported},
+                            "fields": scalars,
+                            "streams": {"writes": [{k: v for k, v in w.items() if k != "data"} for w in streams["writes"]],
+                                        "skipped": streams["skipped"]},
+                            "previous_enrichment": store.enrichment(gid)}
+                    if args.apply:
+                        result: dict = {}
+                        if scalars["writes"]:
+                            result["fields"] = intervals.update_activity(remote_id, scalars["writes"]) is not None
+                        if streams["writes"]:
+                            body = [{k: v for k, v in w.items() if k != "_stats"} for w in streams["writes"]]
+                            result["streams"] = intervals.put_streams(remote_id, body)
+                        store.record_enrichment(gid, remote_id, sha256(original), list(scalars["writes"]),
+                                                [w["type"] for w in streams["writes"]])
+                        plan["result"] = result
+                    print(json.dumps(plan, indent=2, default=str))
                     return 0
                 if args.cmd == "probe":
                     if args.activity_id:

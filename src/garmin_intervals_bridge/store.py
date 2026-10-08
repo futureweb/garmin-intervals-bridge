@@ -36,6 +36,9 @@ class Store:
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
             day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS enrichment (
+            garmin_id TEXT PRIMARY KEY, intervals_id TEXT NOT NULL, sha256 TEXT,
+            fields TEXT, streams TEXT, updated REAL NOT NULL)""")
         # Additive schema migration for databases created by v0.1.x.
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(activity)")}
         for name, ddl in (("attempts", "INTEGER NOT NULL DEFAULT 0"),
@@ -126,6 +129,22 @@ class Store:
         if not garmin_id.isdecimal():
             raise ValueError("Garmin activity ID must be numeric")
         return self.base / "fits" / f"{garmin_id}.fit"
+
+    def record_enrichment(self, garmin_id: str, intervals_id: str, sha: str,
+                          fields: list[str], streams: list[str]) -> None:
+        self.db.execute("""INSERT INTO enrichment (garmin_id,intervals_id,sha256,fields,streams,updated)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET intervals_id=excluded.intervals_id,
+            sha256=excluded.sha256,fields=excluded.fields,streams=excluded.streams,updated=excluded.updated""",
+                        (garmin_id, intervals_id, sha, json.dumps(sorted(fields)), json.dumps(sorted(streams)), time.time()))
+        self.db.commit()
+
+    def enrichment(self, garmin_id: str) -> dict | None:
+        row = self.db.execute("SELECT intervals_id, sha256, fields, streams, updated FROM enrichment WHERE garmin_id=?",
+                              (garmin_id,)).fetchone()
+        if not row:
+            return None
+        return {"intervals_id": row[0], "sha256": row[1], "fields": json.loads(row[2] or "[]"),
+                "streams": json.loads(row[3] or "[]"), "updated": row[4]}
 
     def partner_path(self, garmin_id: str) -> Path:
         """The copy Intervals holds for this activity, kept next to the original for audits."""
