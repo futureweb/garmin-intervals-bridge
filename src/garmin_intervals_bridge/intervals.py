@@ -148,6 +148,11 @@ class IntervalsClient:
     def update_custom_item(self, item_id: int | str, item: dict) -> Any:
         return self._request("PUT", f"/custom-item/{item_id}", json=item)
 
+    def reorder_custom_items(self, items: list[dict]) -> Any:
+        """PUT /custom-item-indexes: items with their `index` set. Needed after POST, which
+        leaves every new item at index 0; the chart picker then shows none of them."""
+        return self._request("PUT", "/custom-item-indexes", json=items)
+
     def field_provision_plan(self) -> list[tuple[str, str]]:
         codes = {x.get("content", {}).get("code") for x in self.custom_items()
                  if isinstance(x, dict) and x.get("type") == "INPUT_FIELD" and isinstance(x.get("content"), dict)}
