@@ -79,8 +79,8 @@ CHARTS: list[dict[str, Any]] = [
             # spO2 -> spo2); it is the one id here not yet seen in a real chart definition.
             ("native", "kcal_consumed", "kcal", "dec0", "In",
              "line", "none", None, "#2CA02C00", "#2CA02CFF"),
-            ("custom", "GarminTotalCalories", "Out", "line", "none", None, "#D6272800", "#D62728FF", ""),
-            ("custom", "GarminActiveCalories", "Active", "bars", "none", None, "#D6272833", "#D6272880", ""),
+            ("custom", "GarminTotalCalories", "Out", "line", "none", None, "#D6272800", "#D62728FF", "", "kcal"),
+            ("custom", "GarminActiveCalories", "Active", "bars", "none", None, "#D6272833", "#D6272880", "", "kcal"),
         ],
     },
     {
@@ -200,7 +200,7 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Litres",
         "height": 160,
         "plots": [
-            ("custom", "GarminSweatLossLitres", "Sweat", "bars", "none", None, "#FF7F0E66", "#FF7F0EFF", ""),
+            ("custom", "GarminSweatLossLitres", "Sweat", "bars", "none", None, "#FF7F0E66", "#FF7F0EFF", "", "L"),
             ("native", "hydration_volume", "L", "dec1", "Hydr.", "line", "none", None, "#17BECF40", "#17BECFFF"),
         ],
     },
@@ -223,8 +223,8 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("native", "hrv", "ms", "dec0", "HRV", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
-            ("custom", "GarminHRV5MinHigh", "5min", "dot", "none", None, "#9467BD66", "#9467BDFF", ""),
-            ("custom", "GarminHRV7DayAvg", "7d avg", "line", "fill_in", None, "#2CA02C00", "#2CA02CFF", ""),
+            ("custom", "GarminHRV5MinHigh", "5min", "dot", "none", None, "#9467BD66", "#9467BDFF", "", "ms"),
+            ("custom", "GarminHRV7DayAvg", "7d avg", "line", "fill_in", None, "#2CA02C00", "#2CA02CFF", "", "ms"),
         ],
     },
 ]

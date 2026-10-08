@@ -158,3 +158,12 @@ def test_bridge_chart_under_an_earlier_name_is_renamed_not_duplicated():
     foreign = {"type": "FITNESS_CHART", "name": "Garmin sleep stages", "id": 78, "content": {"plots": []}}
     plan = plan_charts(items("GarminSleepDeepMinutes") + [foreign])
     assert any(c["name"] == "Garmin Bridge: Sleep stages" for c in plan["create"]) and not plan["update"]
+
+
+def test_plots_that_share_an_axis_share_the_native_plots_scale():
+    # a native plot has a scale, a custom one None: Intervals would draw two axes for one unit
+    for name, codes in (("Garmin Bridge: HRV detail", ("GarminHRV5MinHigh", "GarminHRV7DayAvg")),
+                        ("Garmin Bridge: Nutrition intake vs. burn", ("GarminTotalCalories", "GarminActiveCalories")),
+                        ("Garmin Bridge: Hydration & sweat loss", ("GarminSweatLossLitres",))):
+        chart = next(c for c in plan_charts(items(*codes))["create"] if c["name"] == name)
+        assert len({p["scale"] for p in chart["content"]["plots"]}) == 1, name
