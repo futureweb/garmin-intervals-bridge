@@ -1,6 +1,13 @@
 from test_fit import build_fit
 
-from garmin_intervals_bridge.enrich import gap_report, match_activity
+from garmin_intervals_bridge.enrich import (
+    align_stream,
+    gap_report,
+    load_field_mappings,
+    match_activity,
+    plan_scalars,
+    plan_streams,
+)
 
 GARMIN = {"activityId": 42, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3600.0}
 
@@ -65,7 +72,6 @@ def test_gap_report_counts_message_differences():
 
 
 # ---- writing the gap back ----
-from garmin_intervals_bridge.enrich import align_stream, load_field_mappings, plan_scalars, plan_streams
 
 ITEMS = [
     {"type": "ACTIVITY_FIELD", "content": {"code": "AerobicEffect", "fit_session_field": "total_training_effect"}},
