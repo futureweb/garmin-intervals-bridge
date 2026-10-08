@@ -121,17 +121,22 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Garmin activity & hydration",
-        "title": "Intensity minutes, sweat loss, hydration",
-        "y": "Minutes · litres",
-        "height": 180,
+        "title": "Intensity minutes (moderate / vigorous)",
+        "y": "Minutes",
+        "height": 160,
         "plots": [
-            ("custom", "GarminIntensityModerateMinutes", "Mod", "bars", "none",
-             None, "#1F77B466", "#1F77B4FF", "im"),
-            ("custom", "GarminIntensityVigorousMinutes", "Vig", "bars", "none",
-             None, "#D6272866", "#D62728FF", "im"),
-            ("custom", "GarminSweatLossLitres", "Sweat", "dot", "none", None, "#17BECF66", "#17BECFFF", ""),
-            ("native", "hydration_volume", "litres", "dec1", "Hydr.",
-             "line", "none", None, "#17BECF00", "#17BECF88"),
+            ("custom", "GarminIntensityModerateMinutes", "Mod", "bars", "none", None, "#1F77B466", "#1F77B4FF", "im"),
+            ("custom", "GarminIntensityVigorousMinutes", "Vig", "bars", "none", None, "#D6272866", "#D62728FF", "im"),
+        ],
+    },
+    {
+        "name": "Garmin hydration & sweat loss",
+        "title": "Hydration logged and estimated sweat loss (litres)",
+        "y": "Litres",
+        "height": 160,
+        "plots": [
+            ("native", "hydration_volume", "L", "dec1", "Hydr.", "line", "none", None, "#17BECF40", "#17BECFFF"),
+            ("custom", "GarminSweatLossLitres", "Sweat", "dot", "none", None, "#FF7F0E66", "#FF7F0EFF", ""),
         ],
     },
     {
