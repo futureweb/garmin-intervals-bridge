@@ -11,7 +11,7 @@ from pathlib import Path
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, decode_fit, extract_original_fit, sha256
-from .garmin import GarminSource
+from .garmin import ESSENTIAL_ENDPOINTS, GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
 from .sync import sync_activities, sync_enrich, sync_wellness, watch_once
@@ -58,6 +58,8 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--apply", action="store_true")
     backfill.add_argument("--pause", type=float, default=2.0, help="Seconds between days/activities (default 2)")
     backfill.add_argument("--force-wellness", action="store_true", help="Re-fetch days already fetched")
+    backfill.add_argument("--endpoints", choices=["essential", "all"], default="essential",
+                          help="Wellness: per-day measurement endpoints only (default) or every endpoint")
     pending = sub.add_parser("reset-pending", help="After manual duplicate check, clear a pending upload lock")
     pending.add_argument("--activity-id", required=True)
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
@@ -163,9 +165,12 @@ def main(argv: list[str] | None = None) -> int:
                         raise ValueError("--from must not be after --to")
                     if args.scope == "wellness":
                         days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
-                        log.info("Backfill wellness: %d days, ~22 Garmin requests each, %.1fs pause", len(days), args.pause)
+                        log.info("Backfill wellness: %d days, %s Garmin requests each, %.1fs pause", len(days),
+                                 len(ESSENTIAL_ENDPOINTS) if args.endpoints == "essential" else "~23", args.pause)
+                        endpoints = ESSENTIAL_ENDPOINTS if args.endpoints == "essential" else None
                         out = sync_wellness(settings, garmin, intervals, store, apply=args.apply,
-                                            force=args.force_wellness, days=days, pause_seconds=args.pause)
+                                            force=args.force_wellness, days=days, pause_seconds=args.pause,
+                                            endpoints=endpoints)
                     else:
                         log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause", start, end, args.pause)
                         out = sync_enrich(settings, garmin, intervals, store, apply=args.apply,
