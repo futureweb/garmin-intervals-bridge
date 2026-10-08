@@ -14,7 +14,7 @@ from .fit import compare_fit, decode_fit, extract_original_fit, sha256
 from .garmin import GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
-from .sync import sync_activities, sync_enrich, sync_wellness
+from .sync import sync_activities, sync_enrich, sync_wellness, watch_once
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +49,15 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--force-wellness", action="store_true", help="Ignore cached wellness refresh window")
     sync.add_argument("--activity-days", type=int, help="Override activity lookback (1-30 days)")
     sync.add_argument("--wellness-days", type=int, help="Override wellness lookback (1-30 days)")
+    watch = sub.add_parser("watch", help="One cheap poll of Intervals; enrich only what appeared since the last poll (dry run unless --apply)")
+    watch.add_argument("--apply", action="store_true")
+    backfill = sub.add_parser("backfill", help="Enrich a date range from the past, paced (dry run unless --apply)")
+    backfill.add_argument("--scope", choices=["activities", "wellness"], required=True)
+    backfill.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD")
+    backfill.add_argument("--to", dest="end", help="YYYY-MM-DD (default: today)")
+    backfill.add_argument("--apply", action="store_true")
+    backfill.add_argument("--pause", type=float, default=2.0, help="Seconds between days/activities (default 2)")
+    backfill.add_argument("--force-wellness", action="store_true", help="Re-fetch days already fetched")
     pending = sub.add_parser("reset-pending", help="After manual duplicate check, clear a pending upload lock")
     pending.add_argument("--activity-id", required=True)
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
@@ -141,6 +150,28 @@ def main(argv: list[str] | None = None) -> int:
                     fit = garmin.original_fit(gid)
                     store.atomic_save(path, fit)
                     print(json.dumps({"activity_id": gid, "file": str(path), "bytes": len(fit), "sha256": sha256(fit)}, indent=2))
+                    return 0
+                if args.cmd == "watch":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    print(json.dumps({"apply": args.apply, "watch": watch_once(settings, garmin, intervals, store, apply=args.apply)}, indent=2))
+                    return 0
+                if args.cmd == "backfill":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    start = date.fromisoformat(args.start)
+                    end = date.fromisoformat(args.end) if args.end else datetime.now(settings.timezone).date()
+                    if start > end:
+                        raise ValueError("--from must not be after --to")
+                    if args.scope == "wellness":
+                        days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
+                        log.info("Backfill wellness: %d days, ~22 Garmin requests each, %.1fs pause", len(days), args.pause)
+                        out = sync_wellness(settings, garmin, intervals, store, apply=args.apply,
+                                            force=args.force_wellness, days=days, pause_seconds=args.pause)
+                    else:
+                        log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause", start, end, args.pause)
+                        out = sync_enrich(settings, garmin, intervals, store, apply=args.apply,
+                                          date_range=(start, end), pause_seconds=args.pause)
+                    print(json.dumps({"apply": args.apply, "scope": args.scope, "from": str(start), "to": str(end),
+                                      "result": out}, indent=2))
                     return 0
                 if args.cmd == "sync":
                     for name in ("activity_days", "wellness_days"):

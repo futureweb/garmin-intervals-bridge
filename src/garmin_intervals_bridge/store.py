@@ -36,6 +36,8 @@ class Store:
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
             day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS intervals_seen (
+            intervals_id TEXT PRIMARY KEY, external_id TEXT, source TEXT, first_seen REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS enrichment (
             garmin_id TEXT PRIMARY KEY, intervals_id TEXT NOT NULL, sha256 TEXT,
             fields TEXT, streams TEXT, updated REAL NOT NULL)""")
@@ -129,6 +131,14 @@ class Store:
         if not garmin_id.isdecimal():
             raise ValueError("Garmin activity ID must be numeric")
         return self.base / "fits" / f"{garmin_id}.fit"
+
+    def intervals_seen(self, intervals_id: str) -> bool:
+        return self.db.execute("SELECT 1 FROM intervals_seen WHERE intervals_id=?", (intervals_id,)).fetchone() is not None
+
+    def mark_intervals_seen(self, intervals_id: str, external_id: str | None, source: str | None) -> None:
+        self.db.execute("INSERT OR IGNORE INTO intervals_seen VALUES (?,?,?,?)",
+                        (intervals_id, external_id, source, time.time()))
+        self.db.commit()
 
     def record_enrichment(self, garmin_id: str, intervals_id: str, sha: str,
                           fields: list[str], streams: list[str]) -> None:

@@ -98,4 +98,5 @@ def test_extended_metrics_known_units():
     assert custom["GarminFitnessAge"] == 32.5
     assert custom["GarminPredicted10KSeconds"] == 2860
     assert nat["hydrationVolume"] == 2.1
+    assert nat["spO2"] == 96.7 and nat["respiration"] == 13.5
     assert custom["GarminSweatLossLitres"] == 1.675

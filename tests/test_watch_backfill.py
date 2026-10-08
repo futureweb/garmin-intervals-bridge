@@ -1,0 +1,79 @@
+from datetime import date
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
+from garmin_intervals_bridge.store import Store
+from garmin_intervals_bridge.sync import sync_wellness, watch_once
+from test_mapping import sample
+from test_sync_enrich import GarminFake, IntervalsFake
+
+
+def settings(tmp_path):
+    return SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), activity_days=3,
+                           wellness_days=3, wellness_refresh_hours=8)
+
+
+class PollingIntervals(IntervalsFake):
+    def __init__(self):
+        super().__init__()
+        self.polls = []
+
+    def activities(self, start, end, fields=None, limit=None):
+        self.polls.append((fields, limit))
+        return self.remote + [{"id": "i7", "source": "UPLOAD", "external_id": "7_ACTIVITY.fit"}]
+
+
+def test_watch_contacts_garmin_only_for_unseen_official_imports(tmp_path):
+    st, g, i = Store(tmp_path), GarminFake(), PollingIntervals()
+    m = watch_once(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert i.polls[0] == (["id", "external_id", "source", "start_date"], 50)
+    assert m["new"] == 2 and m["ignored"] == 1 and m["enriched"] == 1
+    assert g.downloads == 1 and i.updates == [("i42", {"AerobicEffect": 3.2})]
+    # Next minute: nothing new, no Garmin call, no write
+    m = watch_once(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert m["new"] == 0 and g.downloads == 1 and len(i.updates) == 1
+    st.close()
+
+
+def test_watch_dry_run_plans_without_writing(tmp_path):
+    st, g, i = Store(tmp_path), GarminFake(), PollingIntervals()
+    m = watch_once(settings(tmp_path), g, i, st, apply=False, today=date(2026, 10, 8))
+    assert m["planned"] == 1 and i.updates == []
+    st.close()
+
+
+class WellnessGarmin:
+    def __init__(self):
+        self.days = []
+
+    def snapshot(self, day):
+        self.days.append(day)
+        return sample()
+
+
+class WellnessIntervals:
+    def __init__(self):
+        self.writes = []
+
+    def wellness(self, day):
+        return {"locked": False}
+
+    def write_wellness(self, day, patch):
+        self.writes.append((day, patch))
+
+    def provision_fields(self, apply, needed):
+        return list(needed)
+
+
+def test_backfill_walks_an_explicit_day_list_in_order(tmp_path):
+    st, g, i = Store(tmp_path), WellnessGarmin(), WellnessIntervals()
+    days = [date(2026, 9, 1), date(2026, 9, 2), date(2026, 9, 3)]
+    m = sync_wellness(settings(tmp_path), g, i, st, apply=True, days=days, pause_seconds=0,
+                      today=date(2026, 10, 8))
+    assert g.days == days and m["days_checked"] == 3 and m["writes"] == 3
+    assert all(st.wellness_recent(d, 8) for d in days)
+    # A second backfill skips fetched days unless forced
+    m = sync_wellness(settings(tmp_path), g, i, st, apply=True, days=days, pause_seconds=0,
+                      today=date(2026, 10, 8))
+    assert m["days_skipped_recent"] == 3 and len(g.days) == 3
+    st.close()
