@@ -115,20 +115,31 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
+        # Each prediction gets its own axis: two series per chart, two scales per chart. Sharing
+        # one axis flattens every line to the edge, since the four times differ by a factor of ten.
         "name": "Garmin race predictions",
-        "title": "Predicted race times: 5K / 10K (left axis), half / marathon (right axis)",
-        "y": "5K / 10K",
-        "y2": "Half / Marathon",
-        "height": 180,
+        "title": "Predicted race times: 5K (left axis), 10K (right axis)",
+        "y": "5K",
+        "y2": "10K",
+        "height": 150,
         "plots": [
             ("custom", "GarminPredicted5KSeconds", "5K", "line", "none", None, "#2CA02C00", "#2CA02CFF", "",
-             "short", "interval_time"),
+             "5k", "interval_time"),
             ("custom", "GarminPredicted10KSeconds", "10K", "line", "none", None, "#1F77B400", "#1F77B4FF", "",
-             "short", "interval_time"),
+             "10k", "interval_time"),
+        ],
+    },
+    {
+        "name": "Garmin race predictions (half / marathon)",
+        "title": "Predicted race times: half marathon (left axis), marathon (right axis)",
+        "y": "Half",
+        "y2": "Marathon",
+        "height": 150,
+        "plots": [
             ("custom", "GarminPredictedHalfSeconds", "Half", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "",
-             "long", "interval_time"),
+             "half", "interval_time"),
             ("custom", "GarminPredictedMarathonSeconds", "Mara.", "line", "none",
-             None, "#D6272800", "#D62728FF", "", "long", "interval_time"),
+             None, "#D6272800", "#D62728FF", "", "marathon", "interval_time"),
         ],
     },
     {
