@@ -64,7 +64,7 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     out = setup_charts(f, apply=True)
     assert [c["name"] for c in out["created"]] == names
     assert "_missing_fields" not in f.posted[0] and len(f.posted[0]["content"]["plots"]) == 2
-    assert len(CHARTS) == 15
+    assert len(CHARTS) == 19
 
 
 def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched():

@@ -207,6 +207,55 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
+        # Native-only charts (no custom field to wait for): the bridge fills these wellness fields.
+        "name": "Garmin Bridge: SpO2 & respiration",
+        "title": "Overnight SpO2 (left axis) and respiration rate (right axis) with 7-day averages",
+        "y": "SpO2 %",
+        "y2": "Breaths / min",
+        "height": 180,
+        "plots": [
+            ("native", "spo2", "spo2", "dec1", "SpO2", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
+            ("native", "spo2", "spo2", "dec1", "SpO2 7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF"),
+            ("native", "respiration", "/min", "dec1", "Resp.", "dot", "none", None, "#D6272866", "#D62728FF"),
+            ("native", "respiration", "/min", "dec1", "Resp 7d", "line", "moving_avg", 7, "#D6272800", "#D62728FF"),
+        ],
+    },
+    {
+        "name": "Garmin Bridge: Sleep score, sleeping HR & stress",
+        "title": "Sleep score and sleep stress (left axis), sleeping and resting HR (right axis)",
+        "y": "Score",
+        "y2": "bpm",
+        "height": 180,
+        "plots": [
+            ("native", "sleep_score", "sleep_score", "dec0", "Score", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
+            ("custom", "GarminSleepStressAvg", "Stress", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "",
+             "sleep_score"),
+            ("native", "avg_sleeping_hr", "bpm", "dec0", "SleepHR", "line", "none", None, "#D6272800", "#D62728FF"),
+            ("native", "resting_hr", "bpm", "dec0", "RestHR", "line", "none", None, "#9467BD00", "#9467BDFF"),
+        ],
+    },
+    {
+        "name": "Garmin Bridge: Steps",
+        "title": "Steps per day with a 7-day average",
+        "y": "Steps",
+        "height": 160,
+        "plots": [
+            ("native", "steps", "steps", "dec0", "Steps", "bars", "none", None, "#2CA02C4D", "#2CA02CFF"),
+            ("native", "steps", "steps", "dec0", "7d avg", "line", "moving_avg", 7, "#2CA02C00", "#2CA02CFF"),
+        ],
+    },
+    {
+        "name": "Garmin Bridge: Body composition",
+        "title": "Weight (left axis) and body fat (right axis), carried over days without a weigh-in",
+        "y": "kg",
+        "y2": "Body fat %",
+        "height": 160,
+        "plots": [
+            ("native", "weight", "weight", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
+            ("native", "body_fat", "percent", "dec1", "Fat %", "line", "fill_in", None, "#8C564B00", "#8C564BFF"),
+        ],
+    },
+    {
         "name": "Garmin Bridge: Skin temperature",
         "aliases": ("Garmin skin temperature",),
         "title": "Overnight skin temperature deviation (°C)",

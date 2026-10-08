@@ -42,7 +42,7 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - Hardened systemd units (`deploy/`), container image smoke-tested with
   Podman, CI with ruff, pip-audit and pytest.
 
-- `setup-charts`: fifteen private fitness charts for the synced values, using
+- `setup-charts`: nineteen private fitness charts for the synced values, using
   Intervals' real chart field ids (read from its app bundle), unique item
   indexes (otherwise the chart picker hides them), and completion of the
   bridge's own charts when fields appear later.
