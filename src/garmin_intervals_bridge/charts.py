@@ -165,18 +165,41 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
     return plot
 
 
+BRIDGE_MARK = "Created by garmin-intervals-bridge for the values it syncs."
+
+
 def plan_charts(custom_items: list[dict]) -> dict:
-    """Charts to create: those not yet present by name, with plots for fields that exist."""
-    existing = {it.get("name") for it in custom_items if it.get("type") == "FITNESS_CHART"}
+    """Charts to create or complete.
+
+    A chart is created when no chart of that name exists and at least one of
+    its fields does. A chart the bridge created earlier (recognised by its
+    description) is updated when fields it lacked have appeared since, e.g.
+    after a backfill with every endpoint. Charts the athlete made themselves
+    are never touched, even if the name matches.
+    """
+    existing = {it.get("name"): it for it in custom_items if it.get("type") == "FITNESS_CHART"}
     inputs = {it["content"]["code"]: it for it in custom_items
               if it.get("type") == "INPUT_FIELD" and isinstance(it.get("content"), dict) and it["content"].get("code")}
-    create, skipped = [], {}
+    create, update, skipped = [], [], {}
     for chart in CHARTS:
-        if chart["name"] in existing:
-            skipped[chart["name"]] = "already exists"
-            continue
         plots = [p for i, spec in enumerate(chart["plots"], 1) if (p := _plot(i, spec, inputs))]
         missing = [spec[1] for spec in chart["plots"] if spec[0] == "custom" and spec[1] not in inputs]
+        present = existing.get(chart["name"])
+        if present is not None:
+            if present.get("description") != BRIDGE_MARK:
+                skipped[chart["name"]] = "exists and was not created by the bridge"
+                continue
+            have = {p.get("field") for p in (present.get("content") or {}).get("plots", [])}
+            gained = [p["field"] for p in plots if p["field"] not in have]
+            if not gained:
+                skipped[chart["name"]] = "already complete"
+                continue
+            content = dict(present.get("content") or {})
+            content["plots"] = plots
+            update.append({"id": present["id"], "name": chart["name"], "type": "FITNESS_CHART",
+                           "visibility": present.get("visibility", "PRIVATE"), "description": BRIDGE_MARK,
+                           "content": content, "_gained_fields": gained, "_missing_fields": missing})
+            continue
         if not plots:
             skipped[chart["name"]] = f"none of its fields exist yet: {missing}"
             continue
@@ -185,9 +208,8 @@ def plan_charts(custom_items: list[dict]) -> dict:
                    "yAxisMin": None, "yAxisMax": None, "y2AxisLabel": None, "y2AxisMin": None,
                    "y2AxisMax": None, "y3AxisMin": None, "y3AxisMax": None, "stackTo100Percent": None}
         create.append({"name": chart["name"], "type": "FITNESS_CHART", "visibility": "PRIVATE",
-                       "description": "Created by garmin-intervals-bridge for the values it syncs.",
-                       "content": content, "_missing_fields": missing})
-    return {"create": create, "skipped": skipped}
+                       "description": BRIDGE_MARK, "content": content, "_missing_fields": missing})
+    return {"create": create, "update": update, "skipped": skipped}
 
 
 def setup_charts(intervals: Any, *, apply: bool) -> dict:
@@ -195,10 +217,16 @@ def setup_charts(intervals: Any, *, apply: bool) -> dict:
     out = {"apply": apply, "skipped": plan["skipped"],
            "charts": [{"name": c["name"], "plots": [p["field"] for p in c["content"]["plots"]],
                        "fields_missing": c["_missing_fields"]} for c in plan["create"]],
-           "created": []}
+           "updates": [{"name": c["name"], "id": c["id"], "adds": c["_gained_fields"],
+                        "fields_missing": c["_missing_fields"]} for c in plan["update"]],
+           "created": [], "updated": []}
     if apply:
         for chart in plan["create"]:
             body = {k: v for k, v in chart.items() if not k.startswith("_")}
             result = intervals.create_custom_item(body)
             out["created"].append({"name": chart["name"], "id": (result or {}).get("id")})
+        for chart in plan["update"]:
+            body = {k: v for k, v in chart.items() if not k.startswith("_")}
+            intervals.update_custom_item(chart["id"], body)
+            out["updated"].append({"name": chart["name"], "id": chart["id"], "adds": chart["_gained_fields"]})
     return out

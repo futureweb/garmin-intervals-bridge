@@ -145,6 +145,9 @@ class IntervalsClient:
     def create_custom_item(self, item: dict) -> Any:
         return self._request("POST", "/custom-item", json=item)
 
+    def update_custom_item(self, item_id: int | str, item: dict) -> Any:
+        return self._request("PUT", f"/custom-item/{item_id}", json=item)
+
     def field_provision_plan(self) -> list[tuple[str, str]]:
         codes = {x.get("content", {}).get("code") for x in self.custom_items()
                  if isinstance(x, dict) and x.get("type") == "INPUT_FIELD" and isinstance(x.get("content"), dict)}
