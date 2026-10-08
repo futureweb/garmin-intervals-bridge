@@ -31,13 +31,13 @@ CHARTS: list[dict[str, Any]] = [
         "aliases": ("Garmin readiness & recovery",),
         "title": "Readiness, recovery time, acute load (Garmin)",
         "y": "Readiness",
-        "y2": "Recovery (min)",
+        "y2": "Recovery (h)",
         "height": 180,
         "plots": [
             ("custom", "GarminTrainingReadiness", "Ready", "bars", "none",
              None, "#009E0040", "#009E00FF", "", "score"),
-            ("custom", "GarminRecoveryTimeMinutes", "Recov.", "line", "none",
-             None, "#D6272800", "#D62728FF", "", "minutes"),
+            ("custom", "GarminRecoveryTimeHours", "Recov.", "line", "none",
+             None, "#D6272800", "#D62728FF", "", "hours", "dec1"),
             # acute load is a daily value: a day without one stays empty (fill_in would carry a stale
             # load across weeks without a watch sync)
             ("custom", "GarminAcuteLoad", "Load7d", "line", "none", None, "#1F77B400", "#1F77B4FF", "", "load"),

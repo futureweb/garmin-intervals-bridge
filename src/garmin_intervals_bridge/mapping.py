@@ -27,6 +27,7 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminBodyBatteryDrained": CustomField("Garmin Body Battery Drained", None, 100),
     "GarminTrainingReadiness": CustomField("Garmin Morning Training Readiness", None, 100),
     "GarminRecoveryTimeMinutes": CustomField("Garmin Recovery Time", "min"),
+    "GarminRecoveryTimeHours": CustomField("Garmin Recovery Time (h)", "h"),
     "GarminHRV5MinHigh": CustomField("Garmin HRV 5-min High", "ms"),
     "GarminHRV7DayAvg": CustomField("Garmin HRV 7-day Average", "ms"),
     "GarminEnduranceScore": CustomField("Garmin Endurance Score"),
@@ -125,10 +126,18 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     stats = data.get("stats") or {}
     sleep = get(data, "sleep", "dailySleepDTO") or {}
     hrv = get(data, "hrv", "hrvSummary") or {}
-    morning = data.get("morning_readiness")
-    if not isinstance(morning, dict) or not morning:
-        morning = next((x for x in data.get("training_readiness", []) or []
-                        if isinstance(x, dict) and x.get("inputContext") == "MORNING_REPORT"), {})
+    # Garmin reports training readiness several times a day: after waking up (the Morning
+    # Report), after activities, and on updates in between. The readiness score is the
+    # morning's; recovery time and acute load are taken at the end of the day, so a hard
+    # session shows its recovery time on its own day, not on the next morning.
+    entries = [x for x in (data.get("training_readiness") or []) if isinstance(x, dict)] \
+        if isinstance(data.get("training_readiness"), list) else []
+    entries.sort(key=lambda x: str(x.get("timestampLocal") or x.get("timestamp") or ""))
+    morning = next((x for x in entries if x.get("inputContext") in ("AFTER_WAKEUP_RESET", "MORNING_REPORT")), None)
+    if morning is None:
+        old_style = data.get("morning_readiness")          # archives from before the list was kept
+        morning = old_style if isinstance(old_style, dict) and old_style else (entries[0] if entries else {})
+    end_of_day = entries[-1] if entries else morning
     battery = _day_record(data.get("body_battery"), target)
     endurance = _day_record(data.get("endurance_score"), target)
     hill = _day_record(data.get("hill_score"), target)
@@ -161,8 +170,12 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     if readiness_score is not None:
         put(native, "readiness", readiness_score, high=100)
         put(custom, "GarminTrainingReadiness", readiness_score, high=100)
-    put(custom, "GarminRecoveryTimeMinutes", choose(morning, ("recoveryTime",), high=30000), high=30000)
-    put(custom, "GarminAcuteLoad", choose(morning, ("acuteLoad",)), high=3000)
+    if target < today or not entries:
+        # the day's last reading, final once the day is over (an old archive only has the morning)
+        put(custom, "GarminRecoveryTimeMinutes", choose(end_of_day, ("recoveryTime",), high=30000), high=30000)
+        if "GarminRecoveryTimeMinutes" in custom:
+            custom["GarminRecoveryTimeHours"] = round(custom["GarminRecoveryTimeMinutes"] / 60, 1)
+        put(custom, "GarminAcuteLoad", choose(end_of_day, ("acuteLoad",)), high=3000)
     put(native, "vo2max", choose(maximum, ("generic", "vo2MaxPreciseValue"),
                                   ("generic", "vo2MaxValue"), high=100), high=100)
     put(custom, "GarminVO2MaxCycling", choose(maximum, ("cycling", "vo2MaxPreciseValue"),
@@ -256,8 +269,11 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     return native, custom
 
 
-def merge_wellness(existing: dict, native: dict, custom: dict) -> dict:
+def merge_wellness(existing: dict, native: dict, custom: dict, rewrite: set[str] | None = None) -> dict:
     """Add missing values only. Never overwrite locked, manually entered, or synced values.
+
+    `rewrite` names the bridge's own `Garmin…` custom fields whose existing value may be
+    replaced (after a mapping correction); native fields can never be rewritten.
 
     Custom wellness fields are ordinary top-level keys named by their code:
     verified against the live API on 2026-10-08, where `BodyBatteryMax` sits
@@ -268,6 +284,6 @@ def merge_wellness(existing: dict, native: dict, custom: dict) -> dict:
         return {}
     patch: dict = {}
     for key, value in {**native, **custom}.items():
-        if existing.get(key) is None:
+        if existing.get(key) is None or (rewrite and key in rewrite and key in custom and existing.get(key) != value):
             patch[key] = value
     return patch

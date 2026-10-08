@@ -77,6 +77,8 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--archive-only", action="store_true",
                           help="Activities: download the original FIT files that are not on disk yet and "
                                "leave Intervals alone (a local mirror of every recording)")
+    backfill.add_argument("--rewrite", help="Wellness: comma-separated bridge fields (Garmin...) whose existing "
+                                            "values may be replaced, after a mapping correction")
     backfill.add_argument("--from-archive", action="store_true",
                           help="Wellness: map the locally archived snapshots instead of asking Garmin "
                                "(completes the past after the mapping gained fields; no Garmin requests)")
@@ -308,10 +310,14 @@ def main(argv: list[str] | None = None) -> int:
                             log.info("Backfill wellness: %d days, %d Garmin requests each, %.1fs pause", len(days),
                                      len(parse_endpoints(args.endpoints) or DAY_ENDPOINTS), args.pause)
                         endpoints = parse_endpoints(args.endpoints) or tuple(DAY_ENDPOINTS)
+                        rewrite = {c.strip() for c in (args.rewrite or "").split(",") if c.strip()}
+                        if any(not c.startswith("Garmin") for c in rewrite):
+                            raise ValueError("--rewrite accepts the bridge's own Garmin... fields only")
                         out = sync_wellness(settings, garmin, intervals, store, apply=args.apply,
                                             force=args.force_wellness, days=days,
                                             pause_seconds=0 if args.from_archive else args.pause,
-                                            endpoints=endpoints, from_archive=args.from_archive)
+                                            endpoints=endpoints, from_archive=args.from_archive,
+                                            rewrite=rewrite or None)
                     else:
                         log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause%s",
                                  start, end, args.pause, " (archive only)" if args.archive_only else "")

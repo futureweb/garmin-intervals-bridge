@@ -135,3 +135,25 @@ def test_recommended_profile_drops_duplicates_goals_and_subscores():
     assert {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} <= set(all_custom)
     assert not {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} & set(rec)
     assert rec["GarminHillScore"] == 73 and rec["GarminHillStrength"] == 68 and nat["spO2"] == 96.7
+
+
+def test_readiness_is_the_mornings_recovery_the_days_last_reading():
+    from garmin_intervals_bridge.mapping import map_wellness, merge_wellness
+    src = sample()
+    src["data"].pop("morning_readiness", None)
+    src["data"]["training_readiness"] = [
+        {"timestampLocal": "2026-08-08T21:01:50.0", "inputContext": "AFTER_POST_EXERCISE_RESET", "score": 5,
+         "recoveryTime": 5757, "acuteLoad": 795},
+        {"timestampLocal": "2026-08-08T09:33:10.0", "inputContext": "AFTER_WAKEUP_RESET", "score": 85,
+         "recoveryTime": 1, "acuteLoad": 192},
+    ]
+    nat, custom = map_wellness(src, date(2026, 8, 8), date(2026, 8, 9))
+    assert custom["GarminTrainingReadiness"] == 85                       # the morning
+    assert custom["GarminRecoveryTimeMinutes"] == 5757 and custom["GarminRecoveryTimeHours"] == 96.0
+    assert custom["GarminAcuteLoad"] == 795                              # the evening
+    _, today = map_wellness(src, date(2026, 8, 8), date(2026, 8, 8))
+    assert today["GarminTrainingReadiness"] == 85 and "GarminRecoveryTimeMinutes" not in today   # waits for the day to end
+    # a mapping correction may replace the bridge's own values, never native ones
+    existing = {"GarminRecoveryTimeMinutes": 1, "GarminAcuteLoad": 192, "restingHR": 44}
+    patch = merge_wellness(existing, {"restingHR": 50}, custom, rewrite={"GarminRecoveryTimeMinutes", "restingHR"})
+    assert patch["GarminRecoveryTimeMinutes"] == 5757 and "restingHR" not in patch and "GarminAcuteLoad" not in patch

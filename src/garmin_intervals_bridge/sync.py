@@ -262,7 +262,7 @@ def wellness_due(day: date, current: date, fetched: float | None, midnight: floa
 
 
 def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
-                        metrics: dict, *, apply: bool) -> bool:
+                        metrics: dict, *, apply: bool, rewrite: set[str] | None = None) -> bool:
     """Map one snapshot and add what Intervals lacks. False when the day is locked there."""
     native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
     if not native and not custom:
@@ -273,7 +273,7 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         metrics["days_locked"] += 1
         log.info("Skipping locked wellness day %s", day)
         return False
-    changes = merge_wellness(existing, native, custom)
+    changes = merge_wellness(existing, native, custom, rewrite)
     if changes:
         metrics["days_with_changes"] += 1
         log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
@@ -293,7 +293,7 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,
                   today: date | None = None, days: list[date] | None = None,
                   pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None,
-                  from_archive: bool = False) -> dict:
+                  from_archive: bool = False, rewrite: set[str] | None = None) -> dict:
     """Daily wellness. `days` (a backfill) replaces the lookback; `pause_seconds`
     is slept between days because each day costs up to ~23 Garmin requests.
 
@@ -344,7 +344,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                 continue
             store.mark_wellness(day)                     # the throttle counts the read, not the write
         try:
-            unlocked = _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply)
+            unlocked = _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply,
+                                           rewrite=rewrite)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             metrics["failed"] += 1
             log.warning("Wellness %s not written: %s", day, type(exc).__name__)

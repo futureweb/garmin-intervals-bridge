@@ -19,7 +19,7 @@ def test_plan_uses_only_fields_that_exist_and_skips_existing_charts():
     assert "Garmin Bridge: Sleep stages" in plan["skipped"]                      # none of its fields exist
     readiness = names["Garmin Bridge: Readiness & recovery"]
     assert [p["field"] for p in readiness["content"]["plots"]] == ["GarminTrainingReadiness"]
-    assert readiness["_missing_fields"] == ["GarminRecoveryTimeMinutes", "GarminAcuteLoad"]
+    assert readiness["_missing_fields"] == ["GarminRecoveryTimeHours", "GarminAcuteLoad"]
     assert readiness["visibility"] == "PRIVATE" and readiness["type"] == "FITNESS_CHART"
     plot = readiness["content"]["plots"][0]
     assert plot["filter"] == "dec0" and plot["customInput"]["content"]["code"] == "GarminTrainingReadiness"
