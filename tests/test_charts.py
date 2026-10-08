@@ -35,7 +35,7 @@ def test_native_plots_carry_scale_and_moving_average_args():
     assert skin["content"]["plots"][1]["aggArgs"] == {"days": 7}
     load = next(c for c in plan_charts(items("GarminAcuteLoad"))["create"]
                 if c["name"] == "Garmin Bridge: Readiness & recovery")
-    assert load["content"]["plots"][0]["agg"] == "fill_in" and "aggArgs" not in load["content"]["plots"][0]
+    assert load["content"]["plots"][0]["agg"] == "none" and "aggArgs" not in load["content"]["plots"][0]
 
 
 class Fake:
