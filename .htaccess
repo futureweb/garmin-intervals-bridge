@@ -1,0 +1,5 @@
+# This checkout lives below a web server document root on the development host.
+# Nothing in this repository is meant to be served over HTTP: it contains the
+# sync tool's source and, if someone ever placed a data directory here, Garmin
+# tokens, a SQLite database and personal FIT files. Deny everything.
+Require all denied
