@@ -33,6 +33,9 @@ class GarminFake:
     def activity(self, activity_id):
         return next(a for a in self.acts if str(a["activityId"]) == str(activity_id))
 
+    def activity_extras(self, activity):
+        return {"weather": {"temp": 20}, "gear": None, "exercise_sets": None, "errors": {}}
+
     def snapshot(self, day, endpoints=None):
         return sample()
 

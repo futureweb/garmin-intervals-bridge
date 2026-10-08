@@ -240,6 +240,21 @@ class Store:
                                 + "\n").encode())
         return path
 
+    def activity_extras_path(self, garmin_id: str) -> Path:
+        return self.activity_json_path(garmin_id).with_suffix(".extras.json")
+
+    def save_activity_extras(self, garmin_id: str, obj: dict) -> Path:
+        path = self.activity_extras_path(garmin_id)
+        self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
+                                + "\n").encode())
+        return path
+
+    def save_account_snapshot(self, obj: dict) -> Path:
+        path = self.base / "raw" / "account" / f"{date.today().isoformat()}.json"
+        self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
+                                + "\n").encode())
+        return path
+
     def save_snapshot(self, day: date, snapshot: dict) -> Path:
         path = self.base / "raw" / f"{day.isoformat()}.json"
         self.atomic_save(path, (json.dumps(snapshot, indent=2, ensure_ascii=False,

@@ -108,7 +108,25 @@ DAY_ENDPOINTS = {
     "body_battery_events": "get_body_battery_events",
     "all_day_events": "get_all_day_events",
     "training_load_balance": "get_training_four_week_load_balance",
+    "rhr": "get_rhr_day",                           # resting HR of the day with its 7-day course
+    "daily_training_status": "get_daily_training_status",   # productive / maintaining ... per day
 }
+
+# Not a time series: a snapshot of the account, taken on demand (`snapshot-account`).
+ACCOUNT_ENDPOINTS = {
+    "user_profile": "get_user_profile",
+    "user_settings": "get_userprofile_settings",
+    "devices": "get_devices",
+    "heart_rate_zones": "get_heart_rate_zones",
+    "power_zones": "get_power_zones",
+    "personal_records": "get_personal_record",
+    "earned_badges": "get_earned_badges",
+    "workouts": "get_workouts",
+    "training_plans": "get_training_plans",
+}
+
+# Activity types whose Garmin summary carries exercise sets (names, reps, weights).
+SET_ACTIVITY_TYPES = ("strength_training", "hiit", "indoor_cardio", "cardio_training", "yoga", "pilates")
 
 
 def parse_endpoints(text: str | None) -> tuple[str, ...] | None:
@@ -230,6 +248,59 @@ class GarminSource:
             result["startTimeGMT"] = result["summaryDTO"].get("startTimeGMT")
             result.setdefault("duration", result["summaryDTO"].get("duration"))
         return result
+
+    def activity_extras(self, activity: dict) -> dict:
+        """What Garmin knows about an activity beyond the recording: weather, gear, exercise sets."""
+        gid = str(activity.get("activityId"))
+        out: dict = {"weather": None, "gear": None, "exercise_sets": None, "errors": {}}
+        type_key = str(((activity.get("activityType") or {}).get("typeKey")) or "")
+        calls = [("weather", "get_activity_weather"), ("gear", "get_activity_gear")]
+        if any(t in type_key for t in SET_ACTIVITY_TYPES):
+            calls.append(("exercise_sets", "get_activity_exercise_sets"))
+        for key, method in calls:
+            try:
+                out[key] = self._call(method, gid)
+            except GarminBlocked:
+                raise
+            except Exception as exc:
+                out["errors"][key] = type(exc).__name__
+        return out
+
+    def account_snapshot(self) -> dict:
+        """One read of everything about the account that is not a time series."""
+        from datetime import datetime, timezone
+        raw: dict = {"taken": datetime.now(timezone.utc).isoformat(timespec="seconds"), "data": {}, "errors": {}}
+        for key, method in ACCOUNT_ENDPOINTS.items():
+            try:
+                raw["data"][key] = self._call(method)
+            except GarminBlocked:
+                raise
+            except Exception as exc:
+                raw["errors"][key] = type(exc).__name__
+        devices = raw["data"].get("devices")
+        for dev in devices if isinstance(devices, list) else []:
+            dev_id = str((dev or {}).get("deviceId") or "")
+            if dev_id.isdecimal():
+                try:
+                    raw["data"].setdefault("device_settings", {})[dev_id] = self._call("get_device_settings", dev_id)
+                except GarminBlocked:
+                    raise
+                except Exception as exc:
+                    raw["errors"][f"device_settings:{dev_id}"] = type(exc).__name__
+        client = self._client()
+        number = getattr(client, "profile_id", None) or (raw["data"].get("user_profile") or {}).get("id")
+        if number:
+            try:
+                raw["data"]["gear"] = self._call("get_gear", str(number))
+                for g in raw["data"]["gear"] if isinstance(raw["data"]["gear"], list) else []:
+                    uuid = str((g or {}).get("uuid") or "")
+                    if uuid:
+                        raw["data"].setdefault("gear_stats", {})[uuid] = self._call("get_gear_stats", uuid)
+            except GarminBlocked:
+                raise
+            except Exception as exc:
+                raw["errors"]["gear"] = type(exc).__name__
+        return raw
 
     def original_fit(self, activity_id: int | str) -> bytes:
         api = self._client()

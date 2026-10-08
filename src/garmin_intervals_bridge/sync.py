@@ -195,15 +195,18 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             continue
         try:
             if archive_only:
-                # the recording itself and Garmin's own summary of it (names what the FIT only numbers)
-                path, meta = store.fit_path(gid), store.activity_json_path(gid)
-                if path.is_file() and meta.is_file():
+                # the recording itself, Garmin's own summary of it (names what the FIT only numbers),
+                # and what is not in the file at all: weather, gear, exercise sets
+                path, meta, extras = store.fit_path(gid), store.activity_json_path(gid), store.activity_extras_path(gid)
+                if path.is_file() and meta.is_file() and extras.is_file():
                     metrics["on_disk"] += 1
                     continue
                 if not path.is_file():
                     store.atomic_save(path, garmin.original_fit(gid))
                 if not meta.is_file():
                     store.save_activity_json(gid, garmin.activity(gid))
+                if not extras.is_file():
+                    store.save_activity_extras(gid, garmin.activity_extras(activity))
                 metrics["archived"] += 1
                 log.info("Archived original of %s (%s)", gid, str(activity.get("startTimeLocal") or "")[:10])
                 if pause_seconds:

@@ -90,6 +90,8 @@ def build_parser() -> argparse.ArgumentParser:
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
                          help="Confirm you checked Intervals for duplicates and verified it is absent")
     sub.add_parser("status", help="Show pending uploads requiring manual reconciliation")
+    sub.add_parser("snapshot-account", help="Archive what is not a time series: profile, settings, devices, zones, "
+                                            "gear, personal records, badges, workouts, training plans")
     return parser
 
 
@@ -174,7 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync", "run")
                        else ("wellness",) if scope == "wellness"
                        else ("health",) if args.cmd == "health"
-                       else () if args.cmd == "status"                  # reads only
+                       else () if args.cmd in ("status", "snapshot-account")   # no shared state
                        else ("activities",))
         locks = ExitStack()
         held: list[str] = []
@@ -225,6 +227,12 @@ def main(argv: list[str] | None = None) -> int:
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
                 if args.cmd != "watch" and not (args.cmd == "backfill" and args.from_archive):
                     garmin.login(interactive=False)      # fail early for one-off commands
+                if args.cmd == "snapshot-account":
+                    raw = garmin.account_snapshot()
+                    path = store.save_account_snapshot(raw)
+                    print(json.dumps({"file": str(path), "sections": sorted(raw["data"]), "errors": raw["errors"],
+                                      "garmin_requests": garmin.requests}, indent=2))
+                    return 0
                 if args.cmd == "gap":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     gid = args.activity_id

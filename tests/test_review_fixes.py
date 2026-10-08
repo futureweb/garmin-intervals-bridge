@@ -418,6 +418,7 @@ def test_archive_only_downloads_originals_and_leaves_intervals_alone(tmp_path):
                       archive_only=True)
     assert out["archived"] == 3 and g.requested == ["41", "42", "43"]
     assert st.activity_json_path("42").is_file() and st.fit_path("42").is_file()
+    assert st.activity_extras_path("42").is_file()
     again = sync_enrich(settings(tmp_path), g, i, st, apply=False, date_range=(date(2026, 10, 1), date(2026, 10, 8)),
                         archive_only=True)
     assert again["on_disk"] == 3 and again["archived"] == 0 and len(g.requested) == 3
@@ -431,3 +432,26 @@ def test_endpoint_list_parsing():
     assert parse_endpoints("heart_rates, floors") == ("heart_rates", "floors")
     with pytest.raises(ValueError):
         parse_endpoints("heart_rates,nope")
+
+
+def test_account_snapshot_collects_every_section(tmp_path):
+    from garmin_intervals_bridge.garmin import ACCOUNT_ENDPOINTS
+
+    class Account:
+        profile_id = 4711
+
+        def __getattr__(self, name):
+            if name == "get_devices":
+                return lambda: [{"deviceId": 99}]
+            if name == "get_gear":
+                return lambda n: [{"uuid": "g1"}]
+            if name == "get_training_plans":
+                raise RuntimeError("API Error 404")
+            return lambda *a, **k: {"ok": name, "args": a}
+    src = GarminSource(tmp_path, 0)
+    src.client = Account()
+    raw = src.account_snapshot()
+    assert set(ACCOUNT_ENDPOINTS) - {"training_plans"} <= set(raw["data"])
+    assert raw["data"]["device_settings"]["99"]["ok"] == "get_device_settings"
+    assert raw["data"]["gear_stats"]["g1"]["ok"] == "get_gear_stats"
+    assert raw["errors"] == {"training_plans": "RuntimeError"}

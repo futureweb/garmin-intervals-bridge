@@ -59,10 +59,14 @@ garmin-intervals-bridge backfill --scope activities --from 2020-01-01 --archive-
 ```
 
 The archive is yours: `raw/<day>.json` holds every endpoint's full answer for
-that day (28 of them with `--endpoints all`, intraday series included),
-`raw/activities/<id>.json` Garmin's summary of an activity and
-`fits/<id>.fit` the recording itself. Nothing is ever deleted; later fields
-or other targets can be fed from it without asking Garmin again.
+that day (30 of them with `--endpoints all`, intraday series included),
+`raw/activities/<id>.json` Garmin's summary of an activity,
+`raw/activities/<id>.extras.json` its weather, gear and exercise sets, and
+`fits/<id>.fit` the recording itself. `snapshot-account` adds what is not a
+time series (profile, settings, devices, zones, gear, personal records,
+badges, workouts, training plans) as `raw/account/<date>.json`; run it now
+and then, e.g. monthly. Nothing is ever deleted; later fields or other
+targets can be fed from the archive without asking Garmin again.
 
 Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and
