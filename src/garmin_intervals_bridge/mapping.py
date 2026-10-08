@@ -202,13 +202,16 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(custom, "GarminStepsGoal", choose(stats, ("dailyStepGoal",), high=100000), high=100000)
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
-        put(custom, "GarminIntensityModerateMinutes", choose(stats, ("moderateIntensityMinutes",), high=1440), high=1440)
-        put(custom, "GarminIntensityVigorousMinutes", choose(stats, ("vigorousIntensityMinutes",), high=1440), high=1440)
+        put(custom, "GarminIntensityModerateMinutes",
+            choose(stats, ("moderateIntensityMinutes",), high=1440), high=1440)
+        put(custom, "GarminIntensityVigorousMinutes",
+            choose(stats, ("vigorousIntensityMinutes",), high=1440), high=1440)
         put(custom, "BodyBatteryMax", choose(stats, ("bodyBatteryHighestValue",), high=100), high=100)
         put(custom, "BodyBatteryMin", choose(stats, ("bodyBatteryLowestValue",), high=100), high=100)
         put(custom, "GarminBodyBatteryCharged", choose(battery, ("charged",), high=100), high=100)
         put(custom, "GarminBodyBatteryDrained", choose(battery, ("drained",), high=100), high=100)
-        put(custom, "GarminEnduranceScore", choose(endurance, ("overallScore",), ("enduranceScore",), high=10000), high=10000)
+        put(custom, "GarminEnduranceScore",
+            choose(endurance, ("overallScore",), ("enduranceScore",), high=10000), high=10000)
         put(custom, "GarminHillScore", choose(hill, ("overallScore",), high=100), high=100)
         put(custom, "GarminHillStrength", choose(hill, ("strengthScore",), high=100), high=100)
         put(custom, "GarminHillEndurance", choose(hill, ("enduranceScore",), high=100), high=100)

@@ -10,7 +10,7 @@ from pathlib import Path
 
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
-from .fit import compare_fit, decode_fit, extract_original_fit, sha256
+from .fit import compare_fit, extract_original_fit, sha256
 from .garmin import ESSENTIAL_ENDPOINTS, GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
@@ -30,7 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     gap = sub.add_parser("gap", help="Compare one Garmin original with the copy Intervals received; no writes")
     gap.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
     gap.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
-    enrich = sub.add_parser("enrich", help="Fill the Intervals activity's custom fields/streams from the Garmin original (dry run unless --apply)")
+    enrich = sub.add_parser("enrich", help="Fill the Intervals activity's custom fields/streams "
+                                           "from the Garmin original (dry run unless --apply)")
     enrich.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
     enrich.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
     enrich.add_argument("--apply", action="store_true", help="Actually PUT fields and streams")
@@ -49,7 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--force-wellness", action="store_true", help="Ignore cached wellness refresh window")
     sync.add_argument("--activity-days", type=int, help="Override activity lookback (1-30 days)")
     sync.add_argument("--wellness-days", type=int, help="Override wellness lookback (1-30 days)")
-    watch = sub.add_parser("watch", help="One cheap poll of Intervals; enrich only what appeared since the last poll (dry run unless --apply)")
+    watch = sub.add_parser("watch", help="One cheap poll of Intervals; enrich only what appeared "
+                                         "since the last poll (dry run unless --apply)")
     watch.add_argument("--apply", action="store_true")
     backfill = sub.add_parser("backfill", help="Enrich a date range from the past, paced (dry run unless --apply)")
     backfill.add_argument("--scope", choices=["activities", "wellness"], required=True)
@@ -155,11 +157,13 @@ def main(argv: list[str] | None = None) -> int:
                     path = store.fit_path(gid)
                     fit = garmin.original_fit(gid)
                     store.atomic_save(path, fit)
-                    print(json.dumps({"activity_id": gid, "file": str(path), "bytes": len(fit), "sha256": sha256(fit)}, indent=2))
+                    print(json.dumps({"activity_id": gid, "file": str(path), "bytes": len(fit),
+                                      "sha256": sha256(fit)}, indent=2))
                     return 0
                 if args.cmd == "watch":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
-                    print(json.dumps({"apply": args.apply, "watch": watch_once(settings, garmin, intervals, store, apply=args.apply)}, indent=2))
+                    result = watch_once(settings, garmin, intervals, store, apply=args.apply)
+                    print(json.dumps({"apply": args.apply, "watch": result}, indent=2))
                     return 0
                 if args.cmd == "backfill":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
@@ -176,7 +180,8 @@ def main(argv: list[str] | None = None) -> int:
                                             force=args.force_wellness, days=days, pause_seconds=args.pause,
                                             endpoints=endpoints)
                     else:
-                        log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause", start, end, args.pause)
+                        log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause",
+                                 start, end, args.pause)
                         out = sync_enrich(settings, garmin, intervals, store, apply=args.apply,
                                           date_range=(start, end), pause_seconds=args.pause)
                     print(json.dumps({"apply": args.apply, "scope": args.scope, "from": str(start), "to": str(end),
@@ -195,7 +200,8 @@ def main(argv: list[str] | None = None) -> int:
                             apply=args.apply, activity_days=args.activity_days)
                     elif args.scope in ("all", "activities"):
                         if args.apply and not args.allow_activity_upload:
-                            log.warning("Activity uploads disabled; add --allow-activity-upload ONLY AFTER disabling Garmin auto-activity sync")
+                            log.warning("Activity uploads disabled; add --allow-activity-upload ONLY AFTER "
+                                        "disabling Garmin auto-activity sync")
                         results["activities"] = sync_activities(settings, garmin, intervals, store,
                             apply=args.apply, allow_upload=args.allow_activity_upload,
                             activity_days=args.activity_days)

@@ -1,16 +1,15 @@
-from datetime import date, datetime, timezone
-from pathlib import Path
+from datetime import date
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
+from test_fit import minimal_fit
+from test_mapping import sample
 
 from garmin_intervals_bridge.fit import validate_fit
 from garmin_intervals_bridge.garmin import GarminBlocked
 from garmin_intervals_bridge.store import Store
 from garmin_intervals_bridge.sync import activity_match, sync_activities, sync_wellness
-from test_fit import minimal_fit
-from test_mapping import sample
 
 
 def settings(tmp_path):

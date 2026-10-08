@@ -2,15 +2,13 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
-import time
-
 from .config import Settings
-from .fit import sha256, validate_fit
 from .enrich import enrich_activity, load_field_mappings
+from .fit import sha256, validate_fit
 from .garmin import GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
@@ -208,9 +206,11 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
         elif outcome in ("planned", "enriched"):
             fields = sorted(result["fields"]["writes"])
             streams = [w["type"] for w in result["streams"]["writes"]]
-            metrics["fields_written" if outcome == "enriched" else "fields_written"] += len(fields) if outcome == "enriched" else 0
-            metrics["streams_written"] += len(streams) if outcome == "enriched" else 0
-            log.info("%s %s -> %s: fields %s, streams %s", "ENRICHED" if outcome == "enriched" else "DRY-RUN would enrich",
+            if outcome == "enriched":
+                metrics["fields_written"] += len(fields)
+                metrics["streams_written"] += len(streams)
+            log.info("%s %s -> %s: fields %s, streams %s",
+                     "ENRICHED" if outcome == "enriched" else "DRY-RUN would enrich",
                      gid, result["intervals_id"], fields, streams)
     return metrics
 
@@ -301,7 +301,8 @@ def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *,
         except Exception as exc:
             store.record_failure(external, f"{type(exc).__name__}: {exc}")
             metrics["failed"] += 1
-            log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry", external, type(exc).__name__)
+            log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry",
+                        external, type(exc).__name__)
             continue
         metrics[result["outcome"]] += 1
         if result["outcome"] in ("planned", "enriched"):

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import getpass
 import logging
-import os
 import sys
 import time
 from datetime import date
@@ -85,7 +84,8 @@ class GarminSource:
             return
         except (GarminConnectAuthenticationError, FileNotFoundError):
             if not interactive or not sys.stdin.isatty():
-                raise RuntimeError("Garmin login needed: run 'garmin-intervals-bridge login' in an interactive terminal")
+                raise RuntimeError("Garmin login needed: run 'garmin-intervals-bridge login' "
+                                   "in an interactive terminal")
         email = input("Garmin Connect email: ").strip()
         password = getpass.getpass("Garmin Connect password: ")
         api = Garmin(email=email, password=password,

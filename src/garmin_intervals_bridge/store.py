@@ -9,8 +9,6 @@ import time
 from contextlib import contextmanager
 from datetime import date
 from pathlib import Path
-from typing import Any
-
 
 ACTIVITY_STATUSES = ("downloaded", "pending", "uploaded", "remote_exists", "failed", "skipped")
 
@@ -104,7 +102,8 @@ class Store:
         return bool(row and time.time() - row[0] < hours * 3600)
 
     def mark_wellness(self, day: date) -> None:
-        self.db.execute("INSERT INTO wellness(day,fetched) VALUES (?,?) ON CONFLICT(day) DO UPDATE SET fetched=excluded.fetched",
+        self.db.execute("INSERT INTO wellness(day,fetched) VALUES (?,?) "
+                        "ON CONFLICT(day) DO UPDATE SET fetched=excluded.fetched",
                         (day.isoformat(), time.time()))
         self.db.commit()
 
@@ -133,7 +132,8 @@ class Store:
         return self.base / "fits" / f"{garmin_id}.fit"
 
     def intervals_seen(self, intervals_id: str) -> bool:
-        return self.db.execute("SELECT 1 FROM intervals_seen WHERE intervals_id=?", (intervals_id,)).fetchone() is not None
+        row = self.db.execute("SELECT 1 FROM intervals_seen WHERE intervals_id=?", (intervals_id,)).fetchone()
+        return row is not None
 
     def mark_intervals_seen(self, intervals_id: str, external_id: str | None, source: str | None) -> None:
         self.db.execute("INSERT OR IGNORE INTO intervals_seen VALUES (?,?,?,?)",
@@ -145,7 +145,8 @@ class Store:
         self.db.execute("""INSERT INTO enrichment (garmin_id,intervals_id,sha256,fields,streams,updated)
             VALUES (?,?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET intervals_id=excluded.intervals_id,
             sha256=excluded.sha256,fields=excluded.fields,streams=excluded.streams,updated=excluded.updated""",
-                        (garmin_id, intervals_id, sha, json.dumps(sorted(fields)), json.dumps(sorted(streams)), time.time()))
+                        (garmin_id, intervals_id, sha, json.dumps(sorted(fields)),
+                         json.dumps(sorted(streams)), time.time()))
         self.db.commit()
 
     def enrichment(self, garmin_id: str) -> dict | None:

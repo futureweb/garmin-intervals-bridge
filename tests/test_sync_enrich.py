@@ -2,10 +2,11 @@ from datetime import date
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from garmin_intervals_bridge.store import Store
-from garmin_intervals_bridge.sync import sync_enrich
 from test_enrich import ITEMS
 from test_fit import build_fit
+
+from garmin_intervals_bridge.store import Store
+from garmin_intervals_bridge.sync import sync_enrich
 
 
 def settings(tmp_path):
