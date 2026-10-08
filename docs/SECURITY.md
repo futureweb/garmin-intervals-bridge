@@ -11,6 +11,7 @@ This project handles GPS tracks, detailed medical/fitness/health metrics (includ
 - Use the Intervals API key only over HTTPS. Do not put it into CLI arguments or screenshots.
 - Never paste Garmin passwords, session tokens, Intervals API keys or private FITs into public GitHub issues.
 - Run `login` once in a local interactive terminal and let Garmin session tokens refresh. Do not store Garmin account password in cron or compose environment variables.
+- `--verbose` makes the Garmin library log every request URL, and those URLs contain your Garmin display name. Use it for troubleshooting, not in a scheduled unit, and treat the journal as private.
 - Keep remote writes behind explicit `--apply` and `--allow-activity-upload`; audit the difference before enabling them.
 - Keep Garmin official wellness import if useful; only disable the overlapping *activity* import after proven testing.
 - Do not auto-resubmit a pending FIT upload without checking Intervals for the activity. Upload requests may have succeeded even after a network timeout.
