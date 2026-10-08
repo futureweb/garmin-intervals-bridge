@@ -309,7 +309,13 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
     return plot
 
 
-BRIDGE_MARK = "Created by garmin-intervals-bridge for the values it syncs."
+BRIDGE_MARK = ("Created by garmin-intervals-bridge for the values it syncs: "
+               "https://github.com/futureweb/garmin-intervals-bridge")
+
+
+def is_bridge_item(item: dict) -> bool:
+    """Charts the bridge made, whatever wording the mark had when they were created."""
+    return str(item.get("description") or "").startswith("Created by garmin-intervals-bridge")
 
 
 _PLOT_KEYS = ("field", "text", "type", "agg", "filter", "stack", "fill", "stroke", "aggArgs", "scale")
@@ -344,9 +350,9 @@ def plan_charts(custom_items: list[dict]) -> dict:
         if present is None:
             # The same chart under an earlier name, if it is ours: rename it instead of adding one.
             present = next((existing[a] for a in chart.get("aliases", ())
-                            if a in existing and existing[a].get("description") == BRIDGE_MARK), None)
+                            if a in existing and is_bridge_item(existing[a])), None)
         if present is not None:
-            if present.get("description") != BRIDGE_MARK:
+            if not is_bridge_item(present):
                 skipped[chart["name"]] = "exists and was not created by the bridge"
                 continue
             current_plots = (present.get("content") or {}).get("plots", [])
@@ -411,7 +417,7 @@ def assign_indexes(intervals: Any) -> list[int]:
     top = max(taken) if taken else 0
     seen: set[int] = set()
     fix = []
-    for it in sorted((i for i in items if i.get("description") == BRIDGE_MARK), key=lambda i: i.get("id") or 0):
+    for it in sorted((i for i in items if is_bridge_item(i)), key=lambda i: i.get("id") or 0):
         idx = it.get("index") or 0
         if idx == 0 or idx in seen:
             top += 1
