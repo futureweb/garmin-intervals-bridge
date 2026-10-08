@@ -80,11 +80,13 @@ def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched(
 def test_setup_charts_applies_updates_through_put():
     class F(Fake):
         def __init__(self):
-            super().__init__(); self.puts = []
+            super().__init__()
+            self.puts = []
         def custom_items(self):
             return items("GarminHRV7DayAvg") + [bridge_chart("HRV detail (Garmin)", "hrv", item_id=42)]
         def update_custom_item(self, item_id, item):
-            self.puts.append((item_id, item)); return {"id": item_id}
+            self.puts.append((item_id, item))
+            return {"id": item_id}
     f = F()
     out = setup_charts(f, apply=True)
     assert out["updated"] == [{"name": "HRV detail (Garmin)", "id": 42, "adds": ["GarminHRV7DayAvg"]}]
