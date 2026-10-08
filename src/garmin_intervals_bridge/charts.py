@@ -94,7 +94,8 @@ CHARTS: list[dict[str, Any]] = [
         "y2": "Hill",
         "height": 180,
         "plots": [
-            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", "", "endurance"),
+            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", "",
+             "endurance"),
             ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "", "hill"),
             ("custom", "GarminHillStrength", "HillStr", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", "", "hill"),
             ("custom", "GarminHillEndurance", "HillEnd", "dot", "none", None, "#FFBB7866", "#FFBB7888", "", "hill"),
