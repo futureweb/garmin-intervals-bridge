@@ -22,8 +22,10 @@ CHARTS: list[dict[str, Any]] = [
         "y": "Score / hours",
         "height": 180,
         "plots": [
-            ("custom", "GarminTrainingReadiness", "Training readiness", "bars", "none", None, "#009E0040", "#009E00FF", ""),
-            ("custom", "GarminRecoveryTimeMinutes", "Recovery time (min)", "line", "none", None, "#D6272800", "#D62728FF", ""),
+            ("custom", "GarminTrainingReadiness", "Training readiness", "bars", "none",
+             None, "#009E0040", "#009E00FF", ""),
+            ("custom", "GarminRecoveryTimeMinutes", "Recovery time (min)", "line", "none",
+             None, "#D6272800", "#D62728FF", ""),
             ("custom", "GarminAcuteLoad", "Acute load", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", ""),
         ],
     },
