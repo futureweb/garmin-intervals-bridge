@@ -84,7 +84,11 @@ def main(argv: list[str] | None = None) -> int:
             garmin.login(interactive=True)
             print("Garmin authenticated; session tokens saved locally.")
             return 0
-        with single_instance(settings.data_dir):
+        scope = getattr(args, "scope", None)
+        lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync",)
+                       else ("wellness",) if scope == "wellness"
+                       else ("activities",))
+        with single_instance(settings.data_dir, lock_scopes):
             store = Store(settings.data_dir)
             try:
                 if args.cmd == "status":

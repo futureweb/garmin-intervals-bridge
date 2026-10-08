@@ -65,7 +65,6 @@ RECOMMENDED_EXCLUDES = frozenset({
     "GarminSleepSpO2Avg", "GarminSleepRespirationAvg",      # native spO2 / respiration carry these
     "GarminStepsGoal", "GarminHydrationGoalLitres",         # targets, not measurements
     "GarminAchievableFitnessAge",                           # derived from GarminFitnessAge
-    "GarminHillStrength", "GarminHillEndurance",            # components of GarminHillScore
 })
 
 

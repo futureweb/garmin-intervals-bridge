@@ -171,15 +171,24 @@ class Store:
 
 
 @contextmanager
-def single_instance(data_dir: Path):
-    """Avoid overlapping cron runs. Linux Docker is the supported scheduler."""
+def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "wellness")):
+    """Avoid overlapping runs per scope: a long wellness backfill must not block the
+    one-minute activity watcher. SQLite (WAL) is safe for both to share."""
     import fcntl
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    lock_path = data_dir / ".bridge.lock"
-    with lock_path.open("a+") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise RuntimeError("Another bridge instance is running") from exc
+    handles = []
+    try:
+        for scope in scopes:
+            lock = (data_dir / f".bridge-{scope}.lock").open("a+")
+            handles.append(lock)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(f"Another bridge instance is running ({scope})") from exc
         yield
-        fcntl.flock(lock, fcntl.LOCK_UN)
+    finally:
+        for lock in handles:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+            finally:
+                lock.close()
