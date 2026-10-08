@@ -93,7 +93,7 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("custom", "GarminKcalBalance", "Balance", "bars", "week_tot", None, "#1F77B466", "#1F77B4FF", "", "kcal"),
-            ("native", "weight", "kg", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
+            ("native", "weight", "kg", "dec1", "Wt 7d", "line", "moving_avg", 7, "#7F7F7F00", "#7F7F7FFF"),
         ],
     },
     {
@@ -104,7 +104,7 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("custom", "GarminKcalBalance", "Balance", "bars", "month_tot", None, "#9467BD66", "#9467BDFF", "", "kcal"),
-            ("native", "weight", "kg", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
+            ("native", "weight", "kg", "dec1", "Wt 7d", "line", "moving_avg", 7, "#7F7F7F00", "#7F7F7FFF"),
         ],
     },
     {
@@ -248,13 +248,15 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Garmin Bridge: Body composition",
-        "title": "Weight (left axis) and body fat (right axis), carried over days without a weigh-in",
+        "title": "Weight: daily weigh-ins and 7-day average (left axis); body fat 7-day average (right axis)",
         "y": "kg",
         "y2": "Body fat %",
         "height": 160,
         "plots": [
-            ("native", "weight", "weight", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
-            ("native", "body_fat", "percent", "dec1", "Fat %", "line", "fill_in", None, "#8C564B00", "#8C564BFF"),
+            # daily weigh-ins as faint dots, the 7-day average as the line (scale noise smoothed)
+            ("native", "weight", "weight", "dec1", "Weight", "dot", "none", None, "#7F7F7F66", "#7F7F7F99"),
+            ("native", "weight", "weight", "dec1", "Wt 7d", "line", "moving_avg", 7, "#7F7F7F00", "#7F7F7FFF"),
+            ("native", "body_fat", "percent", "dec1", "Fat %", "line", "moving_avg", 7, "#8C564B00", "#8C564BFF"),
         ],
     },
     {
