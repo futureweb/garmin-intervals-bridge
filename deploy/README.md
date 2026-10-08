@@ -99,3 +99,10 @@ one mail a day through the same `OnFailure=` hook. The timer runs it once a day:
 ```bash
 systemctl enable --now garmin-intervals-bridge-health.timer
 ```
+
+## Notes
+
+- A `watch` without `--apply` still records the activities it saw; after
+  you add `--apply`, those are enriched by the next 30-minute run (which
+  walks Garmin's activity list), not by the watcher.
+- `status` takes no lock and works during a backfill; `health` has its own.

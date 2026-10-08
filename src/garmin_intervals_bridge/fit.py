@@ -25,7 +25,7 @@ class InvalidFIT(ValueError):
 
 # Size guard for anything we are asked to decode. Device activity files are a
 # few hundred kB; the guard only blocks absurd inputs such as ZIP bombs.
-MAX_FIT_BYTES = 200 * 1024 * 1024
+MAX_FIT_BYTES = 32 * 1024 * 1024
 
 
 def validate_fit(data: bytes) -> None:

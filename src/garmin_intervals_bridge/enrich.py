@@ -8,12 +8,17 @@ separate, explicitly enabled step.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from .fit import decode_fit, sha256
 from .times import external_id_names, parse_utc
+
+log = logging.getLogger(__name__)
 
 # Matching tolerances for *writing into* an activity. Tighter than the
 # upload blocker in sync.py: a wrong match would put one ride's data on
@@ -214,6 +219,15 @@ class FieldMappings:
     unsupported: dict[str, str] = field(default_factory=dict)   # code -> why
 
 
+def mapping_signature(mappings: FieldMappings) -> str:
+    """What the athlete's field definitions currently ask for; a changed signature makes an
+    already enriched activity worth a second look (new fields get added, nothing rewritten)."""
+    def rows(items):
+        return sorted(json.dumps(asdict(m), sort_keys=True, default=str) for m in items)
+    payload = {"scalars": rows(mappings.scalars), "streams": rows(mappings.streams)}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()[:16]
+
+
 _CONVERSION = re.compile(
     r"^\s*activity\.isNew\s*\?\s*activity\.(?P<code>\w+)(?P<ops>(\s*[*/]\s*[0-9.]+)*)\s*:\s*activity\.(?P=code)\s*$")
 _RECORD_SCRIPT = re.compile(r"icu\.fit\.record[\s\S]*?m\.f_(\d+)")
@@ -402,6 +416,36 @@ def align_stream(records: list[dict], time_stream: list, record_field: str | int
     return data, {"matched": matched, "points": len(time_stream), "non_null": non_null}
 
 
+# A stream both sides carry, to prove the alignment before anything is written:
+# (field in the original's record messages, Intervals stream type, tolerated difference).
+_ORIGIN_PAIRS = (("heart_rate", "heartrate", 2), ("cadence", "cadence", 3))
+
+
+def origin_check(records: list[dict], time_stream: list, remote_streams: list[dict]) -> dict:
+    """Guard against writing a stream shifted in time.
+
+    The bridge aligns by timestamp from the original's first record; Intervals built its
+    `time` stream from the file it parsed. If the two origins differed by a constant, every
+    point would still "match" and the stream would land shifted. So a stream both sides have
+    (heart rate, else cadence) is aligned the same way and compared point by point. `ok` is
+    None when nothing can be compared; the caller decides whether to proceed.
+    """
+    for fit_field, stream_type, tolerance in _ORIGIN_PAIRS:
+        remote = next((s.get("data") for s in remote_streams
+                       if isinstance(s, dict) and s.get("type") == stream_type), None)
+        if not remote or not any(r.get(fit_field) is not None for r in records):
+            continue
+        data, _ = align_stream(records, time_stream, fit_field)
+        pairs = [(a, b) for a, b in zip(data, remote)
+                 if isinstance(a, (int, float)) and isinstance(b, (int, float))]
+        if len(pairs) < 30:
+            continue
+        mismatched = sum(1 for a, b in pairs if abs(a - b) > tolerance)
+        return {"ok": mismatched / len(pairs) <= 0.02, "stream": stream_type,
+                "compared": len(pairs), "mismatched": mismatched}
+    return {"ok": None, "detail": "no shared stream to compare"}
+
+
 def plan_streams(messages: dict[str, list[dict]], activity: dict, time_stream: list,
                  mappings: FieldMappings, *, min_alignment: float = 0.95,
                  refresh: set[str] | None = None) -> dict:
@@ -469,36 +513,50 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
         intervals_id = str(found["id"])
 
     previous = store.enrichment(gid)
-    if previous and previous["sha256"] == digest and previous["intervals_id"] == intervals_id and not refresh_own:
+    if mappings is None:
+        mappings = load_field_mappings(intervals.custom_items())
+    signature = mapping_signature(mappings)
+    if (previous and previous["sha256"] == digest and previous["intervals_id"] == intervals_id
+            and previous.get("mapping") == signature and not refresh_own):
         return {"activity_id": gid, "intervals_id": intervals_id, "outcome": "already_enriched",
                 "previous_enrichment": previous}
 
     remote = intervals.activity(intervals_id)
     partner_file = store.partner_path(gid)
+    if previous and previous["intervals_id"] != intervals_id and partner_file.is_file():
+        partner_file.unlink()           # the Intervals activity was replaced: its copy is stale
     if not partner_file.is_file():
         store.atomic_save(partner_file, extract_original_fit(intervals.activity_file(intervals_id)))
     messages, _ = decode_fit(original)
     partner_messages, _ = decode_fit(partner_file.read_bytes())
-    if mappings is None:
-        mappings = load_field_mappings(intervals.custom_items())
-    time_stream = next((st.get("data") for st in intervals.streams(intervals_id, ["time"])
+    remote_streams = intervals.streams(intervals_id, ["time", "heartrate", "cadence"])
+    time_stream = next((st.get("data") for st in remote_streams
                         if isinstance(st, dict) and st.get("type") == "time"), []) or []
     refresh = set(previous["streams"]) if (refresh_own and previous) else None
     scalars = plan_scalars(messages, remote, mappings, partner_messages)
     streams = plan_streams(messages, remote, time_stream, mappings, refresh=refresh)
+    check = origin_check(messages.get("record", []), time_stream, remote_streams)
+    if streams["writes"] and check["ok"] is False:
+        # Never write a shifted stream: the alignment could not be reproduced on a stream
+        # Intervals already has. Scalars are unaffected.
+        log.warning("Activity %s: stream alignment check failed (%s), streams not written", gid, check)
+        reason = f"alignment check failed on {check['stream']}"
+        streams["skipped"].update({w["type"]: reason for w in streams["writes"]})
+        streams["writes"] = []
+    streams["origin_check"] = check
 
     plan: dict = {"activity_id": gid, "intervals_id": intervals_id, "apply": apply,
                   "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
                                "unsupported": mappings.unsupported},
                   "fields": scalars,
                   "streams": {"writes": [{k: v for k, v in w.items() if k != "data"} for w in streams["writes"]],
-                              "skipped": streams["skipped"]},
+                              "skipped": streams["skipped"], "origin_check": check},
                   "previous_enrichment": previous}
     if not scalars["writes"] and not streams["writes"]:
         plan["outcome"] = "nothing_to_add"
         if apply:
-            store.record_enrichment(gid, intervals_id, digest,
-                                    previous["fields"] if previous else [], previous["streams"] if previous else [])
+            store.record_enrichment(gid, intervals_id, digest, previous["fields"] if previous else [],
+                                    previous["streams"] if previous else [], mapping=signature)
         return plan
     if not apply:
         plan["outcome"] = "planned"
@@ -511,7 +569,7 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
         result["streams"] = intervals.put_streams(intervals_id, body)
     fields_written = sorted(set(scalars["writes"]) | set(previous["fields"] if previous else []))
     streams_written = sorted({w["type"] for w in streams["writes"]} | set(previous["streams"] if previous else []))
-    store.record_enrichment(gid, intervals_id, digest, fields_written, streams_written)
+    store.record_enrichment(gid, intervals_id, digest, fields_written, streams_written, mapping=signature)
     plan["result"] = result
     plan["outcome"] = "enriched"
     return plan

@@ -174,7 +174,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     metrics = {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
                "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
                "fields_written": 0, "streams_written": 0}
-    remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1))
+    remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1),
+                                  fields=["id", "external_id", "source", "start_date", "moving_time", "elapsed_time"])
     mappings = load_field_mappings(intervals.custom_items())
     for activity in sorted(activities, key=lambda a: str(a.get("startTimeGMT") or "")):
         gid = str(activity["activityId"])

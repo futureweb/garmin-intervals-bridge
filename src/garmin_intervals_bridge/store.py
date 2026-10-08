@@ -56,6 +56,8 @@ class Store:
                 self.db.execute(f"ALTER TABLE activity ADD COLUMN {name} {ddl}")
         if "written" not in {row[1] for row in self.db.execute("PRAGMA table_info(wellness)")}:
             self.db.execute("ALTER TABLE wellness ADD COLUMN written REAL")   # 0.2.0: fetch and write kept apart
+        if "mapping" not in {row[1] for row in self.db.execute("PRAGMA table_info(enrichment)")}:
+            self.db.execute("ALTER TABLE enrichment ADD COLUMN mapping TEXT")  # 0.2.0: field definitions used
         self.db.commit()
 
     def activity_status(self, garmin_id: str) -> str | None:
@@ -208,21 +210,22 @@ class Store:
         self.db.commit()
 
     def record_enrichment(self, garmin_id: str, intervals_id: str, sha: str,
-                          fields: list[str], streams: list[str]) -> None:
-        self.db.execute("""INSERT INTO enrichment (garmin_id,intervals_id,sha256,fields,streams,updated)
-            VALUES (?,?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET intervals_id=excluded.intervals_id,
-            sha256=excluded.sha256,fields=excluded.fields,streams=excluded.streams,updated=excluded.updated""",
+                          fields: list[str], streams: list[str], mapping: str | None = None) -> None:
+        self.db.execute("""INSERT INTO enrichment (garmin_id,intervals_id,sha256,fields,streams,updated,mapping)
+            VALUES (?,?,?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET intervals_id=excluded.intervals_id,
+            sha256=excluded.sha256,fields=excluded.fields,streams=excluded.streams,updated=excluded.updated,
+            mapping=excluded.mapping""",
                         (garmin_id, intervals_id, sha, json.dumps(sorted(fields)),
-                         json.dumps(sorted(streams)), time.time()))
+                         json.dumps(sorted(streams)), time.time(), mapping))
         self.db.commit()
 
     def enrichment(self, garmin_id: str) -> dict | None:
-        row = self.db.execute("SELECT intervals_id, sha256, fields, streams, updated FROM enrichment WHERE garmin_id=?",
-                              (garmin_id,)).fetchone()
+        row = self.db.execute("SELECT intervals_id, sha256, fields, streams, updated, mapping FROM enrichment "
+                              "WHERE garmin_id=?", (garmin_id,)).fetchone()
         if not row:
             return None
         return {"intervals_id": row[0], "sha256": row[1], "fields": json.loads(row[2] or "[]"),
-                "streams": json.loads(row[3] or "[]"), "updated": row[4]}
+                "streams": json.loads(row[3] or "[]"), "updated": row[4], "mapping": row[5]}
 
     def partner_path(self, garmin_id: str) -> Path:
         """The copy Intervals holds for this activity, kept next to the original for audits."""

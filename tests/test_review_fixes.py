@@ -10,8 +10,9 @@ from test_sync import GarminFake, IntervalsFake, settings
 
 from garmin_intervals_bridge import sync as sync_module
 from garmin_intervals_bridge.cli import main
-from garmin_intervals_bridge.enrich import match_activity
+from garmin_intervals_bridge.enrich import FieldMappings, ScalarMapping, mapping_signature, match_activity, origin_check
 from garmin_intervals_bridge.garmin import DAY_ENDPOINTS, GarminBlocked, GarminLoginNeeded, GarminSource
+from garmin_intervals_bridge.mapping import map_wellness
 from garmin_intervals_bridge.store import InstanceBusy, Store, single_instance
 from garmin_intervals_bridge.sync import sync_enrich, sync_wellness, wellness_due
 
@@ -248,3 +249,60 @@ def test_flock_is_what_single_instance_uses(tmp_path):
         with pytest.raises(BlockingIOError):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         lock.close()
+
+
+# ---- streams are only written when the alignment is proven on a shared stream ----
+
+def test_origin_check_catches_a_shifted_origin():
+    t0 = 1_000_000
+    records = [{"timestamp": t0 + i, "heart_rate": 100 + (i % 7)} for i in range(120)]
+    time_stream = list(range(120))
+    same = [{"type": "time", "data": time_stream}, {"type": "heartrate", "data": [100 + (i % 7) for i in range(120)]}]
+    assert origin_check(records, time_stream, same)["ok"] is True
+    shifted = [{"type": "heartrate", "data": [100 + ((i + 3) % 7) for i in range(120)]}]
+    assert origin_check(records, time_stream, shifted)["ok"] is False
+    assert origin_check(records, time_stream, [{"type": "time", "data": time_stream}])["ok"] is None
+    cadence_only = [{"type": "cadence", "data": [80 for _ in range(120)]}]
+    with_cadence = [dict(r, cadence=80) for r in records]
+    assert origin_check(with_cadence, time_stream, cadence_only)["stream"] == "cadence"
+
+
+def test_mapping_signature_follows_the_definitions():
+    one = FieldMappings(scalars=[ScalarMapping("X", "session:1")])
+    same = FieldMappings(scalars=[ScalarMapping("X", "session:1")])
+    more = FieldMappings(scalars=[ScalarMapping("X", "session:1"), ScalarMapping("Y", "session:2")])
+    assert mapping_signature(one) == mapping_signature(same) != mapping_signature(more)
+
+
+# ---- fewer Garmin requests, and today's resting HR waits ----
+
+def test_short_activity_window_costs_one_request(tmp_path):
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get_activities(self, start, limit):
+            self.calls.append(("list", start, limit))
+            return [{"activityId": 1, "startTimeLocal": "2026-10-07 08:00:00"},
+                    {"activityId": 2, "startTimeLocal": "2026-09-01 08:00:00"}]
+
+        def get_activities_by_date(self, a, b):
+            self.calls.append(("by_date", a, b))
+            return []
+    src = GarminSource(tmp_path, 0)
+    src.client = Client()
+    out = src.activities(date(2026, 10, 5), date(2026, 10, 8))
+    assert [a["activityId"] for a in out] == [1] and src.client.calls == [("list", 0, 100)]
+    src.activities(date(2026, 1, 1), date(2026, 10, 8))
+    assert src.client.calls[-1][0] == "by_date"
+
+
+def test_todays_resting_hr_waits_for_tomorrow():
+    from test_mapping import sample
+    stats = sample()["data"]["stats"]
+    if "restingHeartRate" not in stats:
+        pytest.skip("sample has no resting HR")
+    today = date(2026, 10, 8)
+    nat_today, _ = map_wellness(sample(), today, today)
+    nat_past, _ = map_wellness(sample(), date(2026, 10, 7), today)
+    assert "restingHR" not in nat_today and nat_past["restingHR"] == stats["restingHeartRate"]

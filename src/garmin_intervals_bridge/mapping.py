@@ -145,8 +145,9 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         if scalar is not None:
             target_map[key] = scalar
 
-    put(native, "restingHR", choose(stats, ("restingHeartRate",), high=220)
-        or choose(data.get("sleep"), ("restingHeartRate",), high=220), high=220)
+    if target < today:   # Garmin revises today's resting HR until the day ends
+        put(native, "restingHR", choose(stats, ("restingHeartRate",), high=220)
+            or choose(data.get("sleep"), ("restingHeartRate",), high=220), high=220)
     put(native, "hrv", choose(hrv, ("lastNightAvg",), high=400), high=400)
     put(native, "avgSleepingHR", choose(sleep, ("avgHeartRate",), low=20, high=220), low=20, high=220)
     put(native, "sleepSecs", choose(sleep, ("sleepTimeSeconds",), high=86400), high=86400)

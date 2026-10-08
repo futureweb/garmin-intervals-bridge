@@ -23,7 +23,7 @@ class GarminFake:
                       "activityName": "Ride"}]
         self.download_count = 0
 
-    def activities(self, start, end):
+    def activities(self, start, end, fields=None, limit=None):
         return self.acts
 
     def original_fit(self, activity_id):
@@ -43,7 +43,7 @@ class IntervalsFake:
         self.current_wellness = {}
         self.fail_upload = False
 
-    def activities(self, start, end):
+    def activities(self, start, end, fields=None, limit=None):
         return self.remote
 
     def nearby_activities(self, day):

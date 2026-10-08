@@ -160,7 +160,21 @@ class GarminSource:
             time.sleep(self.delay)
 
     def activities(self, start: date, end: date) -> list[dict]:
-        result = self._call("get_activities_by_date", start.isoformat(), end.isoformat())
+        if (end - start).days <= 14:
+            # One request: the newest 100 activities cover a short window. The by-date
+            # endpoint pages 20 at a time and always needs a second, empty page.
+            result = self._call("get_activities", 0, 100)
+            lo, hi = start.isoformat(), end.isoformat()
+            if isinstance(result, list):
+                days = [str(x.get("startTimeLocal") or x.get("startTimeGMT") or "")[:10]
+                        for x in result if isinstance(x, dict)]
+                if len(result) == 100 and days and min(days) > lo:
+                    result = self._call("get_activities_by_date", lo, hi)   # busier than 100 in 14 days
+                else:
+                    result = [x for x in result if isinstance(x, dict)
+                              and lo <= str(x.get("startTimeLocal") or x.get("startTimeGMT") or "")[:10] <= hi]
+        else:
+            result = self._call("get_activities_by_date", start.isoformat(), end.isoformat())
         if not isinstance(result, list):
             raise ValueError("Unexpected Garmin activity response")
         return [x for x in result if isinstance(x, dict) and x.get("activityId") is not None]

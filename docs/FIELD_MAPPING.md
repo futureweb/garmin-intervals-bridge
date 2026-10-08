@@ -94,3 +94,18 @@ definitions with the same code are reused, never changed.
 Everything Garmin returns is archived as `raw/YYYY-MM-DD.json` regardless
 of whether it is mapped, so a future mapping can be added without
 re-fetching the past.
+
+## Notes on enrich mode
+
+- A value you typed by hand into a field whose FIT source Garmin filtered
+  out cannot be told apart from Intervals' own `0` placeholder for a missing
+  source, so the original's value replaces it. Fields whose source the
+  partner copy still carries are never changed.
+- Before a stream is written, the bridge aligns a stream both sides already
+  have (heart rate, else cadence) the same way and compares it with what
+  Intervals holds. A mismatch means the time origins differ; the streams are
+  then skipped and the journal says so. Activities without a shared stream
+  are written on the strength of the timestamp alignment alone.
+- An activity enriched earlier is looked at again when the athlete's field
+  definitions change (a new custom field or stream); only what is still
+  missing gets added.

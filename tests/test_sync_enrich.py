@@ -18,7 +18,7 @@ class GarminFake:
         self.acts = [{"activityId": 42, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3.0}]
         self.downloads = 0
 
-    def activities(self, start, end):
+    def activities(self, start, end, fields=None, limit=None):
         return self.acts
 
     def original_fit(self, gid):
@@ -35,7 +35,7 @@ class IntervalsFake:
         self.activity_obj = {"id": "i42", "stream_types": ["time"], "AerobicEffect": 0.0, "Sweatloss": None}
         self.updates, self.stream_puts = [], []
 
-    def activities(self, start, end):
+    def activities(self, start, end, fields=None, limit=None):
         return self.remote
 
     def activity(self, iid):

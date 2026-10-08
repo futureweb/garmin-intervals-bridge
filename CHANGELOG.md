@@ -80,6 +80,16 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
   time; numeric-string select options are understood.
 - The alert unit template was committed empty; `deploy/` now ships it with
   the install step for `gib-alert`.
+- Streams are only written when a stream both sides have (heart rate, else
+  cadence) lines up point by point after the same alignment; a shifted
+  origin is caught instead of written.
+- Activities enriched earlier are revisited when the athlete's field
+  definitions change; the partner copy is re-read when the Intervals
+  activity was replaced.
+- Today's resting HR is left to tomorrow (Garmin revises it during the
+  day); a short activity window costs one Garmin request instead of two;
+  the enrich candidate list is fetched with a field list; FIT downloads are
+  capped at 32 MB.
 
 ### Known limitations
 

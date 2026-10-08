@@ -161,18 +161,23 @@ already fetched, so it can be interrupted and resumed.
 
 ## Charts
 
-`setup-charts --apply` creates nineteen private fitness charts in your account
-for the values the bridge syncs: readiness & recovery, sleep stages, stress
-& Body Battery, HRV detail, nutrition intake vs. burn, Garmin Bridge: Endurance & hill scores, VO₂max
-& fitness age, race predictions, intensity & hydration, skin temperature.
-A chart only gets the fields that exist; run the command again after a
-backfill with every endpoint and the bridge's own charts are completed.
-Charts you made yourself are never touched, even with the same name.
+The bridge's nineteen fitness charts are published in Intervals' chart
+library: Fitness page → a tab → *custom charts* → search for **Garmin
+Bridge** and tick what you want: readiness & recovery, sleep stages, sleep
+score & sleeping HR, SpO₂ & respiration, stress & Body Battery, HRV detail,
+nutrition intake vs. burn, macro energy, energy balance per week and month
+with weight, endurance & hill scores, VO₂max & fitness age, race
+predictions, intensity minutes & sweat loss, hydration, steps, body
+composition, skin temperature. Each is built from the fields the bridge
+writes, with one axis per unit and values that hold until the next
+measurement carried across the days in between.
 
-Intervals' API cannot place a chart on a Fitness tab, so that last step is
-yours: Fitness page → the tab you want → *custom charts* → tick the
-`Garmin …` charts. If you like them, you can share them in Intervals'
-chart library from the same dialog.
+Prefer your own copies? `setup-charts --apply` creates the same charts as
+private items in your account, only with the fields that already exist,
+and completes them later as fields appear (for example after a backfill
+with every endpoint). Charts you made yourself are never touched, even with
+the same name. Intervals' API cannot place a chart on a Fitness tab; that
+last click is yours either way.
 
 ## Running it
 
