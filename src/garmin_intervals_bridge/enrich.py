@@ -296,6 +296,12 @@ def _convert(value: Any, steps: tuple) -> Any:
     return round(result, 4)
 
 
+def _same_value(existing: Any, value: Any) -> bool:
+    if not isinstance(existing, (int, float)) or isinstance(existing, bool):
+        return False
+    return abs(float(existing) - float(value)) <= 1e-3 * max(1.0, abs(float(value)))
+
+
 def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings,
                  partner_messages: dict[str, list[dict]] | None = None) -> dict:
     """Fields to PUT on the activity: mapped, present in the original, and either empty in
@@ -324,6 +330,9 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
             rejected[m.code] = value             # not one of the field's options
             continue
         existing = activity.get(m.code)
+        if _same_value(existing, value):
+            kept[m.code] = existing          # already there: a second run must write nothing
+            continue
         if existing is not None:
             source_in_partner = partner_messages is not None and _lookup(partner_messages, m.source) is not None
             if partner_messages is None or source_in_partner:

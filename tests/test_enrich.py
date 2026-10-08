@@ -125,6 +125,18 @@ def test_scalar_plan_replaces_values_that_cannot_come_from_data():
                               "TrainingEffectSelect": 2.0}
 
 
+def test_second_run_writes_nothing_when_values_are_already_there():
+    original = {"session": [{178: 7}], "140": [{9: 488, 7: 887982}]}
+    partner = {"session": [{}]}
+    m = load_field_mappings(ITEMS)
+    first = plan_scalars(original, {"Sweatloss": None, "RecoveryTime": 0, "VO2MaxGarmin": 0.0}, m, partner)
+    assert set(first["writes"]) == {"Sweatloss", "RecoveryTime", "VO2MaxGarmin"}
+    after = {"Sweatloss": 7.0, "RecoveryTime": 8.1333, "VO2MaxGarmin": 47.426}   # as Intervals stores them
+    second = plan_scalars(original, after, m, partner)
+    assert second["writes"] == {} and second["replaced_filtered"] == {}
+    assert second["kept_existing"] == after
+
+
 def test_select_fields_only_accept_their_options():
     m = load_field_mappings(ITEMS)
     plan = plan_scalars({"session": [{188: 0}]}, {}, m)
