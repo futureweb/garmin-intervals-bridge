@@ -24,12 +24,37 @@ sudo -u gib env HOME=/var/lib/garmin-intervals-bridge BRIDGE_DATA_DIR=/var/lib/g
   /opt/garmin-intervals-bridge/venv/bin/garmin-intervals-bridge login
 
 # 5. Units
-cp deploy/systemd/garmin-intervals-bridge.{service,timer} /etc/systemd/system/
+cp deploy/systemd/garmin-intervals-bridge*.{service,timer} /etc/systemd/system/
 systemctl daemon-reload
-systemctl enable --now garmin-intervals-bridge.timer
+systemctl enable --now garmin-intervals-bridge.timer          # full run every 30 min (safety net)
+systemctl enable --now garmin-intervals-bridge-watch.timer    # one-minute poll, Garmin only on new activities
 systemctl start garmin-intervals-bridge.service     # first run now
 journalctl -u garmin-intervals-bridge.service -o cat
 ```
 
 The service runs in **dry-run mode** until you append `--apply` to `ExecStart`.
 Read a few journals first: every run prints what it would write, per activity.
+
+## Two timers, one purpose
+
+- `garmin-intervals-bridge-watch` runs every minute, asks Intervals for the
+  last two days (one ~450-byte request) and enriches only activities it sees
+  for the first time. Latency after the official import: about a minute.
+- `garmin-intervals-bridge` runs every 30 minutes over the last four days and
+  catches anything the watcher missed (an import that lagged, a failed download
+  that is due for its retry).
+
+Both are dry runs until `--apply` is appended to their `ExecStart`.
+
+## Backfilling the past
+
+```bash
+# as the service user, with the same environment as the units
+garmin-intervals-bridge backfill --scope activities --from 2026-03-01            # dry run
+garmin-intervals-bridge backfill --scope activities --from 2026-03-01 --apply
+garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 --apply
+```
+
+Each wellness day costs about 22 Garmin requests, each activity one original
+download; the pause keeps a long backfill polite. Runs are resumable: days and
+activities already handled are skipped.
