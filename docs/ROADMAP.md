@@ -1,3 +1,7 @@
+> **Superseded 2026-10-08.** This file documents the v0.1.1 preview. The audited
+> state, the revised architecture (enrich existing activities instead of uploading
+> duplicates) and the current phases are in [PLAN.md](PLAN.md).
+
 # Roadmap
 
 ## v0.1 developer preview (this archive)
