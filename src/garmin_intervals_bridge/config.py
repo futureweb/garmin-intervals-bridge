@@ -15,6 +15,31 @@ def _positive_int(name: str, default: int, max_value: int) -> int:
     return value
 
 
+def load_env_file(path: Path | None = None) -> list[str]:
+    """Read KEY=VALUE lines from `.env` (or BRIDGE_ENV_FILE) into the environment.
+
+    Variables already set win, so a systemd EnvironmentFile or an exported
+    variable is never overridden. Values are never logged; the names are returned.
+    """
+    candidate = path or Path(os.getenv("BRIDGE_ENV_FILE") or ".env")
+    if not candidate.is_file():
+        return []
+    loaded: list[str] = []
+    for line in candidate.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip().removeprefix("export ").strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if re.fullmatch(r"[A-Z][A-Z0-9_]*", key) and key not in os.environ:
+            os.environ[key] = value
+            loaded.append(key)
+    return loaded
+
+
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path
@@ -31,6 +56,7 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        load_env_file()
         data_dir = Path(os.getenv("BRIDGE_DATA_DIR", "./data")).expanduser().resolve()
         token_dir = Path(os.getenv("GARMIN_TOKEN_DIR", str(data_dir / "tokens"))).expanduser().resolve()
         tz = ZoneInfo(os.getenv("BRIDGE_TIMEZONE", "Europe/Vienna"))

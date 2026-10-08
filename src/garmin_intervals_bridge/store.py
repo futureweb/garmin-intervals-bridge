@@ -245,7 +245,26 @@ class Store:
 def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "wellness")):
     """Avoid overlapping runs per scope: a long wellness backfill must not block the
     one-minute activity watcher. SQLite (WAL) is safe for both to share."""
-    import fcntl
+    try:
+        import fcntl
+
+        def take(fh):
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        def drop(fh):
+            fcntl.flock(fh, fcntl.LOCK_UN)
+        busy: tuple = (BlockingIOError,)
+    except ImportError:                       # Windows: lock the first byte of the file
+        import msvcrt
+
+        def take(fh):
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+
+        def drop(fh):
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        busy = (OSError,)
     data_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     handles = []
     try:
@@ -253,13 +272,15 @@ def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "we
             lock = (data_dir / f".bridge-{scope}.lock").open("a+")
             handles.append(lock)
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
+                take(lock)
+            except busy as exc:
                 raise InstanceBusy(f"Another bridge instance is running ({scope})") from exc
         yield
     finally:
         for lock in handles:
             try:
-                fcntl.flock(lock, fcntl.LOCK_UN)
+                drop(lock)
+            except OSError:
+                pass
             finally:
                 lock.close()

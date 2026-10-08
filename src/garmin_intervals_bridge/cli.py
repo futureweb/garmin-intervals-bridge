@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from contextlib import ExitStack
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -13,7 +14,7 @@ from .charts import setup_charts
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, extract_original_fit, sha256
-from .garmin import DAY_ENDPOINTS, ESSENTIAL_ENDPOINTS, GarminSource
+from .garmin import DAY_ENDPOINTS, ESSENTIAL_ENDPOINTS, GarminBlocked, GarminSource
 from .health import probe
 from .intervals import IntervalsClient
 from .store import InstanceBusy, Store, single_instance
@@ -56,6 +57,13 @@ def build_parser() -> argparse.ArgumentParser:
     watch = sub.add_parser("watch", help="One cheap poll of Intervals; enrich only what appeared "
                                          "since the last poll (dry run unless --apply)")
     watch.add_argument("--apply", action="store_true")
+    run = sub.add_parser("run", help="Keep running: poll Intervals every minute, full sync every 30 minutes, "
+                                     "health probe once a day. For Windows and anything without systemd "
+                                     "(dry run unless --apply)")
+    run.add_argument("--apply", action="store_true")
+    run.add_argument("--poll-seconds", type=int, default=60, help="Seconds between Intervals polls (default 60)")
+    run.add_argument("--sync-minutes", type=int, default=30, help="Minutes between full runs (default 30)")
+    run.add_argument("--iterations", type=int, help=argparse.SUPPRESS)      # tests
     backfill = sub.add_parser("backfill", help="Enrich a date range from the past, paced (dry run unless --apply)")
     backfill.add_argument("--scope", choices=["activities", "wellness"], required=True)
     backfill.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD")
@@ -81,6 +89,67 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int, sync_minutes: int,
+             iterations: int | None = None) -> int:
+    """What the three systemd timers do, in one long-running process.
+
+    A fresh Garmin session per full run (like the timer), the cheap poll in between,
+    a health probe once a day written to the log. A Garmin block pauses everything
+    for 15 minutes; any other error is logged and the loop goes on.
+    """
+    log = logging.getLogger("bridge")
+    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+    garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+    next_sync, next_health, count = 0.0, time.time() + 300, 0
+    log.info("Running: poll every %ds, full run every %d min, %s", poll_seconds, sync_minutes,
+             "writing to Intervals" if apply else "DRY RUN (add --apply to write)")
+    while iterations is None or count < iterations:
+        count += 1
+        now = time.time()
+        try:
+            if now >= next_sync:
+                garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                results: dict = {"apply": apply, "scope": "all", "mode": "enrich"}
+                results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply)
+                results["wellness"] = sync_wellness(settings, garmin, intervals, store, apply=apply)
+                results["garmin_requests"] = garmin.requests
+                store.record_run("sync", results)
+                a, w = results["activities"], results["wellness"]
+                log.info("Full run: %d activities seen, %d enriched, %d planned; wellness %d days checked, "
+                         "%d written; %d Garmin requests", a["seen"], a["enriched"], a["planned"],
+                         w["days_checked"], w["writes"], garmin.requests)
+                next_sync = now + sync_minutes * 60
+            else:
+                result = watch_once(settings, garmin, intervals, store, apply=apply)
+                store.record_run("watch", {"apply": apply, "garmin_requests": garmin.requests, **result})
+                if result["new"]:
+                    log.info("Poll: %d new, %d enriched, %d planned", result["new"], result["enriched"],
+                             result["planned"])
+            if now >= next_health:
+                report = probe(settings, garmin, intervals, store)
+                for finding in report.get("findings", []):
+                    (log.warning if finding.get("alert") else log.info)("Health: %s - %s", finding.get("what"),
+                                                                        finding.get("detail"))
+                next_health = now + 86400
+        except KeyboardInterrupt:
+            log.info("Stopped")
+            return 0
+        except GarminBlocked as exc:
+            log.warning("%s; pausing for 15 minutes", exc)
+            next_sync = max(next_sync, time.time() + 900)
+            if iterations is None:
+                time.sleep(900)
+            continue
+        except Exception as exc:
+            if exc.__class__.__module__.startswith("requests"):
+                log.error("HTTP/API request failed: %s", type(exc).__name__)
+            else:
+                log.error("%s: %s", type(exc).__name__, exc)
+        if iterations is None or count < iterations:
+            time.sleep(poll_seconds)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
@@ -98,7 +167,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Garmin authenticated; session tokens saved locally.")
             return 0
         scope = getattr(args, "scope", None)
-        lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync",)
+        lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync", "run")
                        else ("wellness",) if scope == "wellness"
                        else ("health",) if args.cmd == "health"
                        else () if args.cmd == "status"                  # reads only
@@ -194,6 +263,11 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"activity_id": gid, "file": str(path), "bytes": len(fit),
                                       "sha256": sha256(fit)}, indent=2))
                     return 0
+                if args.cmd == "run":
+                    if args.poll_seconds < 30 or args.sync_minutes < 5:
+                        raise ValueError("--poll-seconds must be >= 30 and --sync-minutes >= 5")
+                    return run_loop(settings, store, apply=args.apply, poll_seconds=args.poll_seconds,
+                                    sync_minutes=args.sync_minutes, iterations=args.iterations)
                 if args.cmd == "watch":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     result = watch_once(settings, garmin, intervals, store, apply=args.apply)

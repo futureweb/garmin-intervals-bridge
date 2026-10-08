@@ -2,6 +2,17 @@
 
 **Garmin started filtering the FIT files it sends to Intervals.icu. This puts the data back — and syncs a lot more.**
 
+> **TL;DR** — Since late September 2026 Garmin strips its own metrics (Stamina, Recovery Time,
+> VO₂max, Performance Condition, Training Effect, Sweat Loss …) from the FIT files it sends to
+> Intervals.icu. This tool fetches the original file from Garmin Connect and adds the missing
+> data to the activity the official sync already created — no duplicates, nothing deleted,
+> training load untouched. It also syncs the daily wellness data the official sync misses
+> (night SpO₂, respiration, sleeping HR, Body Battery, HRV details, sleep stages, stress,
+> readiness, logged nutrition and total burn, endurance & hill scores, race predictions,
+> fitness age …), backfills the past, and comes with 19 charts for all of it in Intervals'
+> chart library. Runs on Linux (systemd timers), in a container, or on **Windows with one
+> command** ([guide](docs/WINDOWS.md)).
+
 <!-- screenshots: docs/images/activity-before-after.png, docs/images/wellness-day.png, docs/images/fitness-chart.png -->
 
 Since the end of September 2026 the file Garmin hands to partners is not
@@ -185,6 +196,11 @@ last click is yours either way.
 one-minute `watch` timer and a 30-minute full run, secrets in an
 `EnvironmentFile`, hardened units. See [deploy/README.md](deploy/README.md).
 
+**Windows, macOS or any PC without systemd:** `garmin-intervals-bridge run --apply`
+keeps polling Intervals every minute, does a full run every 30 minutes and
+a health probe once a day, all in one process. A step-by-step guide for
+non-technical users is in [docs/WINDOWS.md](docs/WINDOWS.md).
+
 **Docker / Podman:** the image runs as a non-root user and takes the same
 environment variables.
 
@@ -201,6 +217,9 @@ The compose service is deliberately not an always-on daemon; schedule
 `docker compose run --rm -T bridge watch --apply` from cron or a timer.
 
 ## Configuration
+
+Variables can also come from a `.env` file in the working directory (or the
+file named by `BRIDGE_ENV_FILE`); variables already set always win.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

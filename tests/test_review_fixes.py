@@ -313,3 +313,62 @@ def test_garmin_requests_are_counted(tmp_path):
     src.client = _Client(failing=set())
     src.snapshot(date(2026, 10, 8))
     assert src.requests == len(DAY_ENDPOINTS)
+
+
+# ---- .env file, long-running `run` ----
+
+def test_env_file_fills_missing_variables_only(tmp_path, monkeypatch):
+    import os
+
+    from garmin_intervals_bridge.config import load_env_file
+    env = tmp_path / ".env"
+    env.write_text('INTERVALS_API_KEY="from-file"\nBRIDGE_TIMEZONE=UTC\n# comment\nlower=ignored\n', encoding="utf-8")
+    monkeypatch.setenv("BRIDGE_TIMEZONE", "Europe/Vienna")
+    monkeypatch.setitem(os.environ, "INTERVALS_API_KEY", "placeholder")
+    del os.environ["INTERVALS_API_KEY"]
+    assert load_env_file(env) == ["INTERVALS_API_KEY"]
+    assert os.environ["INTERVALS_API_KEY"] == "from-file"          # quotes stripped
+    assert os.environ["BRIDGE_TIMEZONE"] == "Europe/Vienna"         # an exported variable wins
+    assert "lower" not in os.environ
+
+
+def _loop_settings(tmp_path):
+    return SimpleNamespace(data_dir=tmp_path, token_dir=tmp_path / "tokens", intervals_api_key="k",
+                           intervals_athlete_id="0", garmin_request_delay=0.5, timezone=ZoneInfo("Europe/Vienna"),
+                           activity_days=3, wellness_days=3, wellness_refresh_hours=4, wellness_profile="all",
+                           stale_hours=24)
+
+
+def test_run_loop_does_a_full_run_then_polls(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import cli
+    calls = []
+    monkeypatch.setattr(cli, "sync_enrich", lambda *a, **k: calls.append("sync") or {"seen": 1, "enriched": 0, "planned": 0})
+    monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: calls.append("wellness") or {"days_checked": 1, "writes": 0})
+    monkeypatch.setattr(cli, "watch_once", lambda *a, **k: calls.append("watch") or {"new": 0, "enriched": 0, "planned": 0})
+    monkeypatch.setattr(cli, "probe", lambda *a, **k: calls.append("probe") or {"findings": []})
+    monkeypatch.setattr(cli.time, "sleep", lambda s: calls.append(("sleep", s)))
+    st = Store(tmp_path)
+    assert cli.run_loop(_loop_settings(tmp_path), st, apply=False, poll_seconds=60, sync_minutes=30, iterations=3) == 0
+    assert calls == ["sync", "wellness", ("sleep", 60), "watch", ("sleep", 60), "watch"]
+    assert [r["command"] for r in st.recent_runs(1)] == ["sync", "watch", "watch"]
+    st.close()
+
+
+def test_run_loop_survives_a_block_and_other_errors(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import cli
+    outcomes = iter([GarminBlocked("429"), ValueError("boom"), {"seen": 0, "enriched": 0, "planned": 0}])
+
+    def enrich(*a, **k):
+        o = next(outcomes)
+        if isinstance(o, Exception):
+            raise o
+        return o
+    monkeypatch.setattr(cli, "sync_enrich", enrich)
+    monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: {"days_checked": 0, "writes": 0})
+    monkeypatch.setattr(cli, "watch_once", lambda *a, **k: {"new": 0, "enriched": 0, "planned": 0})
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    st = Store(tmp_path)
+    # iteration 1: block (pauses the full run), 2: poll, 3: poll ... the loop never dies
+    assert cli.run_loop(_loop_settings(tmp_path), st, apply=False, poll_seconds=60, sync_minutes=30, iterations=4) == 0
+    assert [r["command"] for r in st.recent_runs(1)].count("watch") >= 2
+    st.close()

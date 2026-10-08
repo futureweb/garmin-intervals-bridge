@@ -53,6 +53,9 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 
 - `health`: daily probe of both services with a configurable stale window
   and alert mail; failure alerts for the timers (`deploy/`).
+- `run`: the three timers in one long-running process, for Windows and
+  anything without systemd; `.env` file support; file locks on Windows;
+  `python -m garmin_intervals_bridge`. Step-by-step Windows guide.
 
 ### Fixed after the code review
 
