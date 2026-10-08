@@ -127,6 +127,10 @@ class Store:
             raise ValueError("Garmin activity ID must be numeric")
         return self.base / "fits" / f"{garmin_id}.fit"
 
+    def partner_path(self, garmin_id: str) -> Path:
+        """The copy Intervals holds for this activity, kept next to the original for audits."""
+        return self.fit_path(garmin_id).with_suffix(".partner.fit")
+
     def save_snapshot(self, day: date, snapshot: dict) -> Path:
         path = self.base / "raw" / f"{day.isoformat()}.json"
         self.atomic_save(path, (json.dumps(snapshot, indent=2, ensure_ascii=False,

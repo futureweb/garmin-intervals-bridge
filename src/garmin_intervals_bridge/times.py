@@ -5,6 +5,18 @@ from datetime import datetime, timezone
 from typing import Any
 
 
+def external_id_names(external: object, garmin_id: str) -> bool:
+    """Does an Intervals external_id refer to this Garmin activity?
+
+    Verified shapes: the official sync stores the bare ID (`24544097680`); a
+    manual upload of the Garmin export stores the file name
+    (`24544097680_ACTIVITY.fit`); the bridge's own uploads use `garmin:<id>`.
+    """
+    if not garmin_id or not isinstance(external, str):
+        return False
+    return external in (garmin_id, f"garmin:{garmin_id}") or external.startswith(f"{garmin_id}_")
+
+
 def parse_utc(value: Any, *, garmin_gmt: bool = False) -> datetime | None:
     """Parse an ISO-8601 string to an aware UTC datetime.
 

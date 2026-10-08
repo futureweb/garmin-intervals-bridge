@@ -35,7 +35,7 @@ class FakeSession:
 
     def get(self, url, **kwargs):
         self.calls.append(("GET", url, kwargs))
-        return Response({"id": "2026-10-08", "customFields": {"Existing": 1}})
+        return Response({"id": "2026-10-08", "Existing": 1})
 
     def post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs))
@@ -46,7 +46,7 @@ def test_api_auth_and_paths():
     fake = FakeSession()
     api = IntervalsClient("secret", session=fake)
     assert fake.auth == ("API_KEY", "secret")
-    assert api.wellness(date(2026, 10, 8))["customFields"]["Existing"] == 1
+    assert api.wellness(date(2026, 10, 8))["Existing"] == 1
     api.write_wellness(date(2026, 10, 8), {"readiness": 44})
     method, url, req = fake.calls[-1]
     assert method == "PUT" and url.endswith("/wellness/2026-10-08")
