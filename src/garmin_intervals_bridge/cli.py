@@ -9,7 +9,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .config import Settings
-from .fit import compare_fit, sha256
+from .enrich import gap_report, match_activity
+from .fit import compare_fit, extract_original_fit, sha256
 from .garmin import GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
@@ -26,6 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     cmp = sub.add_parser("compare-fit", help="Compare two local FITs by message/field inventories")
     cmp.add_argument("file_a", type=Path)
     cmp.add_argument("file_b", type=Path)
+    gap = sub.add_parser("gap", help="Compare one Garmin original with the copy Intervals received; no writes")
+    gap.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
+    gap.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
     setup = sub.add_parser("setup-fields", help="Preview/create missing private numeric custom fields")
     setup.add_argument("--apply", action="store_true", help="Actually create missing custom fields")
     sync = sub.add_parser("sync", help="Synchronize (local archive only / dry-run by default)")
@@ -80,6 +84,33 @@ def main(argv: list[str] | None = None) -> int:
                     return 0
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
                 garmin.login(interactive=False)
+                if args.cmd == "gap":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    gid = args.activity_id
+                    path = store.fit_path(gid)
+                    if not path.is_file():
+                        store.atomic_save(path, garmin.original_fit(gid))
+                    original = path.read_bytes()
+                    if args.intervals_id:
+                        remote_id = args.intervals_id
+                        matched = {"id": remote_id, "how": "given"}
+                    else:
+                        activity = garmin.activity(gid)
+                        day = datetime.fromisoformat(activity["startTimeGMT"]).date()
+                        candidates = intervals.activities(day - timedelta(days=1), day + timedelta(days=1))
+                        found = match_activity(activity, candidates)
+                        if found is None:
+                            print(json.dumps({"activity_id": gid, "matched": None,
+                                              "candidates_seen": len(candidates),
+                                              "report": gap_report(original, None)}, indent=2, default=str))
+                            return 0
+                        remote_id = str(found["id"])
+                        matched = {"id": remote_id, "how": "matched", "source": found.get("source"),
+                                   "external_id": found.get("external_id"), "start_date": found.get("start_date")}
+                    partner = extract_original_fit(intervals.activity_file(remote_id))
+                    print(json.dumps({"activity_id": gid, "matched": matched,
+                                      "report": gap_report(original, partner)}, indent=2, default=str))
+                    return 0
                 if args.cmd == "probe":
                     if args.activity_id:
                         gid = args.activity_id

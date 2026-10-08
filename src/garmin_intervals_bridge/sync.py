@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -11,23 +11,12 @@ from .fit import sha256, validate_fit
 from .garmin import GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
+from .times import parse_utc
 
 log = logging.getLogger(__name__)
 
 
-def _time(value: Any, *, garmin_gmt: bool = False) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-        # startTimeGMT is a naive UTC time by Garmin's convention.
-        if parsed.tzinfo is None:
-            if not garmin_gmt:
-                return None
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except ValueError:
-        return None
+_time = parse_utc
 
 
 def activity_match(garmin: dict, remote: list[dict], tolerance_seconds: int = 180) -> dict | None:
