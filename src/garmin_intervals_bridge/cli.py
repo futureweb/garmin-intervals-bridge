@@ -135,10 +135,15 @@ def main(argv: list[str] | None = None) -> int:
                             raise ValueError("No matching Intervals activity; pass --intervals-id if you are sure")
                         remote_id = str(found["id"])
                     remote = intervals.activity(remote_id)
+                    # The partner copy defines what "filtered" means for this activity.
+                    partner_file = store.partner_path(gid)
+                    if not partner_file.is_file():
+                        store.atomic_save(partner_file, extract_original_fit(intervals.activity_file(remote_id)))
+                    partner_messages, _ = decode_fit(partner_file.read_bytes())
                     mappings = load_field_mappings(intervals.custom_items())
                     time_stream = next((st.get("data") for st in intervals.streams(remote_id, ["time"])
                                         if isinstance(st, dict) and st.get("type") == "time"), [])
-                    scalars = plan_scalars(messages, remote, mappings)
+                    scalars = plan_scalars(messages, remote, mappings, partner_messages)
                     streams = plan_streams(messages, remote, time_stream or [], mappings)
                     plan = {"activity_id": gid, "intervals_id": remote_id, "apply": args.apply,
                             "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
