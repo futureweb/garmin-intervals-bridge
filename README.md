@@ -161,7 +161,7 @@ already fetched, so it can be interrupted and resumed.
 
 ## Charts
 
-`setup-charts --apply` creates ten private fitness charts in your account
+`setup-charts --apply` creates fifteen private fitness charts in your account
 for the values the bridge syncs: readiness & recovery, sleep stages, stress
 & Body Battery, HRV detail, nutrition intake vs. burn, Garmin Bridge: Endurance & hill scores, VO₂max
 & fitness age, race predictions, intensity & hydration, skin temperature.

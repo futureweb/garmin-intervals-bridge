@@ -32,7 +32,7 @@ def test_wellness_maps_scales_without_conflation():
     assert custom["GarminEnduranceScore"] == 5320
     assert custom["GarminHillScore"] == 73
     assert custom["GarminRecoveryTimeMinutes"] == 1440
-    assert custom["GarminTotalCalories"] == 2355
+    assert custom["GarminTotalCalories"] == 2355 and custom["GarminKcalBalance"] == 55
     assert custom["BodyBatteryMax"] == 91
     assert custom["GarminHRV5MinHigh"] == 78
     assert nat["kcalConsumed"] == 2410 and nat["carbohydrates"] == 280.5

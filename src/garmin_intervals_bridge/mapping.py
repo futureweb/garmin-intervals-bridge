@@ -39,6 +39,7 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminCarbsKcal": CustomField("Garmin Carbs Energy", "kcal"),             # grams x 4 (Atwater), for energy share
     "GarminProteinKcal": CustomField("Garmin Protein Energy", "kcal"),         # grams x 4
     "GarminFatKcal": CustomField("Garmin Fat Energy", "kcal"),                 # grams x 9
+    "GarminKcalBalance": CustomField("Garmin kcal Balance", "kcal"),           # consumed - total burn
     "GarminIntensityModerateMinutes": CustomField("Garmin Moderate Intensity", "min"),
     "GarminIntensityVigorousMinutes": CustomField("Garmin Vigorous Intensity", "min"),
     "GarminStepsGoal": CustomField("Garmin Daily Steps Goal", "steps"),
@@ -214,6 +215,9 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
         put(custom, "GarminTotalCalories", choose(stats, ("totalKilocalories",), low=1, high=30000), low=1, high=30000)
+        # Daily energy balance, for weekly / monthly totals in a chart. Only when food was logged.
+        if "kcalConsumed" in native and "GarminTotalCalories" in custom:
+            custom["GarminKcalBalance"] = round(native["kcalConsumed"] - custom["GarminTotalCalories"])
         put(custom, "GarminIntensityModerateMinutes",
             choose(stats, ("moderateIntensityMinutes",), high=1440), high=1440)
         put(custom, "GarminIntensityVigorousMinutes",

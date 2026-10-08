@@ -84,6 +84,28 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
+        "name": "Garmin Bridge: Energy balance (weekly)",
+        "title": "Weekly total of (kcal consumed - Garmin total burn); weight on the right axis",
+        "y": "kcal / week",
+        "y2": "kg",
+        "height": 180,
+        "plots": [
+            ("custom", "GarminKcalBalance", "Balance", "bars", "week_tot", None, "#1F77B466", "#1F77B4FF", "", "kcal"),
+            ("native", "weight", "kg", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
+        ],
+    },
+    {
+        "name": "Garmin Bridge: Energy balance (monthly)",
+        "title": "Monthly total of (kcal consumed - Garmin total burn); weight on the right axis",
+        "y": "kcal / month",
+        "y2": "kg",
+        "height": 180,
+        "plots": [
+            ("custom", "GarminKcalBalance", "Balance", "bars", "month_tot", None, "#9467BD66", "#9467BDFF", "", "kcal"),
+            ("native", "weight", "kg", "dec1", "Weight", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF"),
+        ],
+    },
+    {
         "name": "Garmin Bridge: Nutrition macros",
         "aliases": ("Nutrition: macros (Garmin)",),
         "title": "Energy from carbohydrates / protein / fat (g x 4/4/9); the percentage is the share of intake energy",
@@ -103,9 +125,9 @@ CHARTS: list[dict[str, Any]] = [
         "y2": "Hill",
         "height": 180,
         "plots": [
-            ("custom", "GarminEnduranceScore", "Endur.", "line", "none", None, "#1F77B400", "#1F77B4FF", "",
+            ("custom", "GarminEnduranceScore", "Endur.", "line", "fill_in", None, "#1F77B400", "#1F77B4FF", "",
              "endurance"),
-            ("custom", "GarminHillScore", "Hill", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "", "hill"),
+            ("custom", "GarminHillScore", "Hill", "line", "fill_in", None, "#FF7F0E00", "#FF7F0EFF", "", "hill"),
             ("custom", "GarminHillStrength", "HillStr", "dot", "none", None, "#FF7F0E66", "#FF7F0E88", "", "hill"),
             ("custom", "GarminHillEndurance", "HillEnd", "dot", "none", None, "#FFBB7866", "#FFBB7888", "", "hill"),
         ],
@@ -118,10 +140,11 @@ CHARTS: list[dict[str, Any]] = [
         "y2": "Years",
         "height": 180,
         "plots": [
-            ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
-            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "none", None, "#9467BD00", "#9467BDFF", "", "vo2max"),
-            # Fitness age moves in whole steps from day to day; a 7-day average shows the trend.
-            ("custom", "GarminFitnessAge", "FitAge", "line", "moving_avg", 7, "#7F7F7F00", "#7F7F7FFF", "", "years"),
+            ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "fill_in", None, "#1F77B400", "#1F77B4FF"),
+            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "fill_in", None, "#9467BD00", "#9467BDFF", "", "vo2max"),
+            # fill_in carries the last value over days without one, so the legend never shows "?"
+            # (a moving average would smooth the steps but leaves the legend empty on such days).
+            ("custom", "GarminFitnessAge", "FitAge", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF", "", "years"),
         ],
     },
     {
@@ -134,9 +157,9 @@ CHARTS: list[dict[str, Any]] = [
         "y2": "10K",
         "height": 150,
         "plots": [
-            ("custom", "GarminPredicted5KSeconds", "5K", "line", "none", None, "#2CA02C00", "#2CA02CFF", "",
+            ("custom", "GarminPredicted5KSeconds", "5K", "line", "fill_in", None, "#2CA02C00", "#2CA02CFF", "",
              "5k", "interval_time"),
-            ("custom", "GarminPredicted10KSeconds", "10K", "line", "none", None, "#1F77B400", "#1F77B4FF", "",
+            ("custom", "GarminPredicted10KSeconds", "10K", "line", "fill_in", None, "#1F77B400", "#1F77B4FF", "",
              "10k", "interval_time"),
         ],
     },
@@ -148,9 +171,9 @@ CHARTS: list[dict[str, Any]] = [
         "y2": "Marathon",
         "height": 150,
         "plots": [
-            ("custom", "GarminPredictedHalfSeconds", "Half", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "",
+            ("custom", "GarminPredictedHalfSeconds", "Half", "line", "fill_in", None, "#FF7F0E00", "#FF7F0EFF", "",
              "half", "interval_time"),
-            ("custom", "GarminPredictedMarathonSeconds", "Mara.", "line", "none",
+            ("custom", "GarminPredictedMarathonSeconds", "Mara.", "line", "fill_in",
              None, "#D6272800", "#D62728FF", "", "marathon", "interval_time"),
         ],
     },

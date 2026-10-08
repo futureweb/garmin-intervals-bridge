@@ -60,6 +60,7 @@ wait until tomorrow.
 | `carbohydrates`, `protein`, `fatTotal` | nutrition `dailyNutritionContent.carbs/protein/fat` | g |
 | `GarminCarbsKcal`, `GarminProteinKcal`, `GarminFatKcal` (custom) | the same grams x 4 / 4 / 9 (Atwater factors) | kcal; only for the stacked macro chart, whose percentages are then the energy share Garmin shows |
 | `GarminTotalCalories` (custom) | `stats.totalKilocalories` (BMR + active) | kcal; the "burn" side of intake vs. burn |
+| `GarminKcalBalance` (custom) | `kcalConsumed - GarminTotalCalories`, finished days with logged food only | kcal; weekly / monthly totals in the energy-balance charts |
 | `weight` | `body_composition.dateWeightList[].weight / 1000` | kg |
 | `bodyFat` | `body_composition.dateWeightList[].bodyFat` | % |
 
