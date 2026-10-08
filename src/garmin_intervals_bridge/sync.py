@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import Settings
 from .fit import sha256, validate_fit
+from .garmin import GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
 
@@ -60,6 +61,62 @@ def _garmin_day(garmin: dict) -> date:
     return ts.date()
 
 
+def _sync_one_activity(activity: dict, gid: str, garmin: Any, intervals: Any, store: Store,
+                       remote: list[dict], metrics: dict, *, apply: bool, allow_upload: bool) -> None:
+    path = store.fit_path(gid)
+    if not path.is_file():
+        fit = garmin.original_fit(gid)
+        store.atomic_save(path, fit)
+        metrics["downloaded"] += 1
+    else:
+        try:
+            validate_fit(path.read_bytes())
+        except ValueError:
+            fit = garmin.original_fit(gid)
+            store.atomic_save(path, fit)
+            metrics["downloaded"] += 1
+    digest = sha256(path.read_bytes())
+    status = store.activity_status(gid)
+    if status in ("uploaded", "pending"):
+        metrics["pending"] += int(status == "pending")
+        log.info("FIT %s already tracked as %s; not reposting", gid, status)
+        return
+    # Always re-evaluate remote existence; old manual imports need preservation.
+    duplicate = activity_match(activity, remote)
+    if duplicate is not None:
+        store.record_activity(gid, "remote_exists", digest, str(duplicate.get("id") or ""))
+        metrics["remote_exists"] += 1
+        log.info("FIT %s already present remotely; not replacing", gid)
+        return
+    store.record_activity(gid, "downloaded", digest)
+    if not apply or not allow_upload:
+        metrics["would_upload"] += 1
+        log.info("DRY/SAFE FIT %s: new original ready; upload NOT performed", gid)
+        return
+    # Query Intervals again immediately before upload for race protection.
+    nearby = intervals.nearby_activities(_garmin_day(activity))
+    duplicate = activity_match(activity, nearby)
+    if duplicate is not None:
+        store.record_activity(gid, "remote_exists", digest, str(duplicate.get("id") or ""))
+        metrics["remote_exists"] += 1
+        return
+    # Pending is durable: after a timeout/crash, NEVER automatically retry
+    # a potentially successful upload. Manual reconciliation required.
+    store.record_activity(gid, "pending", digest)
+    result = intervals.upload_fit(gid, path)
+    if not result.get("created"):
+        # 200 means *no* new activity. Keep the pending lock; diagnose
+        # what Intervals considered a duplicate before trying again.
+        log.warning("Intervals did not create Garmin activity %s; manual reconciliation needed", gid)
+        metrics["pending"] += 1
+        return
+    entries = result.get("items", [])
+    imported_id = str(entries[0].get("id", "")) if entries and isinstance(entries[0], dict) else ""
+    store.record_activity(gid, "uploaded", digest, imported_id)
+    metrics["uploaded"] += 1
+    log.info("Uploaded original FIT for Garmin ID %s", gid)
+
+
 def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Store,
                     *, apply: bool, allow_upload: bool, activity_days: int | None = None,
                     today: date | None = None) -> dict:
@@ -67,7 +124,8 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
     lookback = activity_days or settings.activity_days
     start = current - timedelta(days=lookback - 1)
     activities = garmin.activities(start, current)
-    metrics = {"seen": 0, "downloaded": 0, "remote_exists": 0, "uploaded": 0, "pending": 0, "would_upload": 0}
+    metrics = {"seen": 0, "downloaded": 0, "remote_exists": 0, "uploaded": 0, "pending": 0,
+               "would_upload": 0, "skipped": 0, "deferred": 0, "failed": 0}
     # Never rely solely on the hash of partner-filtered and original FIT files.
     remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1))
     for activity in sorted(activities, key=lambda a: str(a.get("startTimeGMT") or "")):
@@ -76,60 +134,36 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
             log.warning("Ignoring invalid Garmin activity ID")
             continue
         metrics["seen"] += 1
-        path = store.fit_path(gid)
-        if not path.is_file():
-            fit = garmin.original_fit(gid)
-            store.atomic_save(path, fit)
-            metrics["downloaded"] += 1
-        else:
-            try:
-                validate_fit(path.read_bytes())
-            except ValueError:
-                fit = garmin.original_fit(gid)
-                store.atomic_save(path, fit)
-                metrics["downloaded"] += 1
-        digest = sha256(path.read_bytes())
-        status = store.activity_status(gid)
-        if status in ("uploaded", "pending"):
-            metrics["pending"] += int(status == "pending")
-            log.info("FIT %s already tracked as %s; not reposting", gid, status)
+        if activity.get("manualActivity") is True:
+            # Manual entries carry no device recording; Garmin's original export
+            # has nothing to return for them and would fail on every run.
+            if store.activity_status(gid) != "skipped":
+                store.record_activity(gid, "skipped")
+            metrics["skipped"] += 1
             continue
-        # Always re-evaluate remote existence; old manual imports need preservation.
-        duplicate = activity_match(activity, remote)
-        if duplicate is not None:
-            store.record_activity(gid, "remote_exists", digest, str(duplicate.get("id") or ""))
-            metrics["remote_exists"] += 1
-            log.info("FIT %s already present remotely; not replacing", gid)
+        if store.is_deferred(gid):
+            metrics["deferred"] += 1
             continue
-        store.record_activity(gid, "downloaded", digest)
-        if not apply or not allow_upload:
-            metrics["would_upload"] += 1
-            log.info("DRY/SAFE FIT %s: new original ready; upload NOT performed", gid)
-            continue
-        # Query Intervals again immediately before upload for race protection.
-        nearby = intervals.nearby_activities(_garmin_day(activity))
-        duplicate = activity_match(activity, nearby)
-        if duplicate is not None:
-            store.record_activity(gid, "remote_exists", digest, str(duplicate.get("id") or ""))
-            metrics["remote_exists"] += 1
-            continue
-        # Pending is durable: after a timeout/crash, NEVER automatically retry
-        # a potentially successful upload. Manual reconciliation required.
-        store.record_activity(gid, "pending", digest)
-        result = intervals.upload_fit(gid, path)
-        if not result.get("created"):
-            # 200 means *no* new activity. Keep the pending lock; diagnose
-            # what Intervals considered a duplicate before trying again.
-            log.warning("Intervals did not create Garmin activity %s; manual reconciliation needed", gid)
-            metrics["pending"] += 1
-            continue
-        entries = result.get("items", [])
-        imported_id = str(entries[0].get("id", "")) if entries and isinstance(entries[0], dict) else ""
-        store.record_activity(gid, "uploaded", digest, imported_id)
-        metrics["uploaded"] += 1
-        log.info("Uploaded original FIT for Garmin ID %s", gid)
+        # One broken activity must never stop the others. Errors are recorded
+        # per activity with backoff; only a Garmin-wide block aborts the run.
+        try:
+            _sync_one_activity(activity, gid, garmin, intervals, store, remote, metrics,
+                               apply=apply, allow_upload=allow_upload)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            if store.activity_status(gid) == "pending":
+                # The upload request itself failed after the pending lock was taken:
+                # its outcome is unknown, so it stays pending and is never retried blindly.
+                metrics["pending"] += 1
+                log.error("Upload of %s ended with %s; outcome unknown, left pending for manual check",
+                          gid, type(exc).__name__)
+                continue
+            attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}")
+            metrics["failed"] += 1
+            log.warning("Activity %s failed with %s (attempt %d); retrying later with backoff",
+                        gid, type(exc).__name__, attempts)
     return metrics
-
 
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,

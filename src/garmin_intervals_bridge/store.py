@@ -12,6 +12,19 @@ from pathlib import Path
 from typing import Any
 
 
+ACTIVITY_STATUSES = ("downloaded", "pending", "uploaded", "remote_exists", "failed", "skipped")
+
+# States a later *failure* must never downgrade: an upload whose outcome is
+# unknown stays pending (manual reconciliation), a completed upload stays done.
+GUARDED_STATUSES = ("pending", "uploaded")
+
+# Retry schedule for activities whose processing raised: quick retries for
+# transient errors, then rare ones, so an activity that can never be processed
+# (e.g. Garmin has no device file for it) costs one request a week instead of
+# aborting every run. The last interval repeats.
+RETRY_BACKOFF_SECONDS = (3600, 6 * 3600, 24 * 3600, 7 * 86400)
+
+
 class Store:
     def __init__(self, base: Path):
         self.base = base
@@ -23,6 +36,12 @@ class Store:
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
             day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+        # Additive schema migration for databases created by v0.1.x.
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(activity)")}
+        for name, ddl in (("attempts", "INTEGER NOT NULL DEFAULT 0"),
+                          ("next_retry", "REAL"), ("error", "TEXT")):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE activity ADD COLUMN {name} {ddl}")
         self.db.commit()
 
     def activity_status(self, garmin_id: str) -> str | None:
@@ -31,13 +50,49 @@ class Store:
 
     def record_activity(self, garmin_id: str, status: str, sha: str | None = None,
                         intervals_id: str | None = None) -> None:
-        assert status in ("downloaded", "pending", "uploaded", "remote_exists")
+        """Record a non-failure outcome; this also clears any earlier failure bookkeeping."""
+        assert status in ACTIVITY_STATUSES and status != "failed"
         self.db.execute("""INSERT INTO activity (garmin_id,status,sha256,intervals_id,updated)
             VALUES (?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET
             status=excluded.status,sha256=excluded.sha256,
-            intervals_id=excluded.intervals_id,updated=excluded.updated""",
+            intervals_id=excluded.intervals_id,updated=excluded.updated,
+            attempts=0,next_retry=NULL,error=NULL""",
                         (garmin_id, status, sha, intervals_id, time.time()))
         self.db.commit()
+
+    def record_failure(self, garmin_id: str, error: str) -> int:
+        """Mark one activity as failed with exponential backoff; returns the attempt count.
+
+        Guarded states are left untouched so that an upload with an unknown
+        outcome is never turned into a retryable failure.
+        """
+        row = self.db.execute("SELECT status, attempts FROM activity WHERE garmin_id=?",
+                              (garmin_id,)).fetchone()
+        if row and row[0] in GUARDED_STATUSES:
+            return int(row[1])
+        attempts = (int(row[1]) if row else 0) + 1
+        delay = RETRY_BACKOFF_SECONDS[min(attempts, len(RETRY_BACKOFF_SECONDS)) - 1]
+        now = time.time()
+        self.db.execute("""INSERT INTO activity (garmin_id,status,sha256,intervals_id,updated,attempts,next_retry,error)
+            VALUES (?,'failed',NULL,NULL,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET
+            status='failed',updated=excluded.updated,attempts=excluded.attempts,
+            next_retry=excluded.next_retry,error=excluded.error""",
+                        (garmin_id, now, attempts, now + delay, error[:200]))
+        self.db.commit()
+        return attempts
+
+    def is_deferred(self, garmin_id: str, now: float | None = None) -> bool:
+        """True while a failed activity is still inside its backoff window."""
+        row = self.db.execute("SELECT status, next_retry FROM activity WHERE garmin_id=?",
+                              (garmin_id,)).fetchone()
+        if not row or row[0] != "failed" or row[1] is None:
+            return False
+        return (now if now is not None else time.time()) < row[1]
+
+    def failed_activities(self) -> list[dict]:
+        rows = self.db.execute("""SELECT garmin_id, attempts, next_retry, error FROM activity
+                                  WHERE status='failed' ORDER BY next_retry""")
+        return [{"garmin_id": r[0], "attempts": r[1], "next_retry": r[2], "error": r[3]} for r in rows]
 
     def wellness_recent(self, day: date, hours: int) -> bool:
         row = self.db.execute("SELECT fetched FROM wellness WHERE day=?", (day.isoformat(),)).fetchone()

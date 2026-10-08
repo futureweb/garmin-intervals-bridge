@@ -15,6 +15,22 @@ from .fit import extract_original_fit
 log = logging.getLogger(__name__)
 
 
+class GarminBlocked(RuntimeError):
+    """Garmin refused the session or rate-limited us.
+
+    This is a property of the *run*, not of one activity: the caller must stop
+    the whole run and keep local state untouched instead of marking the
+    current activity as failed and hammering the next one.
+    """
+
+
+def _is_blocked(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    text = str(exc)
+    return ("TooManyRequests" in name or "Authentication" in name
+            or "401" in text or "429" in text)
+
+
 # Source snapshot: all available fields are retained in a *local* JSON archive.
 # Only confirmed scalar metrics are mapped into Intervals wellness.
 DAY_ENDPOINTS = {
@@ -85,8 +101,14 @@ class GarminSource:
 
     def original_fit(self, activity_id: int | str) -> bytes:
         api = self._client()
-        raw = api.download_activity(str(activity_id), dl_fmt=api.ActivityDownloadFormat.ORIGINAL)
-        time.sleep(self.delay)
+        try:
+            raw = api.download_activity(str(activity_id), dl_fmt=api.ActivityDownloadFormat.ORIGINAL)
+        except Exception as exc:
+            if _is_blocked(exc):
+                raise GarminBlocked(f"Garmin API blocked request: {type(exc).__name__}") from exc
+            raise
+        finally:
+            time.sleep(self.delay)
         return extract_original_fit(raw)
 
     def snapshot(self, day: date) -> dict:
@@ -113,9 +135,8 @@ class GarminSource:
                 raw["data"][key] = result
             except Exception as exc:
                 name = type(exc).__name__
-                if ("TooManyRequests" in name or "Authentication" in name or
-                    "401" in str(exc) or "429" in str(exc)):
-                    raise RuntimeError(f"Garmin API blocked request: {name}") from exc
+                if _is_blocked(exc):
+                    raise GarminBlocked(f"Garmin API blocked request: {name}") from exc
                 raw["errors"][key] = name
                 log.warning("Garmin endpoint %s unavailable: %s", key, name)
             finally:
