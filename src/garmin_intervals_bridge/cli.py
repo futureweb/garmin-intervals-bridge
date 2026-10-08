@@ -9,12 +9,12 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from .config import Settings
-from .enrich import gap_report, load_field_mappings, match_activity, plan_scalars, plan_streams
+from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, decode_fit, extract_original_fit, sha256
 from .garmin import GarminSource
 from .intervals import IntervalsClient
 from .store import Store, single_instance
-from .sync import sync_activities, sync_wellness
+from .sync import sync_activities, sync_enrich, sync_wellness
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,6 +41,9 @@ def build_parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync", help="Synchronize (local archive only / dry-run by default)")
     sync.add_argument("--apply", action="store_true", help="Permit Intervals writes")
     sync.add_argument("--scope", choices=["all", "activities", "wellness"], default="all")
+    sync.add_argument("--mode", choices=["enrich", "upload"], default="enrich",
+                      help="enrich = official import stays on, add what Garmin stripped (default); "
+                           "upload = post originals as new activities (only with the official import off)")
     sync.add_argument("--allow-activity-upload", action="store_true",
                       help="Required in addition to --apply; first disable official Garmin activity import")
     sync.add_argument("--force-wellness", action="store_true", help="Ignore cached wellness refresh window")
@@ -121,52 +124,8 @@ def main(argv: list[str] | None = None) -> int:
                     return 0
                 if args.cmd == "enrich":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
-                    gid = args.activity_id
-                    path = store.fit_path(gid)
-                    if not path.is_file():
-                        store.atomic_save(path, garmin.original_fit(gid))
-                    original = path.read_bytes()
-                    messages, _ = decode_fit(original)
-                    if args.intervals_id:
-                        remote_id = args.intervals_id
-                    else:
-                        activity = garmin.activity(gid)
-                        day = datetime.fromisoformat(activity["startTimeGMT"]).date()
-                        found = match_activity(activity, intervals.activities(day - timedelta(days=1), day + timedelta(days=1)))
-                        if found is None:
-                            raise ValueError("No matching Intervals activity; pass --intervals-id if you are sure")
-                        remote_id = str(found["id"])
-                    remote = intervals.activity(remote_id)
-                    # The partner copy defines what "filtered" means for this activity.
-                    partner_file = store.partner_path(gid)
-                    if not partner_file.is_file():
-                        store.atomic_save(partner_file, extract_original_fit(intervals.activity_file(remote_id)))
-                    partner_messages, _ = decode_fit(partner_file.read_bytes())
-                    mappings = load_field_mappings(intervals.custom_items())
-                    time_stream = next((st.get("data") for st in intervals.streams(remote_id, ["time"])
-                                        if isinstance(st, dict) and st.get("type") == "time"), [])
-                    scalars = plan_scalars(messages, remote, mappings, partner_messages)
-                    previous = store.enrichment(gid)
-                    refresh = set(previous["streams"]) if (args.refresh_own_streams and previous) else None
-                    streams = plan_streams(messages, remote, time_stream or [], mappings, refresh=refresh)
-                    plan = {"activity_id": gid, "intervals_id": remote_id, "apply": args.apply,
-                            "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
-                                         "unsupported": mappings.unsupported},
-                            "fields": scalars,
-                            "streams": {"writes": [{k: v for k, v in w.items() if k != "data"} for w in streams["writes"]],
-                                        "skipped": streams["skipped"]},
-                            "previous_enrichment": store.enrichment(gid)}
-                    if args.apply:
-                        result: dict = {}
-                        if scalars["writes"]:
-                            result["fields"] = intervals.update_activity(remote_id, scalars["writes"]) is not None
-                        if streams["writes"]:
-                            body = [{k: v for k, v in w.items() if k != "_stats"} for w in streams["writes"]]
-                            result["streams"] = intervals.put_streams(remote_id, body)
-                        written_fields = sorted(set(scalars["writes"]) | set(previous["fields"] if previous else []))
-                        written_streams = sorted({w["type"] for w in streams["writes"]} | set(previous["streams"] if previous else []))
-                        store.record_enrichment(gid, remote_id, sha256(original), written_fields, written_streams)
-                        plan["result"] = result
+                    plan = enrich_activity(args.activity_id, garmin, intervals, store, apply=args.apply,
+                                           intervals_id=args.intervals_id, refresh_own=args.refresh_own_streams)
                     print(json.dumps(plan, indent=2, default=str))
                     return 0
                 if args.cmd == "probe":
@@ -190,7 +149,11 @@ def main(argv: list[str] | None = None) -> int:
                             raise ValueError(f"--{name.replace('_','-')} must be 1..30")
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     results: dict = {"apply": args.apply, "scope": args.scope}
-                    if args.scope in ("all", "activities"):
+                    results["mode"] = args.mode
+                    if args.scope in ("all", "activities") and args.mode == "enrich":
+                        results["activities"] = sync_enrich(settings, garmin, intervals, store,
+                            apply=args.apply, activity_days=args.activity_days)
+                    elif args.scope in ("all", "activities"):
                         if args.apply and not args.allow_activity_upload:
                             log.warning("Activity uploads disabled; add --allow-activity-upload ONLY AFTER disabling Garmin auto-activity sync")
                         results["activities"] = sync_activities(settings, garmin, intervals, store,

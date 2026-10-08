@@ -190,6 +190,7 @@ class ScalarMapping:
     source: str                      # "session:<name>" | "session:<num>" | "mesg:<num>.<field>"
     convert: tuple = ()              # sequence of ("*"|"/", factor) applied to the raw value
     select_values: tuple | None = None   # for "select" fields: the only values the field accepts
+    zero_is_null: bool = False           # script treats a raw 0 as "no value" (`x == 0 ? NaN : x`)
     note: str = ""
 
 
@@ -215,17 +216,28 @@ _RECORD_SCRIPT = re.compile(r"icu\.fit\.record[\s\S]*?m\.f_(\d+)")
 _RECORD_VALUE = re.compile(r"setAt\(\s*[^,]+,\s*f\.value(?P<ops>(\s*[*/]\s*[0-9.]+)*)\s*\)")
 
 
-def _parse_conversion(script: str | None, code: str) -> tuple | None:
-    """Return the first-import conversion as ("*"/"/", factor) steps, () for none, None if unknown."""
+def _parse_conversion(script: str | None, code: str) -> tuple[tuple, bool] | None:
+    """Interpret a field script: (conversion steps, zero_is_null), or None if not understood.
+
+    Understood forms, as the athlete's own definitions use them:
+      activity.isNew ? activity.X / 60 : activity.X
+      activity.X == 0 ? NaN : activity.X
+      activity.isNew ? (activity.X == 0 ? NaN : activity.X / 36) : (activity.X == 0 ? NaN : activity.X)
+    """
     if not script or not script.strip():
-        return ()
-    match = _CONVERSION.match(script)
+        return (), False
+    text = script.strip()
+    guard = re.compile(r"\(?\s*activity\." + re.escape(code) + r"\s*==\s*0\s*\?\s*NaN\s*:\s*")
+    zero_is_null = guard.search(text) is not None
+    if zero_is_null:
+        text = guard.sub("", text).replace(")", "").strip()
+    if re.fullmatch(r"activity\." + re.escape(code), text):
+        return (), zero_is_null
+    match = _CONVERSION.match(text)
     if match is None or match.group("code") != code:
         return None
-    steps = []
-    for op, factor in re.findall(r"([*/])\s*([0-9.]+)", match.group("ops")):
-        steps.append((op, float(factor)))
-    return tuple(steps)
+    steps = tuple((op, float(factor)) for op, factor in re.findall(r"([*/])\s*([0-9.]+)", match.group("ops")))
+    return steps, zero_is_null
 
 
 def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
@@ -243,10 +255,11 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
             src = content.get("fit_session_field")
             if not src:
                 continue  # computed from other fields; Intervals evaluates that itself
-            convert = _parse_conversion(content.get("script"), code)
-            if convert is None:
+            parsed = _parse_conversion(content.get("script"), code)
+            if parsed is None:
                 out.unsupported[code] = "script with unknown semantics"
                 continue
+            convert, zero_is_null = parsed
             src = str(src).strip()
             if re.fullmatch(r"\d+\.\d+", src):
                 source = f"mesg:{src}"
@@ -258,7 +271,7 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
             if content.get("type") == "select" and isinstance(content.get("options"), list):
                 select_values = tuple(float(o["value"]) for o in content["options"]
                                       if isinstance(o, dict) and isinstance(o.get("value"), (int, float)))
-            out.scalars.append(ScalarMapping(code, source, convert, select_values))
+            out.scalars.append(ScalarMapping(code, source, convert, select_values, zero_is_null))
         elif kind == "ACTIVITY_STREAM":
             src = content.get("fit_record_field")
             if src:
@@ -330,7 +343,7 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
     absent: list[str] = []
     for m in mappings.scalars:
         raw = _lookup(messages, m.source)
-        if raw is None:
+        if raw is None or (m.zero_is_null and raw == 0):
             absent.append(m.code)
             continue
         value = _convert(raw, m.convert)
@@ -398,3 +411,91 @@ def plan_streams(messages: dict[str, list[dict]], activity: dict, time_stream: l
             continue
         writes.append({"type": m.code, "custom": True, "data": data, "_stats": stats})
     return {"writes": writes, "skipped": skipped}
+
+
+# ---------------------------------------------------------------------------
+# One activity, end to end
+# ---------------------------------------------------------------------------
+
+def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply: bool,
+                    remote_candidates: list[dict] | None = None, intervals_id: str | None = None,
+                    mappings: FieldMappings | None = None, refresh_own: bool = False) -> dict:
+    """Download (or reuse) the original, find the Intervals activity, plan, optionally write.
+
+    Returns the plan plus an `outcome`:
+      unmatched         no Intervals activity yet (the official import may lag; try again later)
+      already_enriched  this original was handled before and nothing changed
+      nothing_to_add    the partner copy lacks nothing the athlete's fields could take
+      planned           writes identified, dry run
+      enriched          writes performed
+    """
+    from .fit import decode_fit, extract_original_fit, sha256   # local import keeps fit optional for tests
+
+    path = store.fit_path(gid)
+    if not path.is_file():
+        store.atomic_save(path, garmin.original_fit(gid))
+    original = path.read_bytes()
+    digest = sha256(original)
+
+    if intervals_id is None:
+        if remote_candidates is None:
+            activity = garmin.activity(gid)
+            day = parse_utc(activity.get("startTimeGMT"), garmin_gmt=True)
+            if day is None:
+                raise ValueError("Garmin activity lacks startTimeGMT")
+            from datetime import timedelta
+            remote_candidates = intervals.activities(day.date() - timedelta(days=1), day.date() + timedelta(days=1))
+            found = match_activity(activity, remote_candidates)
+        else:
+            found = next((c for c in remote_candidates if external_id_names(c.get("external_id"), gid)), None)
+        if found is None:
+            return {"activity_id": gid, "outcome": "unmatched", "candidates_seen": len(remote_candidates)}
+        intervals_id = str(found["id"])
+
+    previous = store.enrichment(gid)
+    if previous and previous["sha256"] == digest and previous["intervals_id"] == intervals_id and not refresh_own:
+        return {"activity_id": gid, "intervals_id": intervals_id, "outcome": "already_enriched",
+                "previous_enrichment": previous}
+
+    remote = intervals.activity(intervals_id)
+    partner_file = store.partner_path(gid)
+    if not partner_file.is_file():
+        store.atomic_save(partner_file, extract_original_fit(intervals.activity_file(intervals_id)))
+    messages, _ = decode_fit(original)
+    partner_messages, _ = decode_fit(partner_file.read_bytes())
+    if mappings is None:
+        mappings = load_field_mappings(intervals.custom_items())
+    time_stream = next((st.get("data") for st in intervals.streams(intervals_id, ["time"])
+                        if isinstance(st, dict) and st.get("type") == "time"), []) or []
+    refresh = set(previous["streams"]) if (refresh_own and previous) else None
+    scalars = plan_scalars(messages, remote, mappings, partner_messages)
+    streams = plan_streams(messages, remote, time_stream, mappings, refresh=refresh)
+
+    plan: dict = {"activity_id": gid, "intervals_id": intervals_id, "apply": apply,
+                  "mappings": {"scalars": len(mappings.scalars), "streams": len(mappings.streams),
+                               "unsupported": mappings.unsupported},
+                  "fields": scalars,
+                  "streams": {"writes": [{k: v for k, v in w.items() if k != "data"} for w in streams["writes"]],
+                              "skipped": streams["skipped"]},
+                  "previous_enrichment": previous}
+    if not scalars["writes"] and not streams["writes"]:
+        plan["outcome"] = "nothing_to_add"
+        if apply:
+            store.record_enrichment(gid, intervals_id, digest,
+                                    previous["fields"] if previous else [], previous["streams"] if previous else [])
+        return plan
+    if not apply:
+        plan["outcome"] = "planned"
+        return plan
+    result: dict = {}
+    if scalars["writes"]:
+        result["fields"] = intervals.update_activity(intervals_id, scalars["writes"]) is not None
+    if streams["writes"]:
+        body = [{k: v for k, v in w.items() if k != "_stats"} for w in streams["writes"]]
+        result["streams"] = intervals.put_streams(intervals_id, body)
+    fields_written = sorted(set(scalars["writes"]) | set(previous["fields"] if previous else []))
+    streams_written = sorted({w["type"] for w in streams["writes"]} | set(previous["streams"] if previous else []))
+    store.record_enrichment(gid, intervals_id, digest, fields_written, streams_written)
+    plan["result"] = result
+    plan["outcome"] = "enriched"
+    return plan
