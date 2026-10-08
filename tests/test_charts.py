@@ -46,6 +46,9 @@ class Fake:
         self.posted.append(item)
         return {"id": 999}
 
+    def reorder_custom_items(self, items):
+        return {}
+
 
 def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     f = Fake()
@@ -91,3 +94,28 @@ def test_setup_charts_applies_updates_through_put():
     out = setup_charts(f, apply=True)
     assert out["updated"] == [{"name": "HRV detail (Garmin)", "id": 42, "adds": ["GarminHRV7DayAvg"]}]
     assert f.puts[0][0] == 42 and "_gained_fields" not in f.puts[0][1]
+
+
+def test_new_charts_get_unique_indexes_after_creation():
+    class F(Fake):
+        def __init__(self):
+            super().__init__()
+            self.reordered = None
+            self.created_items = []
+
+        def custom_items(self):
+            return (items("GarminSleepDeepMinutes") + [{"type": "FITNESS_CHART", "name": "Theirs", "id": 1, "index": 12}]
+                    + self.created_items)
+
+        def create_custom_item(self, item):
+            self.created_items.append({**item, "id": 900 + len(self.created_items), "index": 0})
+            return {"id": self.created_items[-1]["id"]}
+
+        def reorder_custom_items(self, its):
+            self.reordered = [(i["id"], i["index"]) for i in its]
+            return {}
+
+    f = F()
+    out = setup_charts(f, apply=True)
+    assert out["reindexed"] == [i for i, _ in f.reordered]
+    assert f.reordered[0][1] == 13 and len({idx for _, idx in f.reordered}) == len(f.reordered)

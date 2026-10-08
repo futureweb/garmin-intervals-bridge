@@ -231,4 +231,27 @@ def setup_charts(intervals: Any, *, apply: bool) -> dict:
             body = {k: v for k, v in chart.items() if not k.startswith("_")}
             intervals.update_custom_item(chart["id"], body)
             out["updated"].append({"name": chart["name"], "id": chart["id"], "adds": chart["_gained_fields"]})
+        out["reindexed"] = assign_indexes(intervals)
     return out
+
+
+def assign_indexes(intervals: Any) -> list[int]:
+    """Give the bridge's charts unique indexes. POST leaves new items at index 0 and
+    Intervals' chart picker does not list colliding items; the UI reindexes on its own
+    creations, the API client has to do it itself."""
+    items = intervals.custom_items()
+    taken = [it.get("index") or 0 for it in items]
+    top = max(taken) if taken else 0
+    seen: set[int] = set()
+    fix = []
+    for it in sorted((i for i in items if i.get("description") == BRIDGE_MARK), key=lambda i: i.get("id") or 0):
+        idx = it.get("index") or 0
+        if idx == 0 or idx in seen:
+            top += 1
+            it = dict(it)
+            it["index"] = top
+            fix.append(it)
+        seen.add(it["index"])
+    if fix:
+        intervals.reorder_custom_items(fix)
+    return [it["id"] for it in fix]
