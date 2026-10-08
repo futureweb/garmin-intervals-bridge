@@ -61,7 +61,7 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     out = setup_charts(f, apply=True)
     assert [c["name"] for c in out["created"]] == names
     assert "_missing_fields" not in f.posted[0] and len(f.posted[0]["content"]["plots"]) == 2
-    assert len(CHARTS) == 10
+    assert len(CHARTS) == 11
 
 
 def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched():
@@ -132,5 +132,12 @@ def test_own_chart_is_updated_when_its_definition_changed():
                              "GarminSleepAwakeMinutes") + [own])
     upd = next(x for x in plan["update"] if x["name"] == "Garmin sleep stages")
     assert upd["_gained_fields"] == [] and upd["content"]["plots"][0]["text"] == "Deep"
-    assert all(len(p["text"]) <= 12 for c in CHARTS for p in [{"text": spec[2] if spec[0] == "custom" else spec[4]}
-                                                             for spec in c["plots"]])
+    assert all(len(p["text"]) <= 8 for c in CHARTS for p in [{"text": spec[2] if spec[0] == "custom" else spec[4]}
+                                                            for spec in c["plots"]])
+
+
+def test_macro_chart_stacks_native_gram_plots():
+    plan = plan_charts(items())
+    macros = next(c for c in plan["create"] if c["name"] == "Nutrition: macros (Garmin)")
+    assert [(p["field"], p["stack"], p["scale"]) for p in macros["content"]["plots"]] == \
+        [("carbohydrates", "food", "g"), ("protein", "food", "g"), ("fatTotal", "food", "g")]
