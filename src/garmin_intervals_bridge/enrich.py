@@ -189,6 +189,7 @@ class ScalarMapping:
     code: str
     source: str                      # "session:<name>" | "session:<num>" | "mesg:<num>.<field>"
     convert: tuple = ()              # sequence of ("*"|"/", factor) applied to the raw value
+    select_values: tuple | None = None   # for "select" fields: the only values the field accepts
     note: str = ""
 
 
@@ -249,7 +250,11 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
                 source = f"session:{src}"
             else:
                 source = f"session:{src}"
-            out.scalars.append(ScalarMapping(code, source, convert))
+            select_values = None
+            if content.get("type") == "select" and isinstance(content.get("options"), list):
+                select_values = tuple(float(o["value"]) for o in content["options"]
+                                      if isinstance(o, dict) and isinstance(o.get("value"), (int, float)))
+            out.scalars.append(ScalarMapping(code, source, convert, select_values))
         elif kind == "ACTIVITY_STREAM":
             src = content.get("fit_record_field")
             if src:
@@ -291,10 +296,21 @@ def _convert(value: Any, steps: tuple) -> Any:
     return round(result, 4)
 
 
-def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings) -> dict:
-    """Fields to PUT on the activity: mapped, present in the original, empty in Intervals."""
+def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings,
+                 partner_messages: dict[str, list[dict]] | None = None) -> dict:
+    """Fields to PUT on the activity: mapped, present in the original, and either empty in
+    Intervals or demonstrably filled from a filtered file.
+
+    The second case matters: when Intervals evaluates a field whose FIT source
+    Garmin stripped, it may store 0 rather than null. A value that exists in
+    Intervals while its source is absent from the partner copy cannot have come
+    from real data, so it is replaced. Without a partner copy, existing values
+    are left alone.
+    """
     writes: dict[str, Any] = {}
     kept: dict[str, Any] = {}
+    replaced: dict[str, dict] = {}
+    rejected: dict[str, Any] = {}
     absent: list[str] = []
     for m in mappings.scalars:
         raw = _lookup(messages, m.source)
@@ -304,11 +320,19 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
         value = _convert(raw, m.convert)
         if value is None:
             continue
-        if activity.get(m.code) is not None:
-            kept[m.code] = activity[m.code]          # never overwrite a non-null value
+        if m.select_values is not None and value not in m.select_values:
+            rejected[m.code] = value             # not one of the field's options
             continue
+        existing = activity.get(m.code)
+        if existing is not None:
+            source_in_partner = partner_messages is not None and _lookup(partner_messages, m.source) is not None
+            if partner_messages is None or source_in_partner:
+                kept[m.code] = existing          # may be real data: never overwrite
+                continue
+            replaced[m.code] = {"old": existing, "new": value}
         writes[m.code] = value
-    return {"writes": writes, "kept_existing": kept, "absent_in_original": absent}
+    return {"writes": writes, "kept_existing": kept, "replaced_filtered": replaced,
+            "rejected_for_select": rejected, "absent_in_original": absent}
 
 
 def align_stream(records: list[dict], time_stream: list, record_field: str | int) -> tuple[list, dict]:

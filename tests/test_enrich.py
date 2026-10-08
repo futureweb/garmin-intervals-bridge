@@ -76,6 +76,8 @@ ITEMS = [
                                            "script": "activity.isNew ? activity.VO2MaxGarmin * 3.5 / 65536 : activity.VO2MaxGarmin"}},
     {"type": "ACTIVITY_FIELD", "content": {"code": "ActiveCalories", "fit_session_field": None,
                                            "script": "total = activity.calories; ..."}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "TrainingEffectSelect", "fit_session_field": "188", "type": "select",
+                                           "options": [{"value": 1.0}, {"value": 2.0}, {"value": 3.0}]}},
     {"type": "ACTIVITY_FIELD", "content": {"code": "Weird", "fit_session_field": "181",
                                            "script": "activity.isNew ? someOtherThing(activity.Weird) : activity.Weird"}},
     {"type": "ACTIVITY_STREAM", "content": {"code": "Stamina", "script": "{\n for (let m of icu.fit.record) {\n let f = m.f_138\n if (f) data.setAt(m.timestamp.value, f.value)\n }\n}"}},
@@ -99,15 +101,34 @@ def test_mappings_come_from_the_athletes_own_definitions():
     assert streams == {"Stamina": 138, "GarminGCT": "stance_time"}
 
 
-def test_scalar_plan_converts_and_never_overwrites():
-    messages = {"session": [{"total_training_effect": 3.2, 178: 1240}],
+def test_scalar_plan_converts_and_never_overwrites_without_a_partner_copy():
+    messages = {"session": [{"total_training_effect": 3.2, 178: 1240, 188: 2}],
                 "140": [{9: 2160, 7: 936228}]}
     m = load_field_mappings(ITEMS)
-    plan = plan_scalars(messages, {"AerobicEffect": 2.9, "Sweatloss": None}, m)
-    assert plan["writes"] == {"Sweatloss": 1240.0, "RecoveryTime": 36.0,
+    plan = plan_scalars(messages, {"AerobicEffect": 2.9, "Sweatloss": None, "RecoveryTime": 0}, m)
+    assert plan["writes"] == {"Sweatloss": 1240.0, "TrainingEffectSelect": 2.0,
                               "VO2MaxGarmin": round(936228 * 3.5 / 65536, 4)}
-    assert plan["kept_existing"] == {"AerobicEffect": 2.9}
-    assert plan["absent_in_original"] == []
+    assert plan["kept_existing"] == {"AerobicEffect": 2.9, "RecoveryTime": 0}
+    assert plan["replaced_filtered"] == {} and plan["absent_in_original"] == []
+
+
+def test_scalar_plan_replaces_values_that_cannot_come_from_data():
+    original = {"session": [{"total_training_effect": 3.2, 188: 2}], "140": [{9: 2160, 7: 936228}]}
+    partner = {"session": [{"total_training_effect": 3.2}]}       # message 140 stripped, 188 stripped
+    m = load_field_mappings(ITEMS)
+    activity = {"AerobicEffect": 3.2, "RecoveryTime": 0, "VO2MaxGarmin": 0.0, "TrainingEffectSelect": None}
+    plan = plan_scalars(original, activity, m, partner)
+    assert plan["kept_existing"] == {"AerobicEffect": 3.2}       # source present in partner: real data
+    assert plan["replaced_filtered"] == {"RecoveryTime": {"old": 0, "new": 36.0},
+                                         "VO2MaxGarmin": {"old": 0.0, "new": round(936228 * 3.5 / 65536, 4)}}
+    assert plan["writes"] == {"RecoveryTime": 36.0, "VO2MaxGarmin": round(936228 * 3.5 / 65536, 4),
+                              "TrainingEffectSelect": 2.0}
+
+
+def test_select_fields_only_accept_their_options():
+    m = load_field_mappings(ITEMS)
+    plan = plan_scalars({"session": [{188: 0}]}, {}, m)
+    assert plan["writes"] == {} and plan["rejected_for_select"] == {"TrainingEffectSelect": 0.0}
 
 
 def test_stream_alignment_is_by_timestamp_not_index():
