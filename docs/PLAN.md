@@ -108,7 +108,7 @@ without a manual browser export.
 
 ### Phase 0: foundation (done 2026-10-08)
 
-- Checkout at `/var/www/schnederle/internal/garmin-intervals-bridge/`, v0.1.1
+- Checkout at `<checkout>/`, v0.1.1
   committed verbatim as the baseline so every change is a reviewable diff.
 - The checkout sits below an Apache document root: `.htaccess` denies all HTTP
   access.
