@@ -46,9 +46,11 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     f = Fake()
     out = setup_charts(f, apply=False)
     assert out["created"] == [] and f.posted == []
-    # The HRV chart always has its native plot, so it is created even without custom fields.
-    assert [c["name"] for c in out["charts"]] == ["Garmin sleep stages", "HRV detail (Garmin)"]
+    names = [c["name"] for c in out["charts"]]
+    # Charts with a native plot are created even without custom fields; custom-only ones are not.
+    assert names[0] == "Garmin sleep stages" and "HRV detail (Garmin)" in names
+    assert "Garmin readiness & recovery" in out["skipped"] and "Garmin race predictions" in out["skipped"]
     out = setup_charts(f, apply=True)
-    assert [c["name"] for c in out["created"]] == ["Garmin sleep stages", "HRV detail (Garmin)"]
+    assert [c["name"] for c in out["created"]] == names
     assert "_missing_fields" not in f.posted[0] and len(f.posted[0]["content"]["plots"]) == 2
-    assert len(CHARTS) == 4
+    assert len(CHARTS) == 10

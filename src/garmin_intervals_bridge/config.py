@@ -50,7 +50,7 @@ class Settings:
             timezone=tz,
             activity_days=_positive_int("BRIDGE_ACTIVITY_LOOKBACK_DAYS", 4, 30),
             wellness_days=_positive_int("BRIDGE_WELLNESS_LOOKBACK_DAYS", 3, 30),
-            wellness_refresh_hours=_positive_int("BRIDGE_WELLNESS_REFRESH_HOURS", 8, 72),
+            wellness_refresh_hours=_positive_int("BRIDGE_WELLNESS_REFRESH_HOURS", 4, 72),
             garmin_request_delay=delay,
             wellness_profile=profile,
         )

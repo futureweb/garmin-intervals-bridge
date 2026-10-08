@@ -78,3 +78,19 @@ def test_backfill_walks_an_explicit_day_list_in_order(tmp_path):
                       today=date(2026, 10, 8))
     assert m["days_skipped_recent"] == 3 and len(g.days) == 3
     st.close()
+
+
+def test_yesterday_is_fetched_once_more_after_midnight(tmp_path):
+    import time
+    st = Store(tmp_path)
+    yesterday = date(2026, 10, 7)
+    # fetched "yesterday evening": within the throttle window, but before today's midnight
+    st.mark_wellness(yesterday)
+    st.db.execute("UPDATE wellness SET fetched = ? WHERE day = ?", (time.time() - 2 * 3600, yesterday.isoformat()))
+    st.db.commit()
+    midnight_later_than_fetch = time.time() - 3600
+    assert st.wellness_recent(yesterday, 8) is True
+    assert st.wellness_recent(yesterday, 8, since=midnight_later_than_fetch) is False
+    st.mark_wellness(yesterday)                           # fetched again after midnight
+    assert st.wellness_recent(yesterday, 8, since=midnight_later_than_fetch) is True
+    st.close()
