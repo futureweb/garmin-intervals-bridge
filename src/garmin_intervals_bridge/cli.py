@@ -64,8 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             store = Store(settings.data_dir)
             try:
                 if args.cmd == "status":
-                    pending = store.pending_activities()
-                    print(json.dumps({"pending_garmin_activity_ids": pending}, indent=2))
+                    print(json.dumps({"pending_garmin_activity_ids": store.pending_activities(),
+                                      "failed_activities": store.failed_activities()}, indent=2))
                     return 0
                 if args.cmd == "reset-pending":
                     if not args.activity_id.isdecimal() or store.activity_status(args.activity_id) != "pending":
