@@ -306,3 +306,10 @@ def test_todays_resting_hr_waits_for_tomorrow():
     nat_today, _ = map_wellness(sample(), today, today)
     nat_past, _ = map_wellness(sample(), date(2026, 10, 7), today)
     assert "restingHR" not in nat_today and nat_past["restingHR"] == stats["restingHeartRate"]
+
+
+def test_garmin_requests_are_counted(tmp_path):
+    src = GarminSource(tmp_path, 0)
+    src.client = _Client(failing=set())
+    src.snapshot(date(2026, 10, 8))
+    assert src.requests == len(DAY_ENDPOINTS)

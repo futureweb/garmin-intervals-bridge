@@ -139,8 +139,10 @@ def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) 
     if day_runs:
         enriched = sum((r["metrics"].get("enriched") or r["metrics"].get("activities", {}).get("enriched") or 0)
                        for r in day_runs)
-        writes = sum((r["metrics"].get("wellness", {}) or {}).get("writes", 0) for r in day_runs)
+        writes = sum((r["metrics"].get("wellness", {}) or {}).get("writes", 0)
+                     + (r["metrics"].get("writes", 0) if r["command"] == "backfill" else 0) for r in day_runs)
+        requests = sum(r["metrics"].get("garmin_requests") or 0 for r in day_runs)
         findings.append({"alert": False, "what": "last 24 h",
                          "detail": f"{len(day_runs)} runs, {enriched} activities enriched, "
-                                   f"{writes} wellness days written"})
+                                   f"{writes} wellness days written, {requests} Garmin requests"})
     return findings

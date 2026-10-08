@@ -98,6 +98,7 @@ class GarminSource:
         self.token_dir = token_dir
         self.delay = delay
         self.client: Any | None = None
+        self.requests = 0        # Garmin requests this process made; recorded per run, summed by `health`
 
     def login(self, interactive: bool = True) -> None:
         from garminconnect import Garmin, GarminConnectAuthenticationError
@@ -108,6 +109,7 @@ class GarminSource:
             # backoff), and four attempts per endpoint would multiply every outage.
             api = Garmin(retry_attempts=0)
             api.login(str(self.token_dir))
+            self.requests += 2   # the token login loads profile and settings
             self.client = api
             return
         except FileNotFoundError as exc:
@@ -148,6 +150,7 @@ class GarminSource:
         """One Garmin request. A block (429, rejected session) ends the whole run instead of
         being booked against whatever activity or day happened to be in progress."""
         fn = getattr(self._client(), method)
+        self.requests += 1
         try:
             return fn(*args, **kwargs)
         except GarminBlocked:

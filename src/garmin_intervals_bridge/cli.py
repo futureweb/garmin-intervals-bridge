@@ -197,7 +197,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.cmd == "watch":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     result = watch_once(settings, garmin, intervals, store, apply=args.apply)
-                    store.record_run("watch", {"apply": args.apply, **result})
+                    store.record_run("watch", {"apply": args.apply, "garmin_requests": garmin.requests, **result})
                     print(json.dumps({"apply": args.apply, "watch": result}, indent=2))
                     return 0
                 if args.cmd == "backfill":
@@ -224,6 +224,8 @@ def main(argv: list[str] | None = None) -> int:
                                  start, end, args.pause)
                         out = sync_enrich(settings, garmin, intervals, store, apply=args.apply,
                                           date_range=(start, end), pause_seconds=args.pause)
+                    store.record_run("backfill", {"apply": args.apply, "scope": args.scope, "from": str(start),
+                                                  "to": str(end), "garmin_requests": garmin.requests, **out})
                     print(json.dumps({"apply": args.apply, "scope": args.scope, "from": str(start), "to": str(end),
                                       "result": out}, indent=2))
                     return 0
@@ -249,6 +251,7 @@ def main(argv: list[str] | None = None) -> int:
                         results["wellness"] = sync_wellness(settings, garmin, intervals, store,
                             apply=args.apply, wellness_days=args.wellness_days,
                             force=args.force_wellness)
+                    results["garmin_requests"] = garmin.requests
                     store.record_run("sync", results)
                     print(json.dumps(results, indent=2))
                     return 0
