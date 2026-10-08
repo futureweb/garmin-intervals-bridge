@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garmin-intervals-bridge"
+version = "0.1.1"
+description = "Self-hosted Garmin Connect original FIT and wellness sync to Intervals.icu"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{name = "Garmin Intervals Bridge contributors"}]
+dependencies = ["garminconnect>=0.3.17,<0.4", "requests>=2.31,<3", "fitparse>=1.2,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+garmin-intervals-bridge = "garmin_intervals_bridge.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra"

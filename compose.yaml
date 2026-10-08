@@ -1,0 +1,13 @@
+services:
+  bridge:
+    build: .
+    init: true
+    env_file: .env
+    environment:
+      BRIDGE_DATA_DIR: /data
+      GARMIN_TOKEN_DIR: /data/tokens
+    volumes:
+      - ./data:/data
+    restart: "no"
+    # Scheduled invocation from host cron/systemd; no always-running internet service.
+    command: ["sync"]
