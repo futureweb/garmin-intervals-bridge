@@ -58,3 +58,19 @@ garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 
 Each wellness day costs about 22 Garmin requests, each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and
 activities already handled are skipped.
+
+## Failure alerts
+
+Both service units carry `OnFailure=garmin-intervals-bridge-alert@%n.service`.
+That unit mails the failed unit's status and last 40 journal lines through
+the local `sendmail`, at most once every six hours (a Garmin outage would
+otherwise produce a mail per minute from the watcher). Configure the
+addresses once:
+
+```bash
+printf 'ALERT_TO=you@example.org\nALERT_FROM=bridge@example.org\n' > /etc/garmin-intervals-bridge/alert.env
+chmod 640 /etc/garmin-intervals-bridge/alert.env
+```
+
+Typical reasons for a failure: Garmin tokens expired (run `login` again as
+the service user), Intervals API key revoked, no network.

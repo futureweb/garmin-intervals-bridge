@@ -9,6 +9,7 @@
 # DRY RUN by default: nothing is written to Intervals until you add --apply to
 # ExecStart. Do that only after reviewing a few dry-run journals.
 [Unit]
+OnFailure=garmin-intervals-bridge-alert@%n.service
 Description=Garmin -> Intervals.icu bridge (activities, enrich mode)
 After=network-online.target
 Wants=network-online.target

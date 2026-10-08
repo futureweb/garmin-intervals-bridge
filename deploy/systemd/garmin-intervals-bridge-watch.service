@@ -4,6 +4,7 @@
 # (root:gib 0640). DRY RUN: nothing is written to Intervals until --apply is added below,
 # which happens only on the owner's explicit decision.
 [Unit]
+OnFailure=garmin-intervals-bridge-alert@%n.service
 Description=Garmin -> Intervals.icu bridge: one-minute watch for new activities
 After=network-online.target
 Wants=network-online.target
