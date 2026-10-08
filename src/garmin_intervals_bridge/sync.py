@@ -226,10 +226,14 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
     metrics = {"days_checked": 0, "days_skipped_recent": 0, "days_locked": 0,
                "days_with_changes": 0, "writes": 0, "new_fields": []}
     day_list = days if days is not None else [current - timedelta(days=o) for o in reversed(range(lookback))]
+    # Past days are read once more after local midnight, whatever the throttle says:
+    # their running totals (steps, calories, nutrition) have only just become final.
+    midnight = datetime.combine(current, datetime.min.time(), tzinfo=settings.timezone).timestamp()
     for index, day in enumerate(day_list):
         if pause_seconds and index:
             time.sleep(pause_seconds)
-        if not force and store.wellness_recent(day, settings.wellness_refresh_hours):
+        since = midnight if day < current else None
+        if not force and store.wellness_recent(day, settings.wellness_refresh_hours, since):
             metrics["days_skipped_recent"] += 1
             continue
         raw = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))

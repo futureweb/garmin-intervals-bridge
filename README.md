@@ -4,8 +4,10 @@
 
 <!-- screenshots: docs/images/activity-before-after.png, docs/images/wellness-day.png, docs/images/fitness-chart.png -->
 
-Since early 2026 the file Garmin hands to partners is not the file your
-device recorded. The recording survives (power, heart rate, GPS, cadence,
+Since the end of September 2026 the file Garmin hands to partners is not
+the file your device recorded. (Garmin first switched the filter on in
+March 2026, rolled it back after a week of protest, and switched it back
+on half a year later.) The recording survives (power, heart rate, GPS, cadence,
 developer fields); Garmin's own metrics do not. Open the same activity in
 Intervals.icu and in Garmin Connect and you will miss Performance
 Condition, Stamina, Recovery Time, VO₂max, Training Effect and Sweat Loss.

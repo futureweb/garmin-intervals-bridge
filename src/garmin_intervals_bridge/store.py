@@ -97,9 +97,19 @@ class Store:
                                   WHERE status='failed' ORDER BY next_retry""")
         return [{"garmin_id": r[0], "attempts": r[1], "next_retry": r[2], "error": r[3]} for r in rows]
 
-    def wellness_recent(self, day: date, hours: int) -> bool:
+    def wellness_recent(self, day: date, hours: int, since: float | None = None) -> bool:
+        """Fetched within `hours`, and (if given) not before `since`.
+
+        `since` lets the caller force one fresh fetch after a boundary: a day
+        fetched at 23:00 is still "recent" at 00:30, but its totals only became
+        final at midnight, so it must be read once more.
+        """
         row = self.db.execute("SELECT fetched FROM wellness WHERE day=?", (day.isoformat(),)).fetchone()
-        return bool(row and time.time() - row[0] < hours * 3600)
+        if not row:
+            return False
+        if since is not None and row[0] < since:
+            return False
+        return time.time() - row[0] < hours * 3600
 
     def mark_wellness(self, day: date) -> None:
         self.db.execute("INSERT INTO wellness(day,fetched) VALUES (?,?) "
