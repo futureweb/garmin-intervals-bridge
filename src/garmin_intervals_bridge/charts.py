@@ -121,12 +121,16 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Garmin activity & hydration",
-        "title": "Intensity minutes (moderate / vigorous)",
+        "title": "Intensity minutes (left axis) and estimated sweat loss (right axis)",
         "y": "Minutes",
-        "height": 160,
+        "y2": "Litres",
+        "height": 180,
         "plots": [
-            ("custom", "GarminIntensityModerateMinutes", "Mod", "bars", "none", None, "#1F77B466", "#1F77B4FF", "im"),
-            ("custom", "GarminIntensityVigorousMinutes", "Vig", "bars", "none", None, "#D6272866", "#D62728FF", "im"),
+            ("custom", "GarminIntensityModerateMinutes", "Mod", "bars", "none", None, "#1F77B466", "#1F77B4FF", "im",
+             "minutes"),
+            ("custom", "GarminIntensityVigorousMinutes", "Vig", "bars", "none", None, "#D6272866", "#D62728FF", "im",
+             "minutes"),
+            ("custom", "GarminSweatLossLitres", "Sweat", "line", "none", None, "#FF7F0E00", "#FF7F0EFF", "", "L"),
         ],
     },
     {
@@ -166,7 +170,8 @@ CHARTS: list[dict[str, Any]] = [
 def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
     kind = spec[0]
     if kind == "custom":
-        _, code, text, ptype, agg, days, fill, stroke, stack = spec
+        _, code, text, ptype, agg, days, fill, stroke, stack = spec[:9]
+        scale = spec[9] if len(spec) > 9 else None       # Intervals groups axes by scale
         item = inputs.get(code)
         if item is None:
             return None                       # field not created yet: plot would be empty
@@ -174,7 +179,7 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
         plot = {"id": index, "field": code, "filter": "dec1" if decimals else "dec0", "customInput": item,
                 "text": text, "title": item.get("name") or code, "type": ptype, "agg": agg,
                 "fill": fill, "stroke": stroke, "strokeWidth": 1, "radius": 3, "gauge": True,
-                "scale": None, "stack": stack, "band": 0, "min": None, "extras": [], "filters": [],
+                "scale": scale, "stack": stack, "band": 0, "min": None, "extras": [], "filters": [],
                 "markerValue": "right-inline"}
     else:
         _, field, scale, filt, text, ptype, agg, days, fill, stroke = spec
@@ -190,7 +195,7 @@ def _plot(index: int, spec: tuple, inputs: dict[str, dict]) -> dict | None:
 BRIDGE_MARK = "Created by garmin-intervals-bridge for the values it syncs."
 
 
-_PLOT_KEYS = ("field", "text", "type", "agg", "filter", "stack", "fill", "stroke", "aggArgs")
+_PLOT_KEYS = ("field", "text", "type", "agg", "filter", "stack", "fill", "stroke", "aggArgs", "scale")
 
 
 def _normalise(plots: list[dict]) -> list[tuple]:
@@ -233,6 +238,7 @@ def plan_charts(custom_items: list[dict]) -> dict:
             content["plots"] = plots
             content["title"] = chart["title"]
             content["yAxisLabel"] = chart["y"]
+            content["y2AxisLabel"] = chart.get("y2")
             update.append({"id": present["id"], "name": chart["name"], "type": "FITNESS_CHART",
                            "visibility": present.get("visibility", "PRIVATE"),
                            "description": BRIDGE_MARK, "content": content,
@@ -243,7 +249,7 @@ def plan_charts(custom_items: list[dict]) -> dict:
             continue
         content = {"id": secrets.token_hex(4), "name": chart["name"], "title": chart["title"],
                    "plots": plots, "height": chart["height"], "yAxisLabel": chart["y"],
-                   "yAxisMin": None, "yAxisMax": None, "y2AxisLabel": None, "y2AxisMin": None,
+                   "yAxisMin": None, "yAxisMax": None, "y2AxisLabel": chart.get("y2"), "y2AxisMin": None,
                    "y2AxisMax": None, "y3AxisMin": None, "y3AxisMax": None, "stackTo100Percent": None}
         create.append({"name": chart["name"], "type": "FITNESS_CHART", "visibility": "PRIVATE",
                        "description": BRIDGE_MARK, "content": content, "_missing_fields": missing})
