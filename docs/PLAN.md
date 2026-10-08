@@ -156,6 +156,34 @@ non-null value, respect locked days, never finalise today's running totals.
 - Public repository and a versioned release once the end-to-end test has been
   approved.
 
+## 2b. Live results and known side effects (2026-10-08)
+
+Two activities recorded for the test (a 63 s walk, a 61 s run), both
+auto-imported by the official sync and both filtered by Garmin (12.2 kB vs
+3.8 kB, 20.2 kB vs 7.5 kB; 16 message types removed, stamina record fields
+removed). `enrich --apply` wrote the fields and streams the athlete's own
+custom items define, with a before/after diff of every activity field:
+
+- Walk: 4 fields. Run: 8 fields and 3 custom streams (`Stamina`,
+  `PotentialStamina`, `GarminGASpeed`), 62/62 points aligned by timestamp.
+- Training load, type, laps and all other fields untouched. `PUT /activity`
+  is partial. A second run plans zero writes.
+- Intervals re-analyses the activity after any PUT and re-runs the athlete's
+  field scripts. One script turned its own artefact `0` into `NaN`
+  (`activity.X == 0 ? NaN : activity.X`); that is Intervals' logic, not a
+  write of ours, and it is a correction.
+- **`PUT /activity/{id}/streams` sets `icu_intervals_edited = true`** on the
+  activity and a later `PUT {"icu_intervals_edited": false}` does not reset
+  it. Intervals then no longer regenerates that activity's intervals on
+  re-analysis. Harmless for an imported activity whose laps already exist,
+  but it is a permanent side effect of writing streams and is documented as
+  such. Writing scalar fields does not trigger it.
+- A stream script's value expression must be honoured: `GarminGASpeed` is
+  `f.value / 1000`. The first version wrote raw values; the parser now
+  extracts the transform and `--refresh-own-streams` rewrote the stream.
+  Scripts whose value expression is not the field value with constant
+  factors are left unsupported.
+
 ## 3. Why no container on this host
 
 The development host has Podman 5 but no Docker and no compose provider,

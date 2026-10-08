@@ -197,6 +197,7 @@ class ScalarMapping:
 class StreamMapping:
     code: str
     record_field: str | int          # profile name or numeric field id in `record`
+    convert: tuple = ()              # ("*"|"/", factor) steps the stream script applies to the raw value
 
 
 @dataclass
@@ -209,6 +210,9 @@ class FieldMappings:
 _CONVERSION = re.compile(
     r"^\s*activity\.isNew\s*\?\s*activity\.(?P<code>\w+)(?P<ops>(\s*[*/]\s*[0-9.]+)*)\s*:\s*activity\.(?P=code)\s*$")
 _RECORD_SCRIPT = re.compile(r"icu\.fit\.record[\s\S]*?m\.f_(\d+)")
+# `data.setAt(<ts>, f.value / 1000)`: the value expression the script writes, if it is
+# the field value with optional multiplications/divisions by constants.
+_RECORD_VALUE = re.compile(r"setAt\(\s*[^,]+,\s*f\.value(?P<ops>(\s*[*/]\s*[0-9.]+)*)\s*\)")
 
 
 def _parse_conversion(script: str | None, code: str) -> tuple | None:
@@ -264,7 +268,13 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
             script = content.get("script") or ""
             m = _RECORD_SCRIPT.search(script)
             if m and "_num" not in script:
-                out.streams.append(StreamMapping(code, int(m.group(1))))
+                value = _RECORD_VALUE.search(script)
+                if value is None:
+                    out.unsupported[code] = "stream script writes something other than the field value"
+                    continue
+                steps = tuple((op, float(factor)) for op, factor in
+                              re.findall(r"([*/])\s*([0-9.]+)", value.group("ops")))
+                out.streams.append(StreamMapping(code, int(m.group(1)), steps))
             elif script.strip():
                 out.unsupported[code] = "stream script not limited to a single record field"
     return out
@@ -344,7 +354,8 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
             "rejected_for_select": rejected, "absent_in_original": absent}
 
 
-def align_stream(records: list[dict], time_stream: list, record_field: str | int) -> tuple[list, dict]:
+def align_stream(records: list[dict], time_stream: list, record_field: str | int,
+                 convert: tuple = ()) -> tuple[list, dict]:
     """Values of one record field aligned to the Intervals `time` stream (seconds from start).
 
     Alignment is by timestamp, not by index, so a record Garmin dropped or
@@ -355,7 +366,7 @@ def align_stream(records: list[dict], time_stream: list, record_field: str | int
     if not stamped or not time_stream:
         return [], {"matched": 0, "points": len(time_stream), "non_null": 0}
     t0 = stamped[0][0]
-    by_offset = {int(ts - t0): val for ts, val in stamped}
+    by_offset = {int(ts - t0): (_convert(val, convert) if convert else val) for ts, val in stamped}
     data = [by_offset.get(int(t)) if isinstance(t, (int, float)) else None for t in time_stream]
     matched = sum(1 for t in time_stream if isinstance(t, (int, float)) and int(t) in by_offset)
     non_null = sum(1 for v in data if v is not None)
@@ -363,9 +374,14 @@ def align_stream(records: list[dict], time_stream: list, record_field: str | int
 
 
 def plan_streams(messages: dict[str, list[dict]], activity: dict, time_stream: list,
-                 mappings: FieldMappings, *, min_alignment: float = 0.95) -> dict:
-    """Custom streams to PUT: mapped, carried by the original, not yet on the activity."""
-    existing = set(activity.get("stream_types") or [])
+                 mappings: FieldMappings, *, min_alignment: float = 0.95,
+                 refresh: set[str] | None = None) -> dict:
+    """Custom streams to PUT: mapped, carried by the original, not yet on the activity.
+
+    `refresh` names streams the bridge wrote itself earlier; those are planned
+    again even though they exist, so a corrected mapping propagates.
+    """
+    existing = set(activity.get("stream_types") or []) - set(refresh or ())
     records = messages.get("record", [])
     writes: list[dict] = []
     skipped: dict[str, str] = {}
@@ -376,7 +392,7 @@ def plan_streams(messages: dict[str, list[dict]], activity: dict, time_stream: l
         if not any(r.get(m.record_field) is not None for r in records):
             skipped[m.code] = "not in original"
             continue
-        data, stats = align_stream(records, time_stream, m.record_field)
+        data, stats = align_stream(records, time_stream, m.record_field, m.convert)
         if stats["points"] == 0 or stats["matched"] / stats["points"] < min_alignment:
             skipped[m.code] = f"alignment too poor ({stats['matched']}/{stats['points']} points)"
             continue

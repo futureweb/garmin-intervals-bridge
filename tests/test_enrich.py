@@ -82,6 +82,8 @@ ITEMS = [
                                            "script": "activity.isNew ? someOtherThing(activity.Weird) : activity.Weird"}},
     {"type": "ACTIVITY_STREAM", "content": {"code": "Stamina", "script": "{\n for (let m of icu.fit.record) {\n let f = m.f_138\n if (f) data.setAt(m.timestamp.value, f.value)\n }\n}"}},
     {"type": "ACTIVITY_STREAM", "content": {"code": "GarminGCT", "fit_record_field": "stance_time"}},
+    {"type": "ACTIVITY_STREAM", "content": {"code": "GarminGASpeed", "script": "{\n  for (let m of icu.fit.record) {\n    let f = m.f_140\n    if (f) data.setAt(m.timestamp.value, f.value/1000)\n  }\n}"}},
+    {"type": "ACTIVITY_STREAM", "content": {"code": "Odd", "script": "for (let m of icu.fit.record) { let f = m.f_141; if (f) data.setAt(m.timestamp.value, Math.sqrt(f.value)) }"}},
     {"type": "ACTIVITY_STREAM", "content": {"code": "Battery", "script": "for (let m of icu.fit) { if (m._num !== 104) continue; ... }"}},
     {"type": "INPUT_FIELD", "content": {"code": "BodyBatteryMax", "type": "numeric"}},
 ]
@@ -95,10 +97,12 @@ def test_mappings_come_from_the_athletes_own_definitions():
     assert by_code["RecoveryTime"].source == "mesg:140.9" and by_code["RecoveryTime"].convert == (("/", 60.0),)
     assert by_code["VO2MaxGarmin"].convert == (("*", 3.5), ("/", 65536.0))
     assert "ActiveCalories" not in by_code            # computed by Intervals, not a FIT field
-    assert m.unsupported == {"Weird": "script with unknown semantics",
-                             "Battery": "stream script not limited to a single record field"}
-    streams = {x.code: x.record_field for x in m.streams}
-    assert streams == {"Stamina": 138, "GarminGCT": "stance_time"}
+    assert m.unsupported["Weird"] == "script with unknown semantics"
+    assert m.unsupported["Battery"] == "stream script not limited to a single record field"
+    streams = {x.code: (x.record_field, x.convert) for x in m.streams}
+    assert streams == {"Stamina": (138, ()), "GarminGCT": ("stance_time", ()),
+                       "GarminGASpeed": (140, (("/", 1000.0),))}
+    assert m.unsupported["Odd"] == "stream script writes something other than the field value"
 
 
 def test_scalar_plan_converts_and_never_overwrites_without_a_partner_copy():
@@ -151,6 +155,19 @@ def test_stream_alignment_is_by_timestamp_not_index():
     assert stats == {"matched": 3, "points": 4, "non_null": 3}
 
 
+def test_stream_values_follow_the_scripts_transform_and_refresh_rewrites_own_streams():
+    m = load_field_mappings(ITEMS)
+    records = [{"timestamp": 1000 + i, 140: 3377, 138: 100} for i in range(4)]
+    plan = plan_streams({"record": records}, {"stream_types": ["time"]}, [0, 1, 2, 3], m)
+    by = {w["type"]: w["data"] for w in plan["writes"]}
+    assert by["GarminGASpeed"] == [3.377] * 4 and by["Stamina"] == [100] * 4
+    # Already on the activity -> skipped, unless it is one of ours being refreshed
+    present = {"stream_types": ["time", "GarminGASpeed", "Stamina"]}
+    assert plan_streams({"record": records}, present, [0, 1, 2, 3], m)["writes"] == []
+    again = plan_streams({"record": records}, present, [0, 1, 2, 3], m, refresh={"GarminGASpeed"})
+    assert [w["type"] for w in again["writes"]] == ["GarminGASpeed"]
+
+
 def test_stream_plan_skips_existing_absent_and_misaligned():
     m = load_field_mappings(ITEMS)
     records = [{"timestamp": 1000 + i, 138: 90 - i, "stance_time": 250.0} for i in range(10)]
@@ -159,7 +176,8 @@ def test_stream_plan_skips_existing_absent_and_misaligned():
     plan = plan_streams(messages, activity, list(range(10)), m)
     assert [w["type"] for w in plan["writes"]] == ["Stamina"]
     assert plan["writes"][0]["custom"] is True and plan["writes"][0]["data"][0] == 90
-    assert plan["skipped"] == {"GarminGCT": "already on activity"}
+    assert plan["skipped"]["GarminGCT"] == "already on activity"
+    assert plan["skipped"]["GarminGASpeed"] == "not in original"
     # Time stream that does not line up with the records at all -> refuse
     bad = plan_streams(messages, {"stream_types": []}, [5000 + i for i in range(10)], m)
     assert "alignment too poor" in bad["skipped"]["Stamina"]
