@@ -36,4 +36,20 @@ ProtectKernelTunables=yes
 ProtectControlGroups=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes
+# Hardening, second layer: no capabilities, no new namespaces or device access, only the
+# system-call set a service needs, 512 MB ceiling (a FIT file is a few MB; decoding it tens).
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectClock=yes
+ProtectHostname=yes
+PrivateDevices=yes
+RestrictRealtime=yes
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+ProtectProc=invisible
+MemoryMax=512M
 TimeoutStartSec=20min
