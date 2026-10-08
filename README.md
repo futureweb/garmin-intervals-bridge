@@ -1,25 +1,41 @@
 # Garmin → Intervals.icu Bridge
 
-**Self-hosted. Puts back what Garmin strips from the FIT files it sends to Intervals.icu.**
+**Garmin started filtering the FIT files it sends to Intervals.icu. This puts the data back — and syncs a lot more.**
 
-Since early 2026 Garmin Connect filters the FIT files it hands to partners
-through its Activity API. The recording itself survives (power, heart rate,
-GPS, cadence, developer fields), but Garmin's own metrics do not: Performance
-Condition, Stamina, Recovery Time, VO₂max, Training Effect, Sweat Loss and
-whole message types such as the user profile and sensor settings. The
-original file you can download from Garmin Connect still has them.
+<!-- screenshots: docs/images/activity-before-after.png, docs/images/wellness-day.png, docs/images/fitness-chart.png -->
 
-This bridge fetches that original through Garmin Connect's private API,
-finds the activity the official sync already created in Intervals.icu, and
-adds only what is missing. The official sync stays on. Nothing is
-duplicated, deleted or recomputed. It also fills daily wellness values the
-official sync does not deliver (night SpO₂, respiration, sleeping heart
-rate, logged nutrition, Body Battery, HRV details, sleep stages and more),
-and can backfill the past.
+Since early 2026 the file Garmin hands to partners is not the file your
+device recorded. The recording survives (power, heart rate, GPS, cadence,
+developer fields); Garmin's own metrics do not. Open the same activity in
+Intervals.icu and in Garmin Connect and you will miss Performance
+Condition, Stamina, Recovery Time, VO₂max, Training Effect and Sweat Loss.
+The original file you can download from Garmin Connect still has them.
 
-Version 0.2.0. Verified end to end on one account (fenix 8, Edge 1040):
-the private download is byte-identical to the manual browser export, and
-the first live writes are recorded in [docs/PLAN.md](docs/PLAN.md).
+This bridge is a small self-hosted service that:
+
+- fetches the **original FIT** through Garmin Connect's private API, byte-identical to the browser export;
+- finds the activity the **official sync already created** in Intervals.icu — the sync stays on, nothing is duplicated, deleted or recomputed;
+- adds exactly **what Garmin stripped**, into the custom fields and streams *you* have configured (Stamina curve, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Training Effect …);
+- fills the **daily wellness values the official sync does not deliver**: night SpO₂, respiration, sleeping heart rate, Body Battery, HRV details, sleep stages, stress, readiness, floors, scale data — and your **logged nutrition** (kcal, carbs, protein, fat);
+- can **backfill the past** (on the reference account SpO₂ had silently stopped arriving in mid-2025);
+- reacts within about a minute of the official import, with Garmin contacted only when there is something new.
+
+Everything is a dry run until you say `--apply`. Values that exist are never
+overwritten unless they demonstrably came from a filtered file.
+
+## What gets synced
+
+| | Activities (enrich mode) | Daily wellness |
+| --- | --- | --- |
+| **Source** | Original FIT from Garmin Connect | Garmin's daily endpoints (23 of them) |
+| **Target** | Your Intervals custom activity fields and custom streams, defined by you, read from your own definitions | Native Intervals wellness fields first, private `Garmin…` custom fields for the rest |
+| **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute load, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, carbohydrates, protein, fat, endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
+| **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow |
+| **Archive** | Original + partner copy of every activity | Raw JSON of every endpoint, every day |
+
+Version 0.2.0. Verified end to end on one account (fenix 8, Edge 1040);
+the first live writes and the evidence are recorded in
+[docs/PLAN.md](docs/PLAN.md).
 
 ## How it works
 
