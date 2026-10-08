@@ -196,7 +196,8 @@ last click is yours either way.
 one-minute `watch` timer and a 30-minute full run, secrets in an
 `EnvironmentFile`, hardened units. See [deploy/README.md](deploy/README.md).
 
-**Windows, macOS or any PC without systemd:** `garmin-intervals-bridge run --apply`
+**Windows, macOS or any PC without systemd:** `pip install garmin-intervals-bridge`
+(it is on [PyPI](https://pypi.org/project/garmin-intervals-bridge/)), then `garmin-intervals-bridge run --apply`
 keeps polling Intervals every minute, does a full run every 30 minutes and
 a health probe once a day, all in one process. A step-by-step guide for
 non-technical users is in [docs/WINDOWS.md](docs/WINDOWS.md).

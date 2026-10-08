@@ -14,7 +14,7 @@ then *Install Now*.
 Open PowerShell (press the Windows key, type `PowerShell`, Enter) and paste:
 
 ```powershell
-py -m pip install "https://github.com/futureweb/garmin-intervals-bridge/archive/refs/heads/main.zip"
+py -m pip install garmin-intervals-bridge
 ```
 
 Check that it worked:
@@ -116,7 +116,7 @@ search **Garmin Bridge** and tick what you like.
 ## Updating
 
 ```powershell
-py -m pip install --upgrade "https://github.com/futureweb/garmin-intervals-bridge/archive/refs/heads/main.zip"
+py -m pip install --upgrade garmin-intervals-bridge
 ```
 
 ## If something goes wrong
