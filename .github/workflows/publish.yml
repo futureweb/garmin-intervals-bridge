@@ -1,0 +1,43 @@
+# Publish to PyPI on a GitHub release, via Trusted Publishing (OIDC): no API token
+# is stored anywhere. PyPI side: a publisher for owner futureweb, repository
+# garmin-intervals-bridge, workflow publish.yml, environment pypi.
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade build
+      - run: python -m build
+      - run: python -m pip install --upgrade twine && python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/garmin-intervals-bridge/
+    permissions:
+      id-token: write          # the OIDC token PyPI trusts
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
