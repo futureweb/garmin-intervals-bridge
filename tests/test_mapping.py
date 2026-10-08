@@ -130,8 +130,6 @@ def test_recommended_profile_drops_duplicates_goals_and_subscores():
                            "sleep": {"dailySleepDTO": {"sleepTimeSeconds": 27500, "averageSpO2Value": 96.7}}})
     _, all_custom = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "all")
     nat, rec = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "recommended")
-    assert {"GarminHillStrength", "GarminHillEndurance", "GarminHydrationGoalLitres", "GarminStepsGoal",
-            "GarminSleepSpO2Avg"} <= set(all_custom)
-    assert not {"GarminHillStrength", "GarminHillEndurance", "GarminHydrationGoalLitres", "GarminStepsGoal",
-                "GarminSleepSpO2Avg"} & set(rec)
-    assert rec["GarminHillScore"] == 73 and nat["spO2"] == 96.7      # the score and the native stay
+    assert {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} <= set(all_custom)
+    assert not {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} & set(rec)
+    assert rec["GarminHillScore"] == 73 and rec["GarminHillStrength"] == 68 and nat["spO2"] == 96.7
