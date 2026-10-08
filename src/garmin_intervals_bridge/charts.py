@@ -83,7 +83,7 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("custom", "GarminCarbsKcal", "Carbs", "bars", "none", None, "#70663180", "#706631FF", "food"),
-            ("custom", "GarminProteinKcal", "Protein", "bars", "none", None, "#9B033280", "#9B0332FF", "food"),
+            ("custom", "GarminProteinKcal", "Prot.", "bars", "none", None, "#9B033280", "#9B0332FF", "food"),
             ("custom", "GarminFatKcal", "Fat", "bars", "none", None, "#DA6C0B80", "#DA6C0BFF", "food"),
         ],
     },
@@ -110,7 +110,8 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "none", None, "#1F77B400", "#1F77B4FF"),
             ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "none", None, "#9467BD00", "#9467BDFF", "", "vo2max"),
-            ("custom", "GarminFitnessAge", "FitAge", "line", "none", None, "#7F7F7F00", "#7F7F7FFF", "", "years"),
+            # Fitness age moves in whole steps from day to day; a 7-day average shows the trend.
+            ("custom", "GarminFitnessAge", "FitAge", "line", "moving_avg", 7, "#7F7F7F00", "#7F7F7FFF", "", "years"),
         ],
     },
     {
