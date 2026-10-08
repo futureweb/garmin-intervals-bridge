@@ -22,9 +22,13 @@ from typing import Any
 # from three), so plots with different units get different scale names. `filter` formats the
 # legend value: dec0/dec1/dec2, hours, percent, interval_time (seconds as a duration).
 #   ("native", field, scale, filter, text, type, agg, days, fill, stroke)
+# Every chart is named "Garmin Bridge: <topic>": the chart picker's search finds them all with
+# "Garmin" or "Bridge", and they sit together in its alphabetical list. `aliases` are earlier
+# names of the same chart; a bridge chart found under one is renamed in place, never duplicated.
 CHARTS: list[dict[str, Any]] = [
     {
-        "name": "Garmin readiness & recovery",
+        "name": "Garmin Bridge: Readiness & recovery",
+        "aliases": ("Garmin readiness & recovery",),
         "title": "Readiness, recovery time, acute load (Garmin)",
         "y": "Readiness",
         "y2": "Recovery (min)",
@@ -38,7 +42,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin sleep stages",
+        "name": "Garmin Bridge: Sleep stages",
+        "aliases": ("Garmin sleep stages",),
         "title": "Deep / light / REM / awake (minutes)",
         "y": "Minutes",
         "height": 180,
@@ -50,7 +55,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin stress & Body Battery",
+        "name": "Garmin Bridge: Stress & Body Battery",
+        "aliases": ("Garmin stress & Body Battery",),
         "title": "Stress average, Body Battery max/min, charged/drained",
         "y": "0–100",
         "height": 180,
@@ -63,7 +69,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Nutrition: intake vs. burn (Garmin)",
+        "name": "Garmin Bridge: Nutrition intake vs. burn",
+        "aliases": ("Nutrition: intake vs. burn (Garmin)",),
         "title": "kcal consumed (logged in Garmin) vs. Garmin's total daily burn (BMR + active); active part as bars",
         "y": "kcal",
         "height": 180,
@@ -77,7 +84,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Nutrition: macros (Garmin)",
+        "name": "Garmin Bridge: Nutrition macros",
+        "aliases": ("Nutrition: macros (Garmin)",),
         "title": "Energy from carbohydrates / protein / fat (g x 4/4/9); the percentage is the share of intake energy",
         "y": "kcal",
         "height": 180,
@@ -88,7 +96,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin scores",
+        "name": "Garmin Bridge: Endurance & hill scores",
+        "aliases": ("Garmin scores",),
         "title": "Endurance score, hill score (strength / endurance)",
         "y": "Endurance",
         "y2": "Hill",
@@ -102,7 +111,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin VO2max & fitness age",
+        "name": "Garmin Bridge: VO2max & fitness age",
+        "aliases": ("Garmin VO2max & fitness age",),
         "title": "Daily VO2max estimate (Garmin wellness: run / bike), fitness age",
         "y": "ml/kg/min",
         "y2": "Years",
@@ -117,7 +127,8 @@ CHARTS: list[dict[str, Any]] = [
     {
         # Each prediction gets its own axis: two series per chart, two scales per chart. Sharing
         # one axis flattens every line to the edge, since the four times differ by a factor of ten.
-        "name": "Garmin race predictions",
+        "name": "Garmin Bridge: Race predictions 5K / 10K",
+        "aliases": ("Garmin race predictions",),
         "title": "Predicted race times: 5K (left axis), 10K (right axis)",
         "y": "5K",
         "y2": "10K",
@@ -130,7 +141,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin race predictions (half / marathon)",
+        "name": "Garmin Bridge: Race predictions half / marathon",
+        "aliases": ("Garmin race predictions (half / marathon)",),
         "title": "Predicted race times: half marathon (left axis), marathon (right axis)",
         "y": "Half",
         "y2": "Marathon",
@@ -143,7 +155,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin activity & hydration",
+        "name": "Garmin Bridge: Intensity minutes & sweat loss",
+        "aliases": ("Garmin activity & hydration",),
         "title": "Intensity minutes (left axis) and estimated sweat loss (right axis)",
         "y": "Minutes",
         "y2": "Litres",
@@ -157,7 +170,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin hydration & sweat loss",
+        "name": "Garmin Bridge: Hydration & sweat loss",
+        "aliases": ("Garmin hydration & sweat loss",),
         "title": "Estimated sweat loss per day; hydration if you log it (litres)",
         "y": "Litres",
         "height": 160,
@@ -167,7 +181,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "Garmin skin temperature",
+        "name": "Garmin Bridge: Skin temperature",
+        "aliases": ("Garmin skin temperature",),
         "title": "Overnight skin temperature deviation (°C)",
         "y": "°C",
         "height": 140,
@@ -177,7 +192,8 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
-        "name": "HRV detail (Garmin)",
+        "name": "Garmin Bridge: HRV detail",
+        "aliases": ("HRV detail (Garmin)",),
         "title": "Overnight HRV, 5-min high, 7-day average",
         "y": "ms",
         "height": 180,
@@ -248,6 +264,10 @@ def plan_charts(custom_items: list[dict]) -> dict:
                 plot["stack"] = chart["stack"]
         missing = [spec[1] for spec in chart["plots"] if spec[0] == "custom" and spec[1] not in inputs]
         present = existing.get(chart["name"])
+        if present is None:
+            # The same chart under an earlier name, if it is ours: rename it instead of adding one.
+            present = next((existing[a] for a in chart.get("aliases", ())
+                            if a in existing and existing[a].get("description") == BRIDGE_MARK), None)
         if present is not None:
             if present.get("description") != BRIDGE_MARK:
                 skipped[chart["name"]] = "exists and was not created by the bridge"
@@ -255,18 +275,21 @@ def plan_charts(custom_items: list[dict]) -> dict:
             current_plots = (present.get("content") or {}).get("plots", [])
             have = {p.get("field") for p in current_plots}
             gained = [p["field"] for p in plots if p["field"] not in have]
-            if _normalise(current_plots) == _normalise(plots) and not gained:
+            renamed = present.get("name") != chart["name"]
+            if _normalise(current_plots) == _normalise(plots) and not gained and not renamed:
                 skipped[chart["name"]] = "already up to date"
                 continue
             content = dict(present.get("content") or {})
             content["plots"] = plots
+            content["name"] = chart["name"]
             content["title"] = chart["title"]
             content["yAxisLabel"] = chart["y"]
             content["y2AxisLabel"] = chart.get("y2")
             update.append({"id": present["id"], "name": chart["name"], "type": "FITNESS_CHART",
                            "visibility": present.get("visibility", "PRIVATE"),
                            "description": BRIDGE_MARK, "content": content,
-                           "_gained_fields": gained, "_missing_fields": missing})
+                           "_gained_fields": gained, "_missing_fields": missing,
+                           "_renamed_from": present.get("name") if renamed else None})
             continue
         if not plots:
             skipped[chart["name"]] = f"none of its fields exist yet: {missing}"
@@ -286,7 +309,8 @@ def setup_charts(intervals: Any, *, apply: bool) -> dict:
            "charts": [{"name": c["name"], "plots": [p["field"] for p in c["content"]["plots"]],
                        "fields_missing": c["_missing_fields"]} for c in plan["create"]],
            "updates": [{"name": c["name"], "id": c["id"], "adds": c["_gained_fields"],
-                        "fields_missing": c["_missing_fields"]} for c in plan["update"]],
+                        "fields_missing": c["_missing_fields"], "renamed_from": c["_renamed_from"]}
+                       for c in plan["update"]],
            "created": [], "updated": []}
     if apply:
         for chart in plan["create"]:

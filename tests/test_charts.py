@@ -13,11 +13,11 @@ def bridge_chart(name, *fields, item_id=500):
 
 
 def test_plan_uses_only_fields_that_exist_and_skips_existing_charts():
-    plan = plan_charts(items("GarminTrainingReadiness", "BodyBatteryMax", charts=["HRV detail (Garmin)"]))
+    plan = plan_charts(items("GarminTrainingReadiness", "BodyBatteryMax", charts=["Garmin Bridge: HRV detail"]))
     names = {c["name"]: c for c in plan["create"]}
-    assert plan["skipped"]["HRV detail (Garmin)"] == "exists and was not created by the bridge"
-    assert "Garmin sleep stages" in plan["skipped"]                      # none of its fields exist
-    readiness = names["Garmin readiness & recovery"]
+    assert plan["skipped"]["Garmin Bridge: HRV detail"] == "exists and was not created by the bridge"
+    assert "Garmin Bridge: Sleep stages" in plan["skipped"]                      # none of its fields exist
+    readiness = names["Garmin Bridge: Readiness & recovery"]
     assert [p["field"] for p in readiness["content"]["plots"]] == ["GarminTrainingReadiness"]
     assert readiness["_missing_fields"] == ["GarminRecoveryTimeMinutes", "GarminAcuteLoad"]
     assert readiness["visibility"] == "PRIVATE" and readiness["type"] == "FITNESS_CHART"
@@ -27,11 +27,11 @@ def test_plan_uses_only_fields_that_exist_and_skips_existing_charts():
 
 def test_native_plots_carry_scale_and_moving_average_args():
     plan = plan_charts(items("GarminHRV7DayAvg"))
-    hrv = next(c for c in plan["create"] if c["name"] == "HRV detail (Garmin)")
+    hrv = next(c for c in plan["create"] if c["name"] == "Garmin Bridge: HRV detail")
     native = hrv["content"]["plots"][0]
     assert native["field"] == "hrv" and native["scale"] == "ms" and native["filter"] == "dec0"
     plan2 = plan_charts(items("GarminAcuteLoad"))
-    load = next(c for c in plan2["create"] if c["name"] == "Garmin readiness & recovery")
+    load = next(c for c in plan2["create"] if c["name"] == "Garmin Bridge: Readiness & recovery")
     assert load["content"]["plots"][0]["aggArgs"] == {"days": 7}
 
 
@@ -56,8 +56,8 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     assert out["created"] == [] and f.posted == []
     names = [c["name"] for c in out["charts"]]
     # Charts with a native plot are created even without custom fields; custom-only ones are not.
-    assert names[0] == "Garmin sleep stages" and "HRV detail (Garmin)" in names
-    assert "Garmin readiness & recovery" in out["skipped"] and "Garmin race predictions" in out["skipped"]
+    assert names[0] == "Garmin Bridge: Sleep stages" and "Garmin Bridge: HRV detail" in names
+    assert "Garmin Bridge: Readiness & recovery" in out["skipped"] and "Garmin Bridge: Race predictions 5K / 10K" in out["skipped"]
     out = setup_charts(f, apply=True)
     assert [c["name"] for c in out["created"]] == names
     assert "_missing_fields" not in f.posted[0] and len(f.posted[0]["content"]["plots"]) == 2
@@ -65,20 +65,20 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
 
 
 def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched():
-    own = bridge_chart("Garmin VO2max & fitness age", "vo2max")                 # created before the fields existed
-    foreign = {"type": "FITNESS_CHART", "name": "Garmin sleep stages", "id": 7, "description": "mine",
+    own = bridge_chart("Garmin Bridge: VO2max & fitness age", "vo2max")                 # created before the fields existed
+    foreign = {"type": "FITNESS_CHART", "name": "Garmin Bridge: Sleep stages", "id": 7, "description": "mine",
                "content": {"plots": []}}
     plan = plan_charts(items("GarminVO2MaxCycling", "GarminFitnessAge", "GarminSleepDeepMinutes") + [own, foreign])
     upd = {u["name"]: u for u in plan["update"]}
-    assert upd["Garmin VO2max & fitness age"]["_gained_fields"] == ["GarminVO2MaxCycling", "GarminFitnessAge"]
-    assert upd["Garmin VO2max & fitness age"]["id"] == 500
-    assert [p["field"] for p in upd["Garmin VO2max & fitness age"]["content"]["plots"]] == \
+    assert upd["Garmin Bridge: VO2max & fitness age"]["_gained_fields"] == ["GarminVO2MaxCycling", "GarminFitnessAge"]
+    assert upd["Garmin Bridge: VO2max & fitness age"]["id"] == 500
+    assert [p["field"] for p in upd["Garmin Bridge: VO2max & fitness age"]["content"]["plots"]] == \
         ["vo2max", "GarminVO2MaxCycling", "GarminFitnessAge"]
-    assert plan["skipped"]["Garmin sleep stages"] == "exists and was not created by the bridge"
+    assert plan["skipped"]["Garmin Bridge: Sleep stages"] == "exists and was not created by the bridge"
     complete = plan_charts(items("GarminVO2MaxCycling", "GarminFitnessAge") +
-                           [bridge_chart("Garmin VO2max & fitness age", "vo2max", "GarminVO2MaxCycling", "GarminFitnessAge")])
-    assert "already" in complete["skipped"].get("Garmin VO2max & fitness age", "") or \
-        [x["name"] for x in complete["update"]] == ["Garmin VO2max & fitness age"]
+                           [bridge_chart("Garmin Bridge: VO2max & fitness age", "vo2max", "GarminVO2MaxCycling", "GarminFitnessAge")])
+    assert "already" in complete["skipped"].get("Garmin Bridge: VO2max & fitness age", "") or \
+        [x["name"] for x in complete["update"]] == ["Garmin Bridge: VO2max & fitness age"]
 
 
 def test_setup_charts_applies_updates_through_put():
@@ -87,13 +87,13 @@ def test_setup_charts_applies_updates_through_put():
             super().__init__()
             self.puts = []
         def custom_items(self):
-            return items("GarminHRV7DayAvg") + [bridge_chart("HRV detail (Garmin)", "hrv", item_id=42)]
+            return items("GarminHRV7DayAvg") + [bridge_chart("Garmin Bridge: HRV detail", "hrv", item_id=42)]
         def update_custom_item(self, item_id, item):
             self.puts.append((item_id, item))
             return {"id": item_id}
     f = F()
     out = setup_charts(f, apply=True)
-    assert out["updated"] == [{"name": "HRV detail (Garmin)", "id": 42, "adds": ["GarminHRV7DayAvg"]}]
+    assert out["updated"] == [{"name": "Garmin Bridge: HRV detail", "id": 42, "adds": ["GarminHRV7DayAvg"]}]
     assert f.puts[0][0] == 42 and "_gained_fields" not in f.puts[0][1]
 
 
@@ -123,14 +123,14 @@ def test_new_charts_get_unique_indexes_after_creation():
 
 
 def test_own_chart_is_updated_when_its_definition_changed():
-    own = bridge_chart("Garmin sleep stages", "GarminSleepDeepMinutes", "GarminSleepLightMinutes",
+    own = bridge_chart("Garmin Bridge: Sleep stages", "GarminSleepDeepMinutes", "GarminSleepLightMinutes",
                        "GarminSleepREMMinutes", "GarminSleepAwakeMinutes")
     for plot in own["content"]["plots"]:
         plot.update({"text": "An old, very long label", "type": "bars", "agg": "none", "filter": "customInput",
                      "stack": "sleep"})
     plan = plan_charts(items("GarminSleepDeepMinutes", "GarminSleepLightMinutes", "GarminSleepREMMinutes",
                              "GarminSleepAwakeMinutes") + [own])
-    upd = next(x for x in plan["update"] if x["name"] == "Garmin sleep stages")
+    upd = next(x for x in plan["update"] if x["name"] == "Garmin Bridge: Sleep stages")
     assert upd["_gained_fields"] == [] and upd["content"]["plots"][0]["text"] == "Deep"
     assert all(len(p["text"]) <= 8 for c in CHARTS for p in [{"text": spec[2] if spec[0] == "custom" else spec[4]}
                                                             for spec in c["plots"]])
@@ -139,6 +139,19 @@ def test_own_chart_is_updated_when_its_definition_changed():
 def test_macro_chart_stacks_energy_plots():
     # Stacked by energy (custom kcal fields), so the stack percentage is the energy share, not the gram share.
     plan = plan_charts(items("GarminCarbsKcal", "GarminProteinKcal", "GarminFatKcal"))
-    macros = next(c for c in plan["create"] if c["name"] == "Nutrition: macros (Garmin)")
+    macros = next(c for c in plan["create"] if c["name"] == "Garmin Bridge: Nutrition macros")
     assert [(p["field"], p["stack"], p["filter"]) for p in macros["content"]["plots"]] == \
         [("GarminCarbsKcal", "food", "dec0"), ("GarminProteinKcal", "food", "dec0"), ("GarminFatKcal", "food", "dec0")]
+
+
+def test_bridge_chart_under_an_earlier_name_is_renamed_not_duplicated():
+    old = bridge_chart("Garmin sleep stages", "GarminSleepDeepMinutes", item_id=77)
+    plan = plan_charts(items("GarminSleepDeepMinutes") + [old])
+    assert not any(c["name"] == "Garmin Bridge: Sleep stages" for c in plan["create"])
+    upd = next(c for c in plan["update"] if c["id"] == 77)
+    assert upd["name"] == "Garmin Bridge: Sleep stages" and upd["content"]["name"] == upd["name"]
+    assert upd["_renamed_from"] == "Garmin sleep stages"
+    # an athlete's own chart with the old name is left alone and a fresh one is created
+    foreign = {"type": "FITNESS_CHART", "name": "Garmin sleep stages", "id": 78, "content": {"plots": []}}
+    plan = plan_charts(items("GarminSleepDeepMinutes") + [foreign])
+    assert any(c["name"] == "Garmin Bridge: Sleep stages" for c in plan["create"]) and not plan["update"]
