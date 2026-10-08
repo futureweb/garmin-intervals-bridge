@@ -27,6 +27,7 @@ class Settings:
     wellness_refresh_hours: int
     garmin_request_delay: float
     wellness_profile: str = "recommended"
+    stale_hours: int = 24
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -53,6 +54,7 @@ class Settings:
             wellness_refresh_hours=_positive_int("BRIDGE_WELLNESS_REFRESH_HOURS", 4, 72),
             garmin_request_delay=delay,
             wellness_profile=profile,
+            stale_hours=_positive_int("BRIDGE_STALE_HOURS", 24, 24 * 30),
         )
 
     def ensure_data_dir(self) -> None:

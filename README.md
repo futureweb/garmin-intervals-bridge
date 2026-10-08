@@ -113,6 +113,7 @@ run is exactly what `--apply` would send.
 | `setup-fields [--apply]` | Create the private custom wellness fields the mapping uses. |
 | `setup-charts [--apply]` | Create (and later complete) private fitness charts for the synced values. |
 | `status` | Pending uploads and failed activities with their retry time. |
+| `health` | One probe per service; exit 2 after `BRIDGE_STALE_HOURS` (24) of failures, for a daily timer with an alert. |
 
 ## Modes
 
@@ -208,6 +209,7 @@ The compose service is deliberately not an always-on daemon; schedule
 | `BRIDGE_WELLNESS_REFRESH_HOURS` | `8` | Do not re-fetch a day within this window |
 | `BRIDGE_WELLNESS_PROFILE` | `recommended` | `recommended` or `all` custom fields |
 | `BRIDGE_GARMIN_REQUEST_DELAY` | `0.5` | Seconds between Garmin requests (minimum 0.25) |
+| `BRIDGE_STALE_HOURS` | `24` | `health` alerts once a service has failed this long |
 
 ## Known limitations
 

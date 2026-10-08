@@ -13,6 +13,7 @@ from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, extract_original_fit, sha256
 from .garmin import ESSENTIAL_ENDPOINTS, GarminSource
+from .health import probe
 from .intervals import IntervalsClient
 from .store import Store, single_instance
 from .sync import sync_activities, sync_enrich, sync_wellness, watch_once
@@ -66,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
     charts = sub.add_parser("setup-charts", help="Create private Intervals fitness charts for the synced "
                                                  "Garmin values (dry run unless --apply)")
     charts.add_argument("--apply", action="store_true")
+    sub.add_parser("health", help="Probe Garmin and Intervals once; exit 2 when one has been failing "
+                                  "longer than BRIDGE_STALE_HOURS (for a daily timer with an alert)")
     pending = sub.add_parser("reset-pending", help="After manual duplicate check, clear a pending upload lock")
     pending.add_argument("--activity-id", required=True)
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
@@ -93,6 +96,7 @@ def main(argv: list[str] | None = None) -> int:
         scope = getattr(args, "scope", None)
         lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync",)
                        else ("wellness",) if scope == "wellness"
+                       else ("health",) if args.cmd == "health"
                        else ("activities",))
         with single_instance(settings.data_dir, lock_scopes):
             store = Store(settings.data_dir)
@@ -107,6 +111,12 @@ def main(argv: list[str] | None = None) -> int:
                     store.record_activity(args.activity_id, "downloaded")
                     print(f"Pending lock cleared locally for {args.activity_id}. Next sync will recheck remote.")
                     return 0
+                if args.cmd == "health":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                    report = probe(settings, garmin, intervals, store)
+                    print(json.dumps(report, indent=2))
+                    return report["exit"]
                 if args.cmd == "setup-charts":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     print(json.dumps(setup_charts(intervals, apply=args.apply), indent=2))

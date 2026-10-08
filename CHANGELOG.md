@@ -51,6 +51,9 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - The watcher logs in to Garmin lazily: a poll that finds nothing new makes
   no Garmin request at all.
 
+- `health`: daily probe of both services with a configurable stale window
+  and alert mail; failure alerts for the timers (`deploy/`).
+
 ### Known limitations
 
 - Writing streams sets `icu_intervals_edited` on the activity; the API

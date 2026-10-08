@@ -34,6 +34,8 @@ class Store:
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
             day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+        self.db.execute("""CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY, value TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS intervals_seen (
             intervals_id TEXT PRIMARY KEY, external_id TEXT, source TEXT, first_seen REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS enrichment (
@@ -140,6 +142,15 @@ class Store:
         if not garmin_id.isdecimal():
             raise ValueError("Garmin activity ID must be numeric")
         return self.base / "fits" / f"{garmin_id}.fit"
+
+    def set_meta(self, key: str, value: str = "") -> None:
+        self.db.execute("INSERT INTO meta VALUES (?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, "
+                        "updated=excluded.updated", (key, value, time.time()))
+        self.db.commit()
+
+    def meta_updated(self, key: str) -> float | None:
+        row = self.db.execute("SELECT updated FROM meta WHERE key=?", (key,)).fetchone()
+        return float(row[0]) if row else None
 
     def intervals_seen(self, intervals_id: str) -> bool:
         row = self.db.execute("SELECT 1 FROM intervals_seen WHERE intervals_id=?", (intervals_id,)).fetchone()
