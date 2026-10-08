@@ -143,8 +143,10 @@ def test_macro_chart_stacks_energy_plots():
     # Stacked by energy (custom kcal fields), so the stack percentage is the energy share, not the gram share.
     plan = plan_charts(items("GarminCarbsKcal", "GarminProteinKcal", "GarminFatKcal"))
     macros = next(c for c in plan["create"] if c["name"] == "Garmin Bridge: Nutrition macros")
-    assert [(p["field"], p["stack"], p["filter"]) for p in macros["content"]["plots"]] == \
+    assert [(p["field"], p["stack"], p["filter"]) for p in macros["content"]["plots"][:3]] == \
         [("GarminCarbsKcal", "food", "dec0"), ("GarminProteinKcal", "food", "dec0"), ("GarminFatKcal", "food", "dec0")]
+    total = macros["content"]["plots"][3]
+    assert total["field"] == "kcal_consumed" and total["type"] == "line" and total["scale"] is None
 
 
 def test_bridge_chart_under_an_earlier_name_is_renamed_not_duplicated():

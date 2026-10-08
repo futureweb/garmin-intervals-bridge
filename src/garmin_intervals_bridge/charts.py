@@ -117,6 +117,8 @@ CHARTS: list[dict[str, Any]] = [
             ("custom", "GarminCarbsKcal", "Carbs", "bars", "none", None, "#70663180", "#706631FF", "food"),
             ("custom", "GarminProteinKcal", "Prot.", "bars", "none", None, "#9B033280", "#9B0332FF", "food"),
             ("custom", "GarminFatKcal", "Fat", "bars", "none", None, "#DA6C0B80", "#DA6C0BFF", "food"),
+            # the logged total as a thin line over the stack (same axis: scale None like the bars)
+            ("native", "kcal_consumed", None, "dec0", "Total", "line", "none", None, "#33333300", "#333333AA"),
         ],
     },
     {
