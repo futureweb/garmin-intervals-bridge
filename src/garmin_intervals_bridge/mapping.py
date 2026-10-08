@@ -160,6 +160,10 @@ def map_wellness(snapshot: dict, target: date, today: date) -> tuple[dict, dict]
         if seconds is not None:
             put(custom, key, round(seconds / 60, 2), high=1440)
     put(custom, "GarminSleepStressAvg", choose(sleep, ("avgSleepStress",), high=100), high=100)
+    # Intervals has native fields for these two; use them (only when empty, as always)
+    # and keep the Garmin-named copies for people who chart them separately.
+    put(native, "spO2", choose(sleep, ("averageSpO2Value",), high=100), high=100)
+    put(native, "respiration", choose(sleep, ("averageRespirationValue",), high=60), high=60)
     put(custom, "GarminSleepSpO2Avg", choose(sleep, ("averageSpO2Value",), high=100), high=100)
     put(custom, "GarminSleepRespirationAvg", choose(sleep, ("averageRespirationValue",), high=60), high=60)
     put(custom, "GarminSkinTempDeviationC", choose(data.get("sleep"), ("avgSkinTempDeviationC",),

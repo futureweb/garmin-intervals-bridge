@@ -6,6 +6,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import time
+
 from .config import Settings
 from .fit import sha256, validate_fit
 from .enrich import enrich_activity, load_field_mappings
@@ -156,12 +158,20 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
     return metrics
 
 def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
-                activity_days: int | None = None, today: date | None = None) -> dict:
+                activity_days: int | None = None, today: date | None = None,
+                date_range: tuple[date, date] | None = None, pause_seconds: float = 0.0) -> dict:
     """Scheduled enrich mode: for every recent Garmin activity, add to the officially
-    synced Intervals activity what the partner copy lacks. Never uploads, never deletes."""
-    current = today or datetime.now(settings.timezone).date()
-    lookback = activity_days or settings.activity_days
-    start = current - timedelta(days=lookback - 1)
+    synced Intervals activity what the partner copy lacks. Never uploads, never deletes.
+
+    `date_range` replaces the lookback for a backfill; `pause_seconds` spaces the
+    activities out so a long backfill stays polite towards Garmin.
+    """
+    if date_range:
+        start, current = date_range
+    else:
+        current = today or datetime.now(settings.timezone).date()
+        lookback = activity_days or settings.activity_days
+        start = current - timedelta(days=lookback - 1)
     activities = garmin.activities(start, current)
     metrics = {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
                "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
@@ -182,6 +192,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
         try:
             result = enrich_activity(gid, garmin, intervals, store, apply=apply,
                                      remote_candidates=remote, mappings=mappings)
+            if pause_seconds and result["outcome"] not in ("already_enriched",):
+                time.sleep(pause_seconds)
         except GarminBlocked:
             raise
         except Exception as exc:
@@ -205,13 +217,18 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
 
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,
-                  today: date | None = None) -> dict:
+                  today: date | None = None, days: list[date] | None = None,
+                  pause_seconds: float = 0.0) -> dict:
+    """Daily wellness. `days` (a backfill) replaces the lookback; `pause_seconds`
+    is slept between days because each day costs ~22 Garmin requests."""
     current = today or datetime.now(settings.timezone).date()
     lookback = wellness_days or settings.wellness_days
     metrics = {"days_checked": 0, "days_skipped_recent": 0, "days_locked": 0,
                "days_with_changes": 0, "writes": 0, "new_fields": []}
-    for offset in reversed(range(lookback)):
-        day = current - timedelta(days=offset)
+    day_list = days if days is not None else [current - timedelta(days=o) for o in reversed(range(lookback))]
+    for index, day in enumerate(day_list):
+        if pause_seconds and index:
+            time.sleep(pause_seconds)
         if not force and store.wellness_recent(day, settings.wellness_refresh_hours):
             metrics["days_skipped_recent"] += 1
             continue
@@ -248,4 +265,46 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
         if apply:
             store.mark_wellness(day)
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
+    return metrics
+
+
+def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
+               today: date | None = None) -> dict:
+    """One cheap poll of Intervals; Garmin is contacted only for activities seen for the first time.
+
+    Intervals offers no push. Polling it every minute costs one ~450-byte request;
+    the official import then triggers exactly one original download per new
+    Garmin activity, typically within a minute of the activity appearing.
+    """
+    current = today or datetime.now(settings.timezone).date()
+    recent = intervals.activities(current - timedelta(days=2), current + timedelta(days=1),
+                                  fields=["id", "external_id", "source", "start_date"], limit=50)
+    metrics = {"polled": len(recent), "new": 0, "ignored": 0, "failed": 0,
+               "enriched": 0, "planned": 0, "nothing_to_add": 0, "already_enriched": 0, "unmatched": 0}
+    for item in recent:
+        iid = str(item.get("id") or "")
+        if not iid or store.intervals_seen(iid):
+            continue
+        external = str(item.get("external_id") or "")
+        source = str(item.get("source") or "")
+        store.mark_intervals_seen(iid, external, source)
+        metrics["new"] += 1
+        if source.upper() != "GARMIN_CONNECT" or not external.isdecimal():
+            metrics["ignored"] += 1          # manual uploads, Strava, ... : not ours to touch
+            continue
+        if store.is_deferred(external):
+            continue
+        try:
+            result = enrich_activity(external, garmin, intervals, store, apply=apply, intervals_id=iid)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            store.record_failure(external, f"{type(exc).__name__}: {exc}")
+            metrics["failed"] += 1
+            log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry", external, type(exc).__name__)
+            continue
+        metrics[result["outcome"]] += 1
+        if result["outcome"] in ("planned", "enriched"):
+            log.info("Watch: %s %s -> %s fields %s streams %s", result["outcome"].upper(), external, iid,
+                     sorted(result["fields"]["writes"]), [w["type"] for w in result["streams"]["writes"]])
     return metrics

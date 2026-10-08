@@ -69,8 +69,14 @@ class IntervalsClient:
     def update_activity(self, activity_id: str, fields: dict) -> Any:
         return self._api("PUT", f"/activity/{activity_id}", json=fields)
 
-    def activities(self, oldest: date, newest: date) -> list[dict]:
-        result = self._request("GET", "/activities", params={"oldest": oldest.isoformat(), "newest": newest.isoformat()})
+    def activities(self, oldest: date, newest: date, fields: list[str] | None = None,
+                   limit: int | None = None) -> list[dict]:
+        params: dict = {"oldest": oldest.isoformat(), "newest": newest.isoformat()}
+        if fields:
+            params["fields"] = ",".join(fields)     # small answers: a one-minute poll is ~450 bytes
+        if limit:
+            params["limit"] = limit
+        result = self._request("GET", "/activities", params=params)
         if not isinstance(result, list):
             raise ValueError("Intervals activities API did not return a list (fail closed)")
         return result
