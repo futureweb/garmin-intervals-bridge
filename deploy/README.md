@@ -106,3 +106,12 @@ systemctl enable --now garmin-intervals-bridge-health.timer
   you add `--apply`, those are enriched by the next 30-minute run (which
   walks Garmin's activity list), not by the watcher.
 - `status` takes no lock and works during a backfill; `health` has its own.
+- The units carry two hardening layers: read-only system, private /tmp, no
+  new privileges, and a system-call filter (`@system-service`), no
+  capabilities, no device access and a 512 MB memory ceiling. If a future
+  dependency needs more, the journal shows the refused call; loosen one
+  directive rather than removing the block.
+- The daily `health` digest counts the Garmin requests of the last 24 h
+  (recorded per run); a normal day is a few hundred, a backfill day more.
+- Disk: one JSON snapshot per wellness day (about 100 kB) and the original
+  plus partner FIT per activity (a few MB each); a year is well under 1 GB.
