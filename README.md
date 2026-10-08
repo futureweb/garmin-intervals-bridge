@@ -250,7 +250,7 @@ The compose service is deliberately not an always-on daemon; schedule
 
 ## Security and privacy
 
-Read [docs/SECURITY.md](docs/SECURITY.md). In short: no passwords stored,
+Read [SECURITY.md](SECURITY.md). In short: no passwords stored,
 tokens and the API key readable by the service user only, the data
 directory is personal (routes, health data) and must never be committed or
 shared, dry run by default, no deletions ever.
