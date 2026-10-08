@@ -10,6 +10,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
+from . import __version__
 from .mapping import CUSTOM_FIELDS
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ class IntervalsClient:
         self.base = f"{self.root}/athlete/{athlete_id}"
         self.session = session or requests.Session()
         self.session.auth = ("API_KEY", api_key)
-        self.session.headers["User-Agent"] = "garmin-intervals-bridge/0.1"
+        self.session.headers["User-Agent"] = f"garmin-intervals-bridge/{__version__}"
         if session is None:
             # Only GET retries; never automatically replay a non-idempotent upload.
             retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 502, 503, 504],

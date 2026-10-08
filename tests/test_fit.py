@@ -4,8 +4,15 @@ import zipfile
 import pytest
 from garmin_fit_sdk import Encoder, Profile
 
-from garmin_intervals_bridge.fit import (InvalidFIT, compare_fit, decode_fit, extract_original_fit,
-                                         fit_inventory, sha256, validate_fit)
+from garmin_intervals_bridge.fit import (
+    InvalidFIT,
+    compare_fit,
+    decode_fit,
+    extract_original_fit,
+    fit_inventory,
+    sha256,
+    validate_fit,
+)
 
 MESG = Profile["mesg_num"]
 

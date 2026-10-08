@@ -8,6 +8,8 @@ separate, explicitly enabled step.
 """
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from .fit import decode_fit, sha256
@@ -180,8 +182,6 @@ def gap_report(original: bytes, partner: bytes | None) -> dict:
 # fields the athlete has configured, with the same source and the same units.
 # Nothing Garmin-specific is hard-coded here.
 
-import re
-from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -429,7 +429,7 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
       planned           writes identified, dry run
       enriched          writes performed
     """
-    from .fit import decode_fit, extract_original_fit, sha256   # local import keeps fit optional for tests
+    from .fit import decode_fit, extract_original_fit, sha256  # local import keeps fit optional for tests
 
     path = store.fit_path(gid)
     if not path.is_file():

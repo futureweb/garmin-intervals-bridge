@@ -1,6 +1,6 @@
 from datetime import date
 
-from garmin_intervals_bridge.mapping import map_wellness, merge_wellness, CUSTOM_FIELDS
+from garmin_intervals_bridge.mapping import CUSTOM_FIELDS, map_wellness, merge_wellness
 
 
 def sample():

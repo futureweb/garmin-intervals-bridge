@@ -1,45 +1,93 @@
-# Wellness field mapping (v0.1)
+# Field mapping
 
-Only scalars with reviewed meaning/units are mapped. All source JSON is stored in `data/raw/`, subject to your private data handling policy. Intervals data is only modified with `--apply` and is never overwritten if already present.
+Two very different mechanisms, deliberately.
 
-**Intervals native fields:**
+## Activities: your custom items are the mapping
 
-| Intervals code | Garmin source | Notes |
+The bridge does not carry a table of Garmin FIT fields. It reads the
+definitions of your own Intervals custom items (`GET /athlete/{id}/custom-item`)
+and uses them exactly as Intervals does when it processes a file itself:
+
+| Custom item | Definition field | Example | Bridge reads |
+| --- | --- | --- | --- |
+| `ACTIVITY_FIELD` | `content.fit_session_field` | `"total_training_effect"` | that `session` field |
+| | | `"178"` | `session` field number 178 |
+| | | `"140.9"` | message 140, field 9 (last non-null) |
+| | `content.script` (optional) | `activity.isNew ? activity.RecoveryTime / 60 : activity.RecoveryTime` | first-import conversion `/ 60` |
+| | | `activity.LTHRdetected == 0 ? NaN : activity.LTHRdetected` | `0` means "no value" |
+| `ACTIVITY_STREAM` | `content.fit_record_field` | `"stance_time"` | that `record` field, per record |
+| | `content.script` | `for (let m of icu.fit.record) { let f = m.f_138; if (f) data.setAt(m.timestamp.value, f.value/1000) }` | record field 138, `/ 1000` |
+
+Definitions the bridge cannot interpret safely (scripts over other
+messages, arithmetic beyond constant factors, fields computed from other
+fields) are reported as *unsupported* in every plan and never written.
+Select fields accept only their configured option values.
+
+Values are aligned to the activity's `time` stream by timestamp and refused
+when fewer than 95 % of the points line up. Streams already present on the
+activity are skipped unless `--refresh-own-streams` names one the bridge
+wrote itself.
+
+Public community items such as *Recovery Time*, *Sweat loss*, *Stamina at
+start/end*, *Minimum Stamina* and the *Stamina* / *Potential Stamina*
+streams carry the Garmin-internal IDs (message 140, session fields 178 and
+205–207, record fields 137/138); adding them to your account is all it
+takes for the bridge to fill them.
+
+## Wellness: an explicit, unit-checked table
+
+Only scalars with reviewed meaning are written, and only where the day has
+no value yet. Locked days are skipped. Running totals of the current day
+wait until tomorrow.
+
+### Native Intervals fields
+
+| Intervals | Garmin source | Unit / note |
 | --- | --- | --- |
-| `restingHR` | `stats.restingHeartRate` (fallback sleep.restingHeartRate) | bpm |
-| `hrv` | `hrv.hrvSummary.lastNightAvg` | Garmin overnight HRV/rMSSD in milliseconds; does not overwrite existing |
-| `sleepSecs` | `sleep.dailySleepDTO.sleepTimeSeconds` | seconds |
+| `restingHR` | `stats.restingHeartRate` (fallback sleep) | bpm |
+| `hrv` | `hrv.hrvSummary.lastNightAvg` | ms (overnight rMSSD average) |
+| `avgSleepingHR` | `sleep.dailySleepDTO.avgHeartRate` | bpm |
+| `sleepSecs` | `sleep.dailySleepDTO.sleepTimeSeconds` | s |
 | `sleepScore` | `sleep.dailySleepDTO.sleepScores.overall.value` | 0–100 |
-| `readiness` | morning readiness `score` | 0–100; *only missing* native readiness |
-| `vo2max` | `max_metrics[0].generic.vo2MaxPreciseValue` | running VO2max if Garmin provides it |
-| `steps` | `stats.totalSteps` | yesterday/older only |
-| `hydrationVolume` | `hydration.valueInML / 1000` | litres, yesterday/older only |
+| `spO2` | `sleep.dailySleepDTO.averageSpO2Value` | % |
+| `respiration` | `sleep.dailySleepDTO.averageRespirationValue` | breaths/min |
+| `readiness` | morning training readiness `score` | 0–100 |
+| `vo2max` | `max_metrics.generic.vo2MaxPreciseValue` | ml/kg/min (running) |
+| `steps` | `stats.totalSteps` | yesterday or older |
+| `floorsClimbed` | `stats.floorsAscended` | yesterday or older |
+| `hydrationVolume` | `hydration.valueInML / 1000` | litres |
+| `kcalConsumed` | nutrition `dailyNutritionContent.calories` (fallback `stats.consumedKilocalories`) | kcal; `0` = not logged, never written |
+| `carbohydrates`, `protein`, `fatTotal` | nutrition `dailyNutritionContent.carbs/protein/fat` | g |
+| `weight` | `body_composition.dateWeightList[].weight / 1000` | kg |
+| `bodyFat` | `body_composition.dateWeightList[].bodyFat` | % |
 
-**Private custom wellness fields:**
+Deliberately **not** mapped: Garmin stress 0–100 → Intervals `stress`
+(a 1–4 subjective scale); Garmin training load → Intervals CTL/ATL
+(different models); intraday series of any kind.
 
-| Code(s) | Garmin metric |
-| --- | --- |
-| `BodyBatteryMax`, `BodyBatteryMin` | Daily max/min (retains already existing definitions/values) |
-| `GarminBodyBatteryCharged`, `GarminBodyBatteryDrained` | Day's Body Battery charged/drained numbers |
-| `GarminTrainingReadiness`, `GarminRecoveryTimeMinutes`, `GarminAcuteLoad` | Morning readiness, recovery in minutes, device acute load |
-| `GarminHRV5MinHigh`, `GarminHRV7DayAvg` | HRV high 5-min reading, weekly average |
-| `GarminEnduranceScore` | Endurance Score (daily) |
-| `GarminHillScore`, `GarminHillStrength`, `GarminHillEndurance` | Hill Score and subcomponents |
-| `GarminStressAvg` | Numeric Garmin stress 0–100. Not Intervals subjective `stress` |
-| `GarminActiveCalories`, `GarminStepsGoal` | Daily active kcal and target steps |
-| `GarminIntensityModerateMinutes`, `GarminIntensityVigorousMinutes` | Garmin intensity minutes |
-| `GarminVO2MaxCycling` | Cycling VO2max (ml/kg/min) |
-| `GarminSleepDeepMinutes`, `GarminSleepREMMinutes`, `GarminSleepLightMinutes`, `GarminSleepAwakeMinutes` | Sleep stage durations (minutes) |
-| `GarminSleepStressAvg`, `GarminSleepSpO2Avg`, `GarminSleepRespirationAvg` | Numeric sleep stress, blood oxygen, respiration |
-| `GarminSkinTempDeviationC` | Skin temperature deviation in °C, not absolute temperature |
-| `GarminFitnessAge`, `GarminAchievableFitnessAge` | Garmin fitness ages in years |
-| `GarminPredicted5KSeconds`, `GarminPredicted10KSeconds`, `GarminPredictedHalfSeconds`, `GarminPredictedMarathonSeconds` | Race-prediction times in seconds |
-| `GarminHydrationGoalLitres`, `GarminSweatLossLitres` | Garmin water goal and estimated sweat loss (litres) |
+### Private custom fields (`Garmin…`)
 
-**Only raw-archived so far (not mapped as wellness scalars):** Detailed HRV readings, sleep movement/stages time series, Body Battery time series, intraday SpO2/respiration, training-status enums and per-device variants, device identifiers, detailed lactate-threshold history, body-composition measurements with ambiguous units and timing, blood-pressure sample history, lifestyle logs, and more. JSON archive coverage depends on each supported Garmin endpoint and account.
+Created as private numeric `INPUT_FIELD`s on first `--apply`; existing
+definitions with the same code are reused, never changed.
 
-**Native field overwrite**: Never overwrite existing values. Intervals Garmin partner Wellness sync can stay enabled; the bridge fills missing fields and custom ones. Locked days are skipped. Today's totals are excluded because they are not final.
+| Code | Source | Profile |
+| --- | --- | --- |
+| `BodyBatteryMax`, `BodyBatteryMin` | `stats.bodyBatteryHighestValue/LowestValue` | both |
+| `GarminBodyBatteryCharged`, `GarminBodyBatteryDrained` | `body_battery[].charged/drained` | both |
+| `GarminTrainingReadiness`, `GarminRecoveryTimeMinutes`, `GarminAcuteLoad` | morning readiness | both |
+| `GarminHRV5MinHigh`, `GarminHRV7DayAvg` | `hrv.hrvSummary` | both |
+| `GarminSleepDeepMinutes`, `…REMMinutes`, `…LightMinutes`, `…AwakeMinutes` | sleep stages / 60 | both |
+| `GarminSleepStressAvg`, `GarminSkinTempDeviationC` | sleep | both |
+| `GarminStressAvg`, `GarminActiveCalories`, `GarminIntensityModerateMinutes`, `GarminIntensityVigorousMinutes` | `stats` | both |
+| `GarminEnduranceScore`, `GarminHillScore`, `GarminHillStrength`, `GarminHillEndurance` | scores | both |
+| `GarminFitnessAge` | fitness age | both |
+| `GarminPredicted5KSeconds`, `…10KSeconds`, `…HalfSeconds`, `…MarathonSeconds` | race predictions | both |
+| `GarminSweatLossLitres` | `hydration.sweatLossInML / 1000` | both |
+| `GarminVO2MaxCycling` | `max_metrics.cycling` | both |
+| `GarminSleepSpO2Avg`, `GarminSleepRespirationAvg` | duplicates of native `spO2` / `respiration` | `all` only |
+| `GarminStepsGoal`, `GarminHydrationGoalLitres` | targets, not measurements | `all` only |
+| `GarminAchievableFitnessAge` | derived from fitness age | `all` only |
 
-**Device-specific data**: Some metrics come from Garmin watches, others from the Edge or scales. If multiple devices disagree on a day's value, mapping will need further validation on real user data; v0.1 does not invent a combined number. Health metrics saved as raw JSON may contain intimate medical/route information — protect the archive.
-
-**Custom field visibility**: `INPUT_FIELD` definitions are created as `PRIVATE`, with `content.code` (stable CamelCase) and `content.type=numeric`. Enable the desired fields in Intervals calendar/wellness Settings or charts to visualize them. Provisioning happens only with `--apply`.
+Everything Garmin returns is archived as `raw/YYYY-MM-DD.json` regardless
+of whether it is mapped, so a future mapping can be added without
+re-fetching the past.
