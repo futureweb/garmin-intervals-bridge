@@ -30,9 +30,12 @@ def test_native_plots_carry_scale_and_moving_average_args():
     hrv = next(c for c in plan["create"] if c["name"] == "Garmin Bridge: HRV detail")
     native = hrv["content"]["plots"][0]
     assert native["field"] == "hrv" and native["scale"] == "ms" and native["filter"] == "dec0"
-    plan2 = plan_charts(items("GarminAcuteLoad"))
-    load = next(c for c in plan2["create"] if c["name"] == "Garmin Bridge: Readiness & recovery")
-    assert load["content"]["plots"][0]["aggArgs"] == {"days": 7}
+    plan2 = plan_charts(items("GarminSkinTempDeviationC"))
+    skin = next(c for c in plan2["create"] if c["name"] == "Garmin Bridge: Skin temperature")
+    assert skin["content"]["plots"][1]["aggArgs"] == {"days": 7}
+    load = next(c for c in plan_charts(items("GarminAcuteLoad"))["create"]
+                if c["name"] == "Garmin Bridge: Readiness & recovery")
+    assert load["content"]["plots"][0]["agg"] == "fill_in" and "aggArgs" not in load["content"]["plots"][0]
 
 
 class Fake:

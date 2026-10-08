@@ -23,6 +23,10 @@ GUARDED_STATUSES = ("pending", "uploaded")
 RETRY_BACKOFF_SECONDS = (3600, 6 * 3600, 24 * 3600, 7 * 86400)
 
 
+class InstanceBusy(RuntimeError):
+    """Another bridge process holds the lock for this scope."""
+
+
 class Store:
     def __init__(self, base: Path):
         self.base = base
@@ -33,7 +37,7 @@ class Store:
             garmin_id TEXT PRIMARY KEY, status TEXT NOT NULL,
             sha256 TEXT, intervals_id TEXT, updated REAL NOT NULL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS wellness (
-            day TEXT PRIMARY KEY, fetched REAL NOT NULL)""")
+            day TEXT PRIMARY KEY, fetched REAL NOT NULL, written REAL)""")
         self.db.execute("""CREATE TABLE IF NOT EXISTS runs (
             id INTEGER PRIMARY KEY AUTOINCREMENT, command TEXT NOT NULL, started REAL NOT NULL,
             metrics TEXT NOT NULL)""")
@@ -50,6 +54,8 @@ class Store:
                           ("next_retry", "REAL"), ("error", "TEXT")):
             if name not in columns:
                 self.db.execute(f"ALTER TABLE activity ADD COLUMN {name} {ddl}")
+        if "written" not in {row[1] for row in self.db.execute("PRAGMA table_info(wellness)")}:
+            self.db.execute("ALTER TABLE wellness ADD COLUMN written REAL")   # 0.2.0: fetch and write kept apart
         self.db.commit()
 
     def activity_status(self, garmin_id: str) -> str | None:
@@ -97,6 +103,12 @@ class Store:
             return False
         return (now if now is not None else time.time()) < row[1]
 
+    def clear_failure(self, garmin_id: str) -> None:
+        """A later success ends the failure bookkeeping; guarded states are not touched."""
+        self.db.execute("""UPDATE activity SET status='downloaded', attempts=0, next_retry=NULL, error=NULL,
+                           updated=? WHERE garmin_id=? AND status='failed'""", (time.time(), garmin_id))
+        self.db.commit()
+
     def failed_activities(self) -> list[dict]:
         rows = self.db.execute("""SELECT garmin_id, attempts, next_retry, error FROM activity
                                   WHERE status='failed' ORDER BY next_retry""")
@@ -116,11 +128,30 @@ class Store:
             return False
         return time.time() - row[0] < hours * 3600
 
-    def mark_wellness(self, day: date) -> None:
-        self.db.execute("INSERT INTO wellness(day,fetched) VALUES (?,?) "
-                        "ON CONFLICT(day) DO UPDATE SET fetched=excluded.fetched",
-                        (day.isoformat(), time.time()))
+    def mark_wellness(self, day: date, *, written: bool = False) -> None:
+        """Record a Garmin fetch of this day; with `written`, also that Intervals received its values.
+
+        The two are kept apart so a dry run throttles Garmin like a real run, while the
+        first `--apply` can still map the archived snapshot instead of fetching again."""
+        now = time.time()
+        self.db.execute("INSERT INTO wellness(day,fetched,written) VALUES (?,?,?) "
+                        "ON CONFLICT(day) DO UPDATE SET fetched=excluded.fetched, "
+                        "written=COALESCE(excluded.written, wellness.written)",
+                        (day.isoformat(), now, now if written else None))
         self.db.commit()
+
+    def wellness_state(self, day: date) -> tuple[float | None, float | None]:
+        """(last Garmin fetch, last Intervals write) as timestamps, None when never."""
+        row = self.db.execute("SELECT fetched, written FROM wellness WHERE day=?", (day.isoformat(),)).fetchone()
+        return (row[0], row[1]) if row else (None, None)
+
+    def load_snapshot(self, day: date) -> dict | None:
+        path = self.base / "raw" / f"{day.isoformat()}.json"
+        if not path.is_file():
+            return None
+        with path.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
 
     def pending_activities(self) -> list[str]:
         return [row[0] for row in self.db.execute("SELECT garmin_id FROM activity WHERE status='pending'")]
@@ -221,7 +252,7 @@ def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "we
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
-                raise RuntimeError(f"Another bridge instance is running ({scope})") from exc
+                raise InstanceBusy(f"Another bridge instance is running ({scope})") from exc
         yield
     finally:
         for lock in handles:

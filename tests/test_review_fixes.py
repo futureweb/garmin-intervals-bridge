@@ -1,0 +1,250 @@
+"""Behaviour fixed after the 0.2.0 code review."""
+import fcntl
+import time
+from datetime import date
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
+import pytest
+from test_sync import GarminFake, IntervalsFake, settings
+
+from garmin_intervals_bridge import sync as sync_module
+from garmin_intervals_bridge.cli import main
+from garmin_intervals_bridge.enrich import match_activity
+from garmin_intervals_bridge.garmin import DAY_ENDPOINTS, GarminBlocked, GarminLoginNeeded, GarminSource
+from garmin_intervals_bridge.store import InstanceBusy, Store, single_instance
+from garmin_intervals_bridge.sync import sync_enrich, sync_wellness, wellness_due
+
+# ---- Garmin login failures are classified, not blamed on an activity ----
+
+def _fake_garmin(error):
+    class FakeGarmin:
+        def __init__(self, *a, **kw):
+            pass
+
+        def login(self, tokenstore):
+            raise error
+    return FakeGarmin
+
+
+def test_rate_limit_or_outage_at_login_is_a_block_not_a_login_request(tmp_path, monkeypatch):
+    import garminconnect
+    cause = garminconnect.GarminConnectTooManyRequestsError("429 Client Error")
+    err = garminconnect.GarminConnectAuthenticationError("Failed to retrieve social profile")
+    err.__cause__ = cause
+    monkeypatch.setattr(garminconnect, "Garmin", _fake_garmin(err))
+    with pytest.raises(GarminBlocked) as info:
+        GarminSource(tmp_path, 0).login(interactive=False)
+    assert not isinstance(info.value, GarminLoginNeeded)
+
+    outage = garminconnect.GarminConnectAuthenticationError("Failed to retrieve social profile")
+    outage.__cause__ = TimeoutError("Read timed out")
+    monkeypatch.setattr(garminconnect, "Garmin", _fake_garmin(outage))
+    with pytest.raises(GarminBlocked):
+        GarminSource(tmp_path, 0).login(interactive=False)
+
+
+def test_missing_or_rejected_tokens_need_a_person(tmp_path, monkeypatch):
+    import garminconnect
+    for error in (FileNotFoundError("no tokens"),
+                  garminconnect.GarminConnectAuthenticationError("Failed to retrieve social profile")):
+        monkeypatch.setattr(garminconnect, "Garmin", _fake_garmin(error))
+        with pytest.raises(GarminLoginNeeded):
+            GarminSource(tmp_path, 0).login(interactive=False)
+
+
+def test_an_id_containing_429_is_not_a_block():
+    from garmin_intervals_bridge.garmin import _is_blocked
+    assert _is_blocked(RuntimeError("API Error 429 Too Many Requests"))
+    assert not _is_blocked(RuntimeError("Activity 2442901 not found (404)"))
+
+
+# ---- a Garmin outage ends the day instead of trying every endpoint ----
+
+class _Client:
+    """Every day endpoint exists; the named ones raise."""
+    ActivityDownloadFormat = SimpleNamespace(ORIGINAL="ORIGINAL")
+
+    def __init__(self, failing):
+        self.calls = []
+        for method in DAY_ENDPOINTS.values():
+            setattr(self, method, self._make(method, method in failing))
+
+    def _make(self, method, fails):
+        def call(*a, **kw):
+            self.calls.append(method)
+            if fails:
+                raise RuntimeError("API Error 503 Service Unavailable")
+            return {"ok": True}
+        return call
+
+
+def test_three_consecutive_endpoint_failures_abort_the_day(tmp_path):
+    src = GarminSource(tmp_path, 0)
+    src.client = _Client(failing=set(DAY_ENDPOINTS.values()))
+    with pytest.raises(GarminBlocked):
+        src.snapshot(date(2026, 10, 8))
+    assert len(src.client.calls) == 3                     # not 22
+
+    src.client = _Client(failing={"get_hrv_data"})
+    raw = src.snapshot(date(2026, 10, 8))
+    assert raw["errors"] == {"hrv": "RuntimeError"} and len(raw["data"]) == len(DAY_ENDPOINTS) - 1
+
+
+# ---- a held lock is not a failure of the watch ----
+
+def test_watch_skips_the_poll_when_the_lock_is_held(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
+    monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+    with single_instance(tmp_path, ("activities",)):
+        assert main(["watch"]) == 0                        # skipped, no error exit, no alert
+        assert main(["status"]) == 0                       # reads only, needs no lock
+        assert main(["sync", "--scope", "activities"]) == 1
+        with pytest.raises(InstanceBusy):
+            with single_instance(tmp_path, ("activities",)):
+                pass
+
+
+# ---- a later success ends the failure bookkeeping ----
+
+def test_successful_enrich_clears_an_earlier_failure(tmp_path, monkeypatch):
+    st = Store(tmp_path)
+    st.record_failure("42", "ValueError: once")
+    st.db.execute("UPDATE activity SET next_retry = 0")
+    st.db.commit()                                                      # backoff over
+    monkeypatch.setattr(sync_module, "enrich_activity", lambda *a, **kw: {"outcome": "nothing_to_add"})
+    monkeypatch.setattr(sync_module, "load_field_mappings", lambda items: None)
+    g, i = GarminFake(), IntervalsFake()
+    i.custom_items = lambda: []
+    out = sync_enrich(settings(tmp_path), g, i, st, apply=False, today=date(2026, 10, 8))
+    assert out["nothing_to_add"] == 1
+    assert st.failed_activities() == [] and st.activity_status("42") == "downloaded"
+    st.close()
+
+
+# ---- wellness: when a day is read again, and dry runs count ----
+
+def test_wellness_due_schedule():
+    tz = ZoneInfo("Europe/Vienna")
+    today = date(2026, 10, 8)
+    midnight = 1_000_000.0
+    now = midnight + 10 * 3600                            # 10:00
+    h = 3600
+    assert wellness_due(today, today, None, midnight, 4 * h, now)
+    assert not wellness_due(today, today, now - 3 * h, midnight, 4 * h, now)
+    assert wellness_due(today, today, now - 5 * h, midnight, 4 * h, now)
+    yesterday = date(2026, 10, 7)
+    assert wellness_due(yesterday, today, midnight - h, midnight, 4 * h, now)       # before midnight
+    assert not wellness_due(yesterday, today, now - 7 * h, midnight, 4 * h, now)    # 03:00, within 2 periods
+    assert wellness_due(yesterday, today, now - 9 * h, midnight, 4 * h, now)        # 01:00, two periods ago
+    older = date(2026, 10, 6)
+    assert wellness_due(older, today, midnight - h, midnight, 4 * h, now)
+    assert not wellness_due(older, today, midnight + h, midnight, 4 * h, now)       # once after midnight only
+    assert tz is not None
+
+
+class CountingGarmin(GarminFake):
+    def __init__(self):
+        super().__init__()
+        self.snapshots = []
+
+    def snapshot(self, day, endpoints=None):
+        self.snapshots.append((day, endpoints))
+        return super().snapshot(day)
+
+
+def test_dry_run_throttles_garmin_and_apply_maps_the_archive(tmp_path):
+    st = Store(tmp_path)
+    g, i = CountingGarmin(), IntervalsFake()
+    i.current_wellness = {"locked": False}
+    s = settings(tmp_path)
+    day = date(2026, 10, 8)
+    dry = sync_wellness(s, g, i, st, apply=False, wellness_days=1, today=day)
+    assert dry["days_checked"] == 1 and not i.wellness_writes and len(g.snapshots) == 1
+    dry2 = sync_wellness(s, g, i, st, apply=False, wellness_days=1, today=day)
+    assert dry2["days_skipped_recent"] == 1 and len(g.snapshots) == 1        # a second dry run asks nothing
+    real = sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    assert real["days_from_archive"] == 1 and real["writes"] == 1 and len(g.snapshots) == 1
+    fetched, written = st.wellness_state(day)
+    assert fetched and written
+    again = sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    assert again["days_skipped_recent"] == 1 and len(g.snapshots) == 1
+    st.close()
+
+
+def test_refresh_within_a_day_reads_only_the_essential_endpoints_and_keeps_the_archive(tmp_path):
+    from garmin_intervals_bridge.garmin import ESSENTIAL_ENDPOINTS
+    st = Store(tmp_path)
+    g, i = CountingGarmin(), IntervalsFake()
+    i.current_wellness = {"locked": False}
+    s = settings(tmp_path)
+    day = date(2026, 10, 8)
+    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    assert g.snapshots[0][1] is None                                          # first read: everything
+    st.db.execute("UPDATE wellness SET fetched = ?", (time.time() - 9 * 3600,))
+    st.db.commit()
+    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    assert g.snapshots[1][1] == ESSENTIAL_ENDPOINTS
+    archived = st.load_snapshot(day)
+    assert set(archived["data"]) >= set(GarminFake().snapshot(day)["data"])   # nothing lost by the partial read
+    st.close()
+
+
+def test_archive_replay_maps_without_garmin(tmp_path):
+    st = Store(tmp_path)
+    g, i = CountingGarmin(), IntervalsFake()
+    i.current_wellness = {"locked": False}
+    s = settings(tmp_path)
+    day = date(2026, 10, 7)
+    st.save_snapshot(day, GarminFake().snapshot(day))
+    out = sync_wellness(s, g, i, st, apply=True, days=[day, date(2026, 10, 6)], today=date(2026, 10, 8),
+                        from_archive=True)
+    assert out["days_from_archive"] == 1 and out["writes"] == 1 and g.snapshots == []
+    st.close()
+
+
+def test_one_days_intervals_error_does_not_end_the_run(tmp_path):
+    st = Store(tmp_path)
+    g, i = CountingGarmin(), IntervalsFake()
+    i.current_wellness = {"locked": False}
+    calls = []
+
+    def wellness(day):
+        calls.append(day)
+        if day == date(2026, 10, 7):
+            raise ValueError("custom field of another type")
+        return {"locked": False}
+    i.wellness = wellness
+    out = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=2, today=date(2026, 10, 8))
+    assert out["failed"] == 1 and out["writes"] == 1 and len(calls) == 2
+    st.close()
+
+
+# ---- matching ----
+
+def test_bare_numeric_external_id_counts_only_for_garmin_connect():
+    garmin = {"activityId": 24544097680, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3600}
+    strava = {"id": "i1", "source": "STRAVA", "external_id": "24544097680", "start_date": "2026-10-07T08:00:00Z"}
+    assert match_activity(garmin, [strava]) is None
+    official = dict(strava, source="GARMIN_CONNECT")
+    assert match_activity(garmin, [official])["id"] == "i1"
+    bridge_upload = dict(strava, source="UPLOAD", external_id="garmin:24544097680")
+    assert match_activity(garmin, [bridge_upload])["id"] == "i1"
+
+
+def test_duration_matches_moving_time_when_the_ride_was_paused():
+    garmin = {"activityId": 1, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3600}
+    paused = {"id": "i2", "source": "GARMIN_CONNECT", "external_id": "x", "start_date": "2026-10-07T08:00:00Z",
+              "moving_time": 3590, "elapsed_time": 5400}
+    assert match_activity(garmin, [paused])["id"] == "i2"
+    other = dict(paused, moving_time=1800, elapsed_time=1900)
+    assert match_activity(garmin, [other]) is None
+
+
+def test_flock_is_what_single_instance_uses(tmp_path):
+    with single_instance(tmp_path, ("wellness",)):
+        lock = (tmp_path / ".bridge-wellness.lock").open("a+")
+        with pytest.raises(BlockingIOError):
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock.close()

@@ -9,7 +9,7 @@ from typing import Any
 from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
 from .fit import sha256, validate_fit
-from .garmin import GarminBlocked
+from .garmin import ESSENTIAL_ENDPOINTS, GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
 from .times import external_id_names, parse_utc
@@ -199,6 +199,7 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             metrics["failed"] += 1
             log.warning("Enrich %s failed with %s (attempt %d); retrying later", gid, type(exc).__name__, attempts)
             continue
+        store.clear_failure(gid)
         outcome = result["outcome"]
         metrics[outcome] += 1
         if outcome == "unmatched":
@@ -215,59 +216,116 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     return metrics
 
 
+def wellness_due(day: date, current: date, fetched: float | None, midnight: float,
+                 refresh_seconds: float, now: float | None = None) -> bool:
+    """When a day's Garmin data is read again.
+
+    Today: every refresh period (its values keep changing). Yesterday: once after local
+    midnight, when its totals became final, then every second refresh period, because a
+    watch that syncs in the morning still carries yesterday's evening. Older days: once
+    after midnight and not again; the archive keeps their snapshot.
+    """
+    if fetched is None:
+        return True
+    now = now if now is not None else time.time()
+    age = (current - day).days
+    if age <= 0:
+        return now - fetched >= refresh_seconds
+    if fetched < midnight:
+        return True
+    return age == 1 and now - fetched >= 2 * refresh_seconds
+
+
+def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
+                        metrics: dict, *, apply: bool) -> bool:
+    """Map one snapshot and add what Intervals lacks. False when the day is locked there."""
+    native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
+    if not native and not custom:
+        log.info("No supported Garmin scalar wellness data for %s", day)
+        return True
+    existing = intervals.wellness(day)
+    if existing.get("locked") is True:
+        metrics["days_locked"] += 1
+        log.info("Skipping locked wellness day %s", day)
+        return False
+    changes = merge_wellness(existing, native, custom)
+    if changes:
+        metrics["days_with_changes"] += 1
+        log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
+        missing_custom = set(custom).intersection(changes)
+        if missing_custom:
+            # Create only needed, nonexisting fields. The private custom-field
+            # list is queried before writes; no global athlete config reset.
+            created = intervals.provision_fields(apply=apply, needed=missing_custom)
+            metrics["new_fields"].extend(created)
+        if apply:
+            intervals.write_wellness(day, changes)
+            metrics["writes"] += 1
+    return True
+
+
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,
                   today: date | None = None, days: list[date] | None = None,
-                  pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None) -> dict:
+                  pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None,
+                  from_archive: bool = False) -> dict:
     """Daily wellness. `days` (a backfill) replaces the lookback; `pause_seconds`
-    is slept between days because each day costs ~22 Garmin requests."""
+    is slept between days because each day costs up to ~23 Garmin requests.
+
+    `from_archive` maps the locally archived snapshots instead of asking Garmin: after
+    the mapping gained fields, the past is completed without a single Garmin request.
+    """
     current = today or datetime.now(settings.timezone).date()
     lookback = wellness_days or settings.wellness_days
-    metrics = {"days_checked": 0, "days_skipped_recent": 0, "days_locked": 0,
-               "days_with_changes": 0, "writes": 0, "new_fields": []}
+    metrics = {"days_checked": 0, "days_skipped_recent": 0, "days_from_archive": 0, "days_locked": 0,
+               "days_with_changes": 0, "writes": 0, "failed": 0, "new_fields": []}
     day_list = days if days is not None else [current - timedelta(days=o) for o in reversed(range(lookback))]
-    # Past days are read once more after local midnight, whatever the throttle says:
-    # their running totals (steps, calories, nutrition) have only just become final.
     midnight = datetime.combine(current, datetime.min.time(), tzinfo=settings.timezone).timestamp()
+    refresh = settings.wellness_refresh_hours * 3600
     for index, day in enumerate(day_list):
         if pause_seconds and index:
             time.sleep(pause_seconds)
-        since = midnight if day < current else None
-        if not force and store.wellness_recent(day, settings.wellness_refresh_hours, since):
-            metrics["days_skipped_recent"] += 1
+        fetched, written = store.wellness_state(day)
+        raw = None
+        if from_archive:
+            raw = store.load_snapshot(day)
+            if raw is None:
+                log.info("No archived snapshot for %s; nothing to map", day)
+                continue
+            metrics["days_from_archive"] += 1
+        elif not force and not wellness_due(day, current, fetched, midnight, refresh):
+            if written or not apply:
+                metrics["days_skipped_recent"] += 1
+                continue
+            # Fetched by a dry run and never written: map the archived snapshot, do not ask again.
+            raw = store.load_snapshot(day)
+            if raw is not None:
+                metrics["days_from_archive"] += 1
+        if raw is None:
+            # The first read of a day (and the one after midnight) takes every endpoint; the
+            # refreshes within a day only the measurements, which is what changes during a day.
+            chosen = (endpoints if endpoints is not None
+                      else None if fetched is None or fetched < midnight else ESSENTIAL_ENDPOINTS)
+            raw = garmin.snapshot(day, **({"endpoints": chosen} if chosen else {}))
+            if chosen is not None and (previous := store.load_snapshot(day)):
+                # A partial read must not shrink the archived day: keep what was not re-read.
+                errors = {k: v for k, v in (previous.get("errors") or {}).items() if k not in raw["data"]}
+                raw = {**previous, "data": {**(previous.get("data") or {}), **raw["data"]},
+                       "errors": {**errors, **raw.get("errors", {})}}
+            store.save_snapshot(day, raw)
+            metrics["days_checked"] += 1
+            if not raw.get("data"):
+                log.warning("No Garmin wellness payload for %s; not marking complete", day)
+                continue
+            store.mark_wellness(day)                     # the throttle counts the read, not the write
+        try:
+            unlocked = _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply)
+        except Exception as exc:                         # one day's Intervals trouble must not end the run
+            metrics["failed"] += 1
+            log.warning("Wellness %s not written: %s", day, type(exc).__name__)
             continue
-        raw = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))
-        store.save_snapshot(day, raw)
-        metrics["days_checked"] += 1
-        if not raw.get("data"):
-            log.warning("No Garmin wellness payload for %s; not marking complete", day)
-            continue
-        native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
-        if not native and not custom:
-            log.info("No supported Garmin scalar wellness data for %s", day)
-            if apply:
-                store.mark_wellness(day)
-            continue
-        existing = intervals.wellness(day)
-        if existing.get("locked") is True:
-            metrics["days_locked"] += 1
-            log.info("Skipping locked wellness day %s", day)
-            continue
-        changes = merge_wellness(existing, native, custom)
-        if changes:
-            metrics["days_with_changes"] += 1
-            log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
-            missing_custom = set(custom).intersection(changes)
-            if missing_custom:
-                # Create only needed, nonexisting fields. The private custom-field
-                # list is queried before writes; no global athlete config reset.
-                created = intervals.provision_fields(apply=apply, needed=missing_custom)
-                metrics["new_fields"].extend(created)
-            if apply:
-                intervals.write_wellness(day, changes)
-                metrics["writes"] += 1
-        if apply:
-            store.mark_wellness(day)
+        if apply and unlocked:
+            store.mark_wellness(day, written=True)
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
     return metrics
 
@@ -308,6 +366,7 @@ def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *,
             log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry",
                         external, type(exc).__name__)
             continue
+        store.clear_failure(external)
         metrics[result["outcome"]] += 1
         if result["outcome"] in ("planned", "enriched"):
             log.info("Watch: %s %s -> %s fields %s streams %s", result["outcome"].upper(), external, iid,

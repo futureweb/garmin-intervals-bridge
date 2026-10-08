@@ -38,7 +38,7 @@ Read a few journals first: every run prints what it would write, per activity.
 ## Two timers, one purpose
 
 - `garmin-intervals-bridge-watch` runs every minute, asks Intervals for the
-  last two days (one ~450-byte request) and enriches only activities it sees
+  last three days (one ~450-byte request) and enriches only activities it sees
   for the first time. Latency after the official import: about a minute.
 - `garmin-intervals-bridge` runs every 30 minutes over the last four days and
   catches anything the watcher missed (an import that lagged, a failed download
@@ -53,6 +53,7 @@ Both are dry runs until `--apply` is appended to their `ExecStart`.
 garmin-intervals-bridge backfill --scope activities --from 2026-03-01            # dry run
 garmin-intervals-bridge backfill --scope activities --from 2026-03-01 --apply
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 --apply
+garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --from-archive --apply   # after new fields
 ```
 
 Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
@@ -90,7 +91,7 @@ the service user), Intervals API key revoked, no network.
 one small Intervals request, and then looks for errors the scheduled runs
 handle quietly: timers that stopped running, a Garmin endpoint erroring on
 each of the last three days, wellness fields Garmin delivered all week but
-not in the last two days (a changed response, a stopped sensor), activities
+not in the last days (a changed response, a stopped sensor), activities
 failing repeatedly, uploads pending reconciliation. It exits 2 only for those,
 so a single bad night stays a journal warning while a real problem becomes
 one mail a day through the same `OnFailure=` hook. The timer runs it once a day:

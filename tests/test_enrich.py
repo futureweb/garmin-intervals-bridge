@@ -15,7 +15,9 @@ GARMIN = {"activityId": 42, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3
 def test_match_by_external_id_wins_regardless_of_source():
     remote = [{"id": "i1", "external_id": "garmin:42", "source": "STRAVA"}]
     assert match_activity(GARMIN, remote)["id"] == "i1"
-    assert match_activity(GARMIN, [{"id": "i1", "external_id": "42"}])["id"] == "i1"
+    # A bare number is Garmin's id only when the official sync wrote it (Strava ids are numbers too).
+    assert match_activity(GARMIN, [{"id": "i1", "external_id": "42", "source": "GARMIN_CONNECT"}])["id"] == "i1"
+    assert match_activity(GARMIN, [{"id": "i1", "external_id": "42"}]) is None
 
 
 def test_match_recognises_manual_upload_file_names():

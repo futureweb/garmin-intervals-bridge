@@ -5,6 +5,7 @@ import argparse
 import json
 import logging
 import sys
+from contextlib import ExitStack
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -12,10 +13,10 @@ from .charts import setup_charts
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
 from .fit import compare_fit, extract_original_fit, sha256
-from .garmin import ESSENTIAL_ENDPOINTS, GarminSource
+from .garmin import DAY_ENDPOINTS, ESSENTIAL_ENDPOINTS, GarminSource
 from .health import probe
 from .intervals import IntervalsClient
-from .store import Store, single_instance
+from .store import InstanceBusy, Store, single_instance
 from .sync import sync_activities, sync_enrich, sync_wellness, watch_once
 
 
@@ -64,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--force-wellness", action="store_true", help="Re-fetch days already fetched")
     backfill.add_argument("--endpoints", choices=["essential", "all"], default="essential",
                           help="Wellness: per-day measurement endpoints only (default) or every endpoint")
+    backfill.add_argument("--from-archive", action="store_true",
+                          help="Wellness: map the locally archived snapshots instead of asking Garmin "
+                               "(completes the past after the mapping gained fields; no Garmin requests)")
     charts = sub.add_parser("setup-charts", help="Create private Intervals fitness charts for the synced "
                                                  "Garmin values (dry run unless --apply)")
     charts.add_argument("--apply", action="store_true")
@@ -97,8 +101,19 @@ def main(argv: list[str] | None = None) -> int:
         lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync",)
                        else ("wellness",) if scope == "wellness"
                        else ("health",) if args.cmd == "health"
+                       else () if args.cmd == "status"                  # reads only
                        else ("activities",))
-        with single_instance(settings.data_dir, lock_scopes):
+        locks = ExitStack()
+        try:
+            locks.enter_context(single_instance(settings.data_dir, lock_scopes))
+        except InstanceBusy as exc:
+            if args.cmd == "watch":
+                # The sync or a backfill holds the activities lock for a while: that is not a
+                # failure of the watch, the next poll comes in a minute (no OnFailure alert).
+                log.info("%s; this poll is skipped", exc)
+                return 0
+            raise
+        with locks:
             store = Store(settings.data_dir)
             try:
                 if args.cmd == "status":
@@ -127,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"apply": args.apply, "missing_codes": fields}, indent=2))
                     return 0
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                if args.cmd != "watch":
+                if args.cmd != "watch" and not (args.cmd == "backfill" and args.from_archive):
                     garmin.login(interactive=False)      # fail early for one-off commands
                 if args.cmd == "gap":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
@@ -193,12 +208,17 @@ def main(argv: list[str] | None = None) -> int:
                         raise ValueError("--from must not be after --to")
                     if args.scope == "wellness":
                         days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
-                        log.info("Backfill wellness: %d days, %s Garmin requests each, %.1fs pause", len(days),
-                                 len(ESSENTIAL_ENDPOINTS) if args.endpoints == "essential" else "~23", args.pause)
-                        endpoints = ESSENTIAL_ENDPOINTS if args.endpoints == "essential" else None
+                        if args.from_archive:
+                            log.info("Backfill wellness from the archive: %d days, no Garmin requests", len(days))
+                        else:
+                            log.info("Backfill wellness: %d days, %s Garmin requests each, %.1fs pause", len(days),
+                                     len(ESSENTIAL_ENDPOINTS) if args.endpoints == "essential" else "~22",
+                                     args.pause)
+                        endpoints = ESSENTIAL_ENDPOINTS if args.endpoints == "essential" else tuple(DAY_ENDPOINTS)
                         out = sync_wellness(settings, garmin, intervals, store, apply=args.apply,
-                                            force=args.force_wellness, days=days, pause_seconds=args.pause,
-                                            endpoints=endpoints)
+                                            force=args.force_wellness, days=days,
+                                            pause_seconds=0 if args.from_archive else args.pause,
+                                            endpoints=endpoints, from_archive=args.from_archive)
                     else:
                         log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause",
                                  start, end, args.pause)

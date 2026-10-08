@@ -30,7 +30,7 @@ class GarminFake:
         self.download_count += 1
         return minimal_fit()
 
-    def snapshot(self, day):
+    def snapshot(self, day, endpoints=None):
         return sample()
 
 
@@ -138,7 +138,8 @@ def test_wellness_dryrun_does_not_write(tmp_path):
     assert result["days_with_changes"] == 2
     assert not i.wellness_writes
     assert i.provision_calls and all(not apply for apply, _ in i.provision_calls)
-    assert st.wellness_recent(date(2026, 10, 8), 8) is False
+    fetched, written = st.wellness_state(date(2026, 10, 8))
+    assert fetched is not None and written is None          # read counts for the throttle, nothing written
     st.close()
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import getpass
 import logging
+import re
 import sys
 import time
 from datetime import date
@@ -23,11 +24,35 @@ class GarminBlocked(RuntimeError):
     """
 
 
+class GarminLoginNeeded(GarminBlocked):
+    """Tokens are missing or rejected: a person has to run `login`. Ends the run like a block."""
+
+
+# How many day endpoints may fail in a row before the day is treated as a Garmin outage.
+MAX_CONSECUTIVE_ENDPOINT_ERRORS = 3
+
+_TRANSIENT_NAMES = re.compile(r"TooManyRequests|Connection|Timeout|RemoteDisconnected|ProtocolError|MaxRetry")
+_TRANSIENT_TEXT = re.compile(r"API Error 5\d\d|5\d\d Server Error|timed out|Connection (aborted|reset|refused)")
+_BLOCK_TEXT = re.compile(r"(?<!\d)(401|429)(?!\d)")        # a status code, not digits inside an id
+
+
+def _chain(exc: BaseException):
+    seen: set[int] = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        yield exc
+        exc = exc.__cause__ or exc.__context__
+
+
 def _is_blocked(exc: BaseException) -> bool:
-    name = type(exc).__name__
-    text = str(exc)
-    return ("TooManyRequests" in name or "Authentication" in name
-            or "401" in text or "429" in text)
+    """Rate-limited or session rejected: the whole run must stop."""
+    return any("TooManyRequests" in type(e).__name__ or "Authentication" in type(e).__name__
+               or _BLOCK_TEXT.search(str(e)) for e in _chain(exc))
+
+
+def _is_transient(exc: BaseException) -> bool:
+    """Garmin unreachable or failing (5xx, timeouts, connection errors), nothing wrong with our session."""
+    return any(_TRANSIENT_NAMES.search(type(e).__name__) or _TRANSIENT_TEXT.search(str(e)) for e in _chain(exc))
 
 
 # Source snapshot: all available fields are retained in a *local* JSON archive.
@@ -37,7 +62,8 @@ DAY_ENDPOINTS = {
     "sleep": "get_sleep_data",
     "hrv": "get_hrv_data",
     "body_battery": "get_body_battery",
-    "morning_readiness": "get_morning_training_readiness",
+    # get_morning_training_readiness fetches the same URL as get_training_readiness and picks
+    # the morning entry; the mapping does that itself, so one request serves both.
     "training_readiness": "get_training_readiness",
     "training_status": "get_training_status",
     "endurance_score": "get_endurance_score",
@@ -64,7 +90,7 @@ DAY_ENDPOINTS = {
 # one costs a Garmin request per day.
 ESSENTIAL_ENDPOINTS = ("stats", "sleep", "hrv", "respiration", "spo2", "hydration",
                        "body_composition", "nutrition", "intensity_minutes", "stress",
-                       "body_battery", "morning_readiness")
+                       "body_battery", "training_readiness")
 
 
 class GarminSource:
@@ -78,17 +104,31 @@ class GarminSource:
         self.token_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.token_dir.chmod(0o700)
         try:
-            api = Garmin()
+            # No library retries: the bridge retries on its own schedule (timers, per-activity
+            # backoff), and four attempts per endpoint would multiply every outage.
+            api = Garmin(retry_attempts=0)
             api.login(str(self.token_dir))
             self.client = api
             return
-        except (GarminConnectAuthenticationError, FileNotFoundError):
-            if not interactive or not sys.stdin.isatty():
-                raise RuntimeError("Garmin login needed: run 'garmin-intervals-bridge login' "
-                                   "in an interactive terminal")
+        except FileNotFoundError as exc:
+            problem: BaseException = exc                       # no tokens yet
+        except GarminConnectAuthenticationError as exc:
+            # The library reports any failure of the first profile request as an authentication
+            # error, rate limits and outages included. Those are not a reason to log in again.
+            if _is_transient(exc) or any("TooManyRequests" in type(e).__name__ for e in _chain(exc)):
+                raise GarminBlocked(f"Garmin unreachable or rate-limiting during login: "
+                                    f"{type(exc.__cause__ or exc).__name__}") from exc
+            problem = exc
+        except Exception as exc:
+            if _is_blocked(exc) or _is_transient(exc):
+                raise GarminBlocked(f"Garmin unreachable during login: {type(exc).__name__}") from exc
+            raise
+        if not interactive or not sys.stdin.isatty():
+            raise GarminLoginNeeded("Garmin login needed: run 'garmin-intervals-bridge login' "
+                                    "in an interactive terminal") from problem
         email = input("Garmin Connect email: ").strip()
         password = getpass.getpass("Garmin Connect password: ")
-        api = Garmin(email=email, password=password,
+        api = Garmin(email=email, password=password, retry_attempts=1,
                      prompt_mfa=lambda: input("Garmin MFA code: ").strip())
         try:
             api.login(str(self.token_dir))
@@ -104,16 +144,29 @@ class GarminSource:
             self.login(interactive=False)
         return self.client
 
+    def _call(self, method: str, *args, **kwargs) -> Any:
+        """One Garmin request. A block (429, rejected session) ends the whole run instead of
+        being booked against whatever activity or day happened to be in progress."""
+        fn = getattr(self._client(), method)
+        try:
+            return fn(*args, **kwargs)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            if _is_blocked(exc):
+                raise GarminBlocked(f"Garmin API blocked request: {type(exc).__name__}") from exc
+            raise
+        finally:
+            time.sleep(self.delay)
+
     def activities(self, start: date, end: date) -> list[dict]:
-        result = self._client().get_activities_by_date(start.isoformat(), end.isoformat())
-        time.sleep(self.delay)
+        result = self._call("get_activities_by_date", start.isoformat(), end.isoformat())
         if not isinstance(result, list):
             raise ValueError("Unexpected Garmin activity response")
         return [x for x in result if isinstance(x, dict) and x.get("activityId") is not None]
 
     def activity(self, activity_id: int | str) -> dict:
-        result = self._client().get_activity(str(activity_id))
-        time.sleep(self.delay)
+        result = self._call("get_activity", str(activity_id))
         if not isinstance(result, dict) or result.get("activityId") is None:
             raise ValueError("Unexpected Garmin activity response")
         # get_activity() nests the start time differently from the list endpoint.
@@ -124,46 +177,44 @@ class GarminSource:
 
     def original_fit(self, activity_id: int | str) -> bytes:
         api = self._client()
-        try:
-            raw = api.download_activity(str(activity_id), dl_fmt=api.ActivityDownloadFormat.ORIGINAL)
-        except Exception as exc:
-            if _is_blocked(exc):
-                raise GarminBlocked(f"Garmin API blocked request: {type(exc).__name__}") from exc
-            raise
-        finally:
-            time.sleep(self.delay)
+        raw = self._call("download_activity", str(activity_id), dl_fmt=api.ActivityDownloadFormat.ORIGINAL)
         return extract_original_fit(raw)
 
     def snapshot(self, day: date, endpoints: tuple[str, ...] | None = None) -> dict:
         """Fetch the day endpoints (all, or a named subset), preserving raw responses locally.
 
         Individual unavailable endpoints are recorded as errors; 429/auth failures
-        abort the day to avoid hammering Garmin or masking an expired session.
+        abort the day to avoid hammering Garmin or masking an expired session, and so
+        does a run of consecutive failures, which means Garmin itself is down.
         """
         raw: dict = {"date": day.isoformat(), "data": {}, "errors": {}}
+        consecutive = 0
         for key, method in DAY_ENDPOINTS.items():
             if endpoints is not None and key not in endpoints:
                 continue
-            fn = getattr(self._client(), method, None)
-            if fn is None:
+            if not hasattr(self._client(), method):
                 raw["errors"][key] = "MethodNotAvailable"
                 continue
             try:
                 if key == "race_predictions":
-                    result = fn(startdate=day.isoformat(), enddate=day.isoformat(), _type="daily")
+                    result = self._call(method, startdate=day.isoformat(), enddate=day.isoformat(), _type="daily")
                 elif key == "blood_pressure":
-                    result = fn(day.isoformat(), day.isoformat())
+                    result = self._call(method, day.isoformat(), day.isoformat())
                 elif key == "lactate_threshold":
-                    result = fn(latest=False, start_date=day.isoformat(), end_date=day.isoformat(), aggregation="daily")
+                    result = self._call(method, latest=False, start_date=day.isoformat(),
+                                        end_date=day.isoformat(), aggregation="daily")
                 else:
-                    result = fn(day.isoformat())
+                    result = self._call(method, day.isoformat())
                 raw["data"][key] = result
+                consecutive = 0
+            except GarminBlocked:
+                raise
             except Exception as exc:
                 name = type(exc).__name__
-                if _is_blocked(exc):
-                    raise GarminBlocked(f"Garmin API blocked request: {name}") from exc
                 raw["errors"][key] = name
                 log.warning("Garmin endpoint %s unavailable: %s", key, name)
-            finally:
-                time.sleep(self.delay)
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_ENDPOINT_ERRORS:
+                    raise GarminBlocked(f"{consecutive} Garmin endpoints failed in a row on {day} "
+                                        f"({name}); Garmin looks unavailable") from exc
         return raw

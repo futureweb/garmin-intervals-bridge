@@ -54,6 +54,33 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - `health`: daily probe of both services with a configurable stale window
   and alert mail; failure alerts for the timers (`deploy/`).
 
+### Fixed after the code review
+
+- A Garmin outage or rate limit at login time was reported as "login
+  needed" and, in the watcher, booked against the activity being processed.
+  It now ends the run as a Garmin block, and `health` tells the two apart.
+- The library's own retries (4 attempts per endpoint) are off; a day whose
+  endpoints fail three times in a row aborts the run instead of trying the
+  remaining twenty.
+- `watch` exits 0 when the sync or a backfill holds the activities lock; it
+  used to fail, which fired the alert unit and used up its throttle.
+- Dry runs now count as Garmin reads for the throttle, and the first
+  `--apply` maps the archived snapshot instead of fetching again.
+- Yesterday is re-read once after midnight and then every second refresh
+  period, older days once after midnight; refreshes within a day read only
+  the measurement endpoints. About 160 instead of 450 wellness requests a day.
+- `backfill --scope wellness --from-archive` completes the past from the
+  local archive after the mapping gained fields, without Garmin requests.
+- An activity that failed once and then succeeded no longer stays "failed"
+  in `status` and `health`.
+- Intervals `Retry-After` is capped at 30 s; custom items are read once per
+  process; Intervals activity ids are validated before they enter a URL.
+- Matching: a bare numeric `external_id` counts only for `GARMIN_CONNECT`
+  activities; Garmin's timer duration is compared with moving and elapsed
+  time; numeric-string select options are understood.
+- The alert unit template was committed empty; `deploy/` now ships it with
+  the install step for `gib-alert`.
+
 ### Known limitations
 
 - Writing streams sets `icu_intervals_edited` on the activity; the API

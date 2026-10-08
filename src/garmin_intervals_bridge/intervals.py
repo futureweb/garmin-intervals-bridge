@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,25 @@ from .mapping import CUSTOM_FIELDS
 
 log = logging.getLogger(__name__)
 
+RETRY_AFTER_CAP_SECONDS = 30
+
+
+class _CappedRetry(Retry):
+    """Honour Retry-After on 429, but never park a one-minute poll for longer than its
+    own timer period (urllib3 would otherwise sleep for up to six hours)."""
+
+    def get_retry_after(self, response):
+        value = super().get_retry_after(response)
+        return min(value, RETRY_AFTER_CAP_SECONDS) if value is not None else None
+
+
+def _activity_id(activity_id: int | str) -> str:
+    """Intervals activity ids look like `i12345678`; nothing else belongs in a URL path."""
+    text = str(activity_id).strip()
+    if not re.fullmatch(r"i?\d{1,20}", text):
+        raise ValueError("Intervals activity id must be digits with an optional leading 'i'")
+    return text
+
 
 class IntervalsClient:
     def __init__(self, api_key: str, athlete_id: str = "0", session: requests.Session | None = None):
@@ -25,10 +45,11 @@ class IntervalsClient:
         self.session = session or requests.Session()
         self.session.auth = ("API_KEY", api_key)
         self.session.headers["User-Agent"] = f"garmin-intervals-bridge/{__version__}"
+        self._custom_items: list[dict] | None = None     # one GET per process; writes invalidate it
         if session is None:
             # Only GET retries; never automatically replay a non-idempotent upload.
-            retries = Retry(total=3, backoff_factor=1, status_forcelist=[429, 502, 503, 504],
-                            allowed_methods=frozenset(["GET"]), respect_retry_after_header=True)
+            retries = _CappedRetry(total=3, backoff_factor=1, status_forcelist=[429, 502, 503, 504],
+                                   allowed_methods=frozenset(["GET"]), respect_retry_after_header=True)
             self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
     def _request(self, method: str, path: str, **kwargs) -> Any:
@@ -45,30 +66,30 @@ class IntervalsClient:
     # ---- single activities: /api/v1/activity/{id}... ----
 
     def activity(self, activity_id: str) -> dict:
-        obj = self._api("GET", f"/activity/{activity_id}")
+        obj = self._api("GET", f"/activity/{_activity_id(activity_id)}")
         if not isinstance(obj, dict):
             raise ValueError("Intervals activity API did not return an object")
         return obj
 
     def activity_file(self, activity_id: str) -> bytes:
         """The file Intervals received for this activity (for Garmin: the partner copy)."""
-        response = self.session.get(f"{self.root}/activity/{activity_id}/file", timeout=(10, 75))
+        response = self.session.get(f"{self.root}/activity/{_activity_id(activity_id)}/file", timeout=(10, 75))
         response.raise_for_status()
         return response.content
 
     def streams(self, activity_id: str, types: list[str] | None = None) -> list[dict]:
         params = {"types": ",".join(types)} if types else {}
-        obj = self._api("GET", f"/activity/{activity_id}/streams.json", params=params)
+        obj = self._api("GET", f"/activity/{_activity_id(activity_id)}/streams.json", params=params)
         if not isinstance(obj, list):
             raise ValueError("Intervals streams API did not return a list")
         return obj
 
     def put_streams(self, activity_id: str, streams: list[dict]) -> Any:
         """PUT /activity/{id}/streams with ActivityStream[]; returns UpdateStreamsResult."""
-        return self._api("PUT", f"/activity/{activity_id}/streams", json=streams)
+        return self._api("PUT", f"/activity/{_activity_id(activity_id)}/streams", json=streams)
 
     def update_activity(self, activity_id: str, fields: dict) -> Any:
-        return self._api("PUT", f"/activity/{activity_id}", json=fields)
+        return self._api("PUT", f"/activity/{_activity_id(activity_id)}", json=fields)
 
     def activities(self, oldest: date, newest: date, fields: list[str] | None = None,
                    limit: int | None = None) -> list[dict]:
@@ -137,20 +158,25 @@ class IntervalsClient:
         return {"created": response.status_code == 201, "items": items}
 
     def custom_items(self) -> list[dict]:
-        items = self._request("GET", "/custom-item")
-        if not isinstance(items, list):
-            raise ValueError("Intervals custom items response was not a list")
-        return items
+        if self._custom_items is None:
+            items = self._request("GET", "/custom-item")
+            if not isinstance(items, list):
+                raise ValueError("Intervals custom items response was not a list")
+            self._custom_items = items
+        return list(self._custom_items)
 
     def create_custom_item(self, item: dict) -> Any:
+        self._custom_items = None
         return self._request("POST", "/custom-item", json=item)
 
     def update_custom_item(self, item_id: int | str, item: dict) -> Any:
-        return self._request("PUT", f"/custom-item/{item_id}", json=item)
+        self._custom_items = None
+        return self._request("PUT", f"/custom-item/{int(item_id)}", json=item)
 
     def reorder_custom_items(self, items: list[dict]) -> Any:
         """PUT /custom-item-indexes: items with their `index` set. Needed after POST, which
         leaves every new item at index 0; the chart picker then shows none of them."""
+        self._custom_items = None
         return self._request("PUT", "/custom-item-indexes", json=items)
 
     def field_provision_plan(self) -> list[tuple[str, str]]:
@@ -181,6 +207,7 @@ class IntervalsClient:
                 content = {"code": code, "name": spec.name, "type": "numeric"}
                 if spec.units:
                     content["units"] = spec.units
+                self._custom_items = None
                 self._request("POST", "/custom-item", json={
                     "name": spec.name, "type": "INPUT_FIELD", "visibility": "PRIVATE",
                     "description": "Automatically imported from Garmin Connect by garmin-intervals-bridge.",

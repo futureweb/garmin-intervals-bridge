@@ -47,7 +47,7 @@ class WellnessGarmin:
     def __init__(self):
         self.days = []
 
-    def snapshot(self, day):
+    def snapshot(self, day, endpoints=None):
         self.days.append(day)
         return sample()
 

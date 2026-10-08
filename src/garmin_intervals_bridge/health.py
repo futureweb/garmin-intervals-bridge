@@ -35,13 +35,18 @@ DROPOUT_MIN_BASELINE = 5
 DROPOUT_MISSING_DAYS = 2
 
 
+def _today(settings: Any) -> date:
+    tz = getattr(settings, "timezone", None)
+    return datetime.now(tz).date() if tz else date.today()
+
+
 def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float | None = None) -> dict:
     now = now or time.time()
     stale_after = settings.stale_hours * 3600
     report: dict[str, Any] = {"stale_hours": settings.stale_hours, "services": {}, "findings": [], "exit": 0}
     for name, call in (("garmin", lambda: garmin.login(interactive=False)),
-                       ("intervals", lambda: intervals.activities(date.today() - timedelta(days=1), date.today(),
-                                                                   fields=["id"], limit=1))):
+                       ("intervals", lambda: intervals.activities(_today(settings) - timedelta(days=1),
+                                                                   _today(settings), fields=["id"], limit=1))):
         entry: dict[str, Any] = {}
         try:
             call()
@@ -96,7 +101,8 @@ def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) 
     snapshots = []
     for path in days:
         try:
-            snapshots.append(json.load(open(path)))
+            with open(path, encoding="utf-8") as fh:
+                snapshots.append(json.load(fh))
         except (OSError, ValueError):
             continue
     if len(snapshots) >= ENDPOINT_ERROR_DAYS:

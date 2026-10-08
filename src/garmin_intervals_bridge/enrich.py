@@ -39,19 +39,25 @@ def match_activity(garmin: dict, remote: list[dict]) -> dict | None:
     for item in remote:
         if not isinstance(item, dict) or not item.get("id"):
             continue
-        if external_id_names(item.get("external_id"), gid):
+        source = str(item.get("source") or "").upper()
+        external = str(item.get("external_id") or "")
+        # A bare number is only Garmin's id when the official sync wrote it; `garmin:<id>` and
+        # `<id>_ACTIVITY.fit` are specific enough on their own.
+        if external_id_names(external, gid) and (source == "GARMIN_CONNECT" or not external.isdecimal()):
             return item
-        if str(item.get("source") or "").upper() != "GARMIN_CONNECT":
+        if source != "GARMIN_CONNECT":
             continue
         remote_start = parse_utc(item.get("start_date"))
         if remote_start is None:
             continue
         if abs((remote_start - start).total_seconds()) > START_TOLERANCE_SECONDS:
             continue
-        remote_duration = item.get("elapsed_time") or item.get("moving_time")
-        if isinstance(duration, (int, float)) and isinstance(remote_duration, (int, float)):
+        # Garmin's `duration` is timer time: compare with moving and elapsed time, either may agree.
+        remote_durations = [item.get(k) for k in ("moving_time", "elapsed_time")
+                            if isinstance(item.get(k), (int, float))]
+        if isinstance(duration, (int, float)) and remote_durations:
             allowed = max(DURATION_TOLERANCE_SECONDS, DURATION_TOLERANCE * float(duration))
-            if abs(float(remote_duration) - float(duration)) > allowed:
+            if all(abs(float(r) - float(duration)) > allowed for r in remote_durations):
                 continue
         return item
     return None
@@ -240,6 +246,16 @@ def _parse_conversion(script: str | None, code: str) -> tuple[tuple, bool] | Non
     return steps, zero_is_null
 
 
+def _number(value: Any) -> float | None:
+    """Select options carry their value as a number or as a numeric string."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
     """Derive what to write, and from where, out of the athlete's custom item definitions."""
     out = FieldMappings()
@@ -269,8 +285,8 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
                 source = f"session:{src}"
             select_values = None
             if content.get("type") == "select" and isinstance(content.get("options"), list):
-                select_values = tuple(float(o["value"]) for o in content["options"]
-                                      if isinstance(o, dict) and isinstance(o.get("value"), (int, float)))
+                select_values = tuple(v for o in content["options"]
+                                      if isinstance(o, dict) and (v := _number(o.get("value"))) is not None)
             out.scalars.append(ScalarMapping(code, source, convert, select_values, zero_is_null))
         elif kind == "ACTIVITY_STREAM":
             src = content.get("fit_record_field")

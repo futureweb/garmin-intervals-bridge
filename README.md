@@ -206,7 +206,7 @@ The compose service is deliberately not an always-on daemon; schedule
 | `BRIDGE_TIMEZONE` | `Europe/Vienna` | Your local day boundary |
 | `BRIDGE_ACTIVITY_LOOKBACK_DAYS` | `4` | `sync` window for activities (1–30) |
 | `BRIDGE_WELLNESS_LOOKBACK_DAYS` | `3` | `sync` window for wellness (1–30) |
-| `BRIDGE_WELLNESS_REFRESH_HOURS` | `8` | Do not re-fetch a day within this window |
+| `BRIDGE_WELLNESS_REFRESH_HOURS` | `4` | Re-read today this often; yesterday once after midnight and then every second period; older days once after midnight |
 | `BRIDGE_WELLNESS_PROFILE` | `recommended` | `recommended` or `all` custom fields |
 | `BRIDGE_GARMIN_REQUEST_DELAY` | `0.5` | Seconds between Garmin requests (minimum 0.25) |
 | `BRIDGE_STALE_HOURS` | `24` | `health` alerts once a service has failed this long |
