@@ -38,7 +38,7 @@ CHARTS: list[dict[str, Any]] = [
              None, "#009E0040", "#009E00FF", "", "score"),
             ("custom", "GarminRecoveryTimeMinutes", "Recov.", "line", "none",
              None, "#D6272800", "#D62728FF", "", "minutes"),
-            ("custom", "GarminAcuteLoad", "Load7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF", "", "load"),
+            ("custom", "GarminAcuteLoad", "Load7d", "line", "fill_in", None, "#1F77B400", "#1F77B4FF", "", "load"),
         ],
     },
     {
@@ -141,7 +141,8 @@ CHARTS: list[dict[str, Any]] = [
         "height": 180,
         "plots": [
             ("native", "vo2max", "vo2max", "dec1", "VO2run", "line", "fill_in", None, "#1F77B400", "#1F77B4FF"),
-            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "fill_in", None, "#9467BD00", "#9467BDFF", "", "vo2max"),
+            ("custom", "GarminVO2MaxCycling", "VO2bike", "line", "fill_in", None, "#9467BD00", "#9467BDFF", "",
+             "vo2max"),
             # fill_in carries the last value over days without one, so the legend never shows "?"
             # (a moving average would smooth the steps but leaves the legend empty on such days).
             ("custom", "GarminFitnessAge", "FitAge", "line", "fill_in", None, "#7F7F7F00", "#7F7F7FFF", "", "years"),
@@ -223,7 +224,7 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             ("native", "hrv", "ms", "dec0", "HRV", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
             ("custom", "GarminHRV5MinHigh", "5min", "dot", "none", None, "#9467BD66", "#9467BDFF", ""),
-            ("custom", "GarminHRV7DayAvg", "7d avg", "line", "none", None, "#2CA02C00", "#2CA02CFF", ""),
+            ("custom", "GarminHRV7DayAvg", "7d avg", "line", "fill_in", None, "#2CA02C00", "#2CA02CFF", ""),
         ],
     },
 ]
