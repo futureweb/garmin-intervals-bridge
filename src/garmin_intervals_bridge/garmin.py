@@ -34,7 +34,9 @@ MAX_CONSECUTIVE_ENDPOINT_ERRORS = 3
 _TRANSIENT_NAMES = re.compile(r"Timeout|RemoteDisconnected|ProtocolError|MaxRetry|ConnectionReset")
 _TRANSIENT_TEXT = re.compile(r"timed out|Connection (aborted|reset|refused)|Max retries exceeded")
 _BLOCK_TEXT = re.compile(r"(?<!\d)(401|429)(?!\d)")        # a status code, not digits inside an id
-_STATUS_TEXT = re.compile(r"(?<!\d)([45]\d\d)(?!\d)")
+# "API Error 404", "429 Client Error", "status 503": a status code in the message, not a port
+# number or an id (the library's connection errors mention "port=443").
+_STATUS_TEXT = re.compile(r"(?:API Error|[Ss]tatus(?: code)?:?|HTTP)\s*([45]\d\d)(?!\d)|(?<![\w=:])([45]\d\d) (?:Client|Server) Error")
 
 
 def _chain(exc: BaseException):
@@ -58,7 +60,7 @@ def _status_code(exc: BaseException) -> int | None:
             if isinstance(candidate, int):
                 return candidate
     m = _STATUS_TEXT.search(str(exc))
-    return int(m.group(1)) if m else None
+    return int(m.group(1) or m.group(2)) if m else None
 
 
 def _is_transient(exc: BaseException) -> bool:

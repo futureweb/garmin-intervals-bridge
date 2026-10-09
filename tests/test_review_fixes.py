@@ -455,3 +455,13 @@ def test_account_snapshot_collects_every_section(tmp_path):
     assert raw["data"]["device_settings"]["99"]["ok"] == "get_device_settings"
     assert raw["data"]["gear_stats"]["g1"]["ok"] == "get_gear_stats"
     assert raw["errors"] == {"training_plans": "RuntimeError"}
+
+
+def test_status_code_comes_from_the_message_not_from_a_port_number():
+    from garmin_intervals_bridge.garmin import _is_transient, _status_code
+    reset = RuntimeError("Connection error: HTTPSConnectionPool(host='connectapi.garmin.com', port=443): "
+                         "Read timed out. (read timeout=15)")
+    assert _status_code(reset) is None and _is_transient(reset)
+    assert _status_code(RuntimeError("API Error 404 Not Found")) == 404
+    assert _status_code(RuntimeError("429 Client Error: Too Many Requests")) == 429
+    assert _status_code(RuntimeError("Activity 2442901 not found")) is None
