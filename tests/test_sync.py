@@ -197,6 +197,15 @@ def run(tmp_path, st, g, i, **kw):
     return sync_activities(settings(tmp_path), g, i, st, today=date(2026, 10, 8), **kw)
 
 
+def test_upload_mode_completes_the_local_mirror(tmp_path):
+    st, g, i = Store(tmp_path), FlakyGarmin(), IntervalsFake()
+    out = run(tmp_path, st, g, i)
+    assert out["archived"] == 3 and out["archive_failed"] == 0
+    assert all(st.activity_extras_path(x).is_file() for x in ("41", "42", "43"))
+    assert run(tmp_path, st, g, i)["archived"] == 0
+    st.close()
+
+
 def test_one_failing_download_does_not_block_the_others(tmp_path):
     st = Store(tmp_path)
     g, i = FlakyGarmin(fail_ids=[42]), IntervalsFake()

@@ -16,7 +16,7 @@ def settings(tmp_path):
 class GarminFake:
     def __init__(self):
         self.acts = [{"activityId": 42, "startTimeGMT": "2026-10-07 08:00:00", "duration": 3.0}]
-        self.downloads = 0
+        self.downloads, self.details, self.extras_calls = 0, 0, 0
 
     def activities(self, start, end, fields=None, limit=None):
         return self.acts
@@ -24,6 +24,14 @@ class GarminFake:
     def original_fit(self, gid):
         self.downloads += 1
         return build_fit(records=3, training_effect=3.2)       # the device original
+
+    def activity(self, gid):
+        self.details += 1
+        return next(a for a in self.acts if str(a["activityId"]) == str(gid))
+
+    def activity_extras(self, activity):
+        self.extras_calls += 1
+        return {"weather": {"temp": 12}, "gear": None, "exercise_sets": None, "errors": {}}
 
 
 class IntervalsFake:
@@ -87,6 +95,35 @@ def test_scheduled_enrich_waits_for_the_official_import(tmp_path):
     m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
     assert m["unmatched"] == 1 and m["failed"] == 0 and i.updates == []
     assert st.failed_activities() == []                        # not an error, just not yet
+    st.close()
+
+
+def test_scheduled_enrich_completes_the_local_mirror(tmp_path):
+    st, g, i = Store(tmp_path), GarminFake(), IntervalsFake()
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert m["archived"] == 1 and g.details == 1 and g.extras_calls == 1
+    assert st.activity_json_path("42").is_file() and st.activity_extras_path("42").is_file()
+    again = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert again["archived"] == 0 and g.details == 1 and g.extras_calls == 1       # nothing is asked twice
+    st.close()
+
+
+def test_archive_waits_for_the_extras_of_a_fresh_activity(tmp_path):
+    from datetime import datetime, timezone
+
+    from garmin_intervals_bridge.sync import archive_activity
+    st, g = Store(tmp_path), GarminFake()
+    activity = g.acts[0]
+    g.activity_extras = lambda a: {"weather": None, "gear": None, "exercise_sets": None,
+                                   "errors": {"weather": "HTTPError"}}
+    just_after = datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)
+    assert archive_activity("42", activity, g, st, now=just_after) == "pending"
+    assert st.activity_json_path("42").is_file() and not st.activity_extras_path("42").is_file()
+    assert archive_activity("42", activity, g, st, now=just_after) == "pending"      # asked again next pass
+    days_later = datetime(2026, 10, 10, 9, 0, tzinfo=timezone.utc)
+    assert archive_activity("42", activity, g, st, now=days_later) == "archived"     # Garmin never filled it in
+    assert st.activity_extras_path("42").is_file()
+    assert archive_activity("42", activity, g, st, now=days_later) == "on_disk"
     st.close()
 
 

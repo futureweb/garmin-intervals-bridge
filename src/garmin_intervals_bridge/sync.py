@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 from .config import Settings
@@ -49,6 +49,60 @@ def _garmin_day(garmin: dict) -> date:
     if ts is None:
         raise ValueError("Activity missing startTimeGMT")
     return ts.date()
+
+
+ARCHIVE_SETTLE_DAYS = 2     # Garmin attaches weather and gear to a fresh activity a little after the upload
+
+
+def archive_activity(gid: str, activity: dict, garmin: Any, store: Store, *, now: datetime | None = None) -> str:
+    """Complete the local mirror of one activity: the recording itself, Garmin's own
+    summary of it (names what the FIT only numbers) and what is not in the file at
+    all (weather, gear, exercise sets).
+
+    Returns `on_disk`, `archived` or `pending`: extras that came back incomplete
+    for a fresh activity are not kept, the next pass asks again. Older activities
+    keep whatever Garmin still has.
+    """
+    path, meta, extras = store.fit_path(gid), store.activity_json_path(gid), store.activity_extras_path(gid)
+    if path.is_file() and meta.is_file() and extras.is_file():
+        return "on_disk"
+    if not path.is_file():
+        store.atomic_save(path, garmin.original_fit(gid))
+    if not meta.is_file():
+        store.save_activity_json(gid, garmin.activity(gid))
+    if not extras.is_file():
+        found = garmin.activity_extras(activity)
+        started = _time(activity.get("startTimeGMT"), garmin_gmt=True)
+        current = now or datetime.now(timezone.utc)
+        fresh = started is not None and current - started < timedelta(days=ARCHIVE_SETTLE_DAYS)
+        if found.get("errors") and fresh:
+            log.info("Extras of %s not complete yet (%s); asking again next run",
+                     gid, ", ".join(sorted(found["errors"])))
+            return "pending"
+        store.save_activity_extras(gid, found)
+    return "archived"
+
+
+def _complete_archive(gid: str, activity: dict, garmin: Any, store: Store, metrics: dict) -> str:
+    """The regular runs keep the mirror complete for every activity they handle, so
+    `--archive-only` is only ever needed for the past. A failure here is logged and
+    tried again next run, never held against the activity: the enrichment or upload
+    it belongs to has already succeeded.
+    """
+    try:
+        state = archive_activity(gid, activity, garmin, store)
+    except GarminBlocked:
+        raise
+    except Exception as exc:
+        metrics["archive_failed"] += 1
+        log.warning("Archiving the summary of %s failed with %s; next run tries again", gid, type(exc).__name__)
+        return "failed"
+    if state == "archived":
+        metrics["archived"] += 1
+        log.info("Archived summary and extras of %s", gid)
+    elif state == "pending":
+        metrics["archive_pending"] += 1
+    return state
 
 
 def _sync_one_activity(activity: dict, gid: str, garmin: Any, intervals: Any, store: Store,
@@ -121,7 +175,8 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
         start = current - timedelta(days=lookback - 1)
     activities = garmin.activities(start, current)
     metrics = {"seen": 0, "downloaded": 0, "remote_exists": 0, "uploaded": 0, "pending": 0,
-               "would_upload": 0, "skipped": 0, "deferred": 0, "failed": 0}
+               "would_upload": 0, "skipped": 0, "deferred": 0, "failed": 0,
+               "archived": 0, "archive_pending": 0, "archive_failed": 0}
     # Never rely solely on the hash of partner-filtered and original FIT files.
     remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1))
     for activity in sorted(activities, key=lambda a: str(a.get("startTimeGMT") or "")):
@@ -146,7 +201,9 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
             before = metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"]
             _sync_one_activity(activity, gid, garmin, intervals, store, remote, metrics,
                                apply=apply, allow_upload=allow_upload)
-            if pause_seconds and metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"] > before:
+            asked = _complete_archive(gid, activity, garmin, store, metrics) != "on_disk"
+            moved = metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"] > before
+            if pause_seconds and (asked or moved):
                 time.sleep(pause_seconds)
         except GarminBlocked:
             raise
@@ -185,7 +242,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     activities = garmin.activities(start, current)
     metrics = {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
                "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
-               "fields_written": 0, "streams_written": 0, "archived": 0, "on_disk": 0}
+               "fields_written": 0, "streams_written": 0, "archived": 0, "on_disk": 0,
+               "archive_pending": 0, "archive_failed": 0}
     if not archive_only:
         remote = intervals.activities(start - timedelta(days=1), current + timedelta(days=1),
                                       fields=["id", "external_id", "source", "start_date", "moving_time",
@@ -204,27 +262,21 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             continue
         try:
             if archive_only:
-                # the recording itself, Garmin's own summary of it (names what the FIT only numbers),
-                # and what is not in the file at all: weather, gear, exercise sets
-                path, meta, extras = store.fit_path(gid), store.activity_json_path(gid), store.activity_extras_path(gid)
-                if path.is_file() and meta.is_file() and extras.is_file():
+                state = archive_activity(gid, activity, garmin, store)
+                if state == "on_disk":
                     metrics["on_disk"] += 1
                     continue
-                if not path.is_file():
-                    store.atomic_save(path, garmin.original_fit(gid))
-                if not meta.is_file():
-                    store.save_activity_json(gid, garmin.activity(gid))
-                if not extras.is_file():
-                    store.save_activity_extras(gid, garmin.activity_extras(activity))
-                metrics["archived"] += 1
-                log.info("Archived original of %s (%s)", gid, str(activity.get("startTimeLocal") or "")[:10])
+                metrics["archived" if state == "archived" else "archive_pending"] += 1
+                if state == "archived":
+                    log.info("Archived original of %s (%s)", gid, str(activity.get("startTimeLocal") or "")[:10])
                 if pause_seconds:
                     time.sleep(pause_seconds)
                 store.clear_failure(gid)
                 continue
             result = enrich_activity(gid, garmin, intervals, store, apply=apply,
                                      remote_candidates=remote, mappings=mappings)
-            if pause_seconds and result["outcome"] not in ("already_enriched",):
+            asked = _complete_archive(gid, activity, garmin, store, metrics) != "on_disk"
+            if pause_seconds and (asked or result["outcome"] not in ("already_enriched",)):
                 time.sleep(pause_seconds)
         except GarminBlocked:
             raise

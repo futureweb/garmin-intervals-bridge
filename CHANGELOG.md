@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The regular enrich and upload runs now archive Garmin's summary, weather,
+  gear and exercise sets of every activity they handle. Before, only
+  `backfill --archive-only` did, so a mirror built once drifted as new
+  activities came in (the recording was kept, the rest was not). Extras that
+  Garmin has not attached yet to a fresh activity are asked for again on the
+  next run instead of being archived as empty.
+- Exercise sets are also fetched when the activity comes from the detail
+  endpoint (`activityTypeDTO`), not only from the list.
+
 ## 0.2.1 — 2026-10-09
 
 The day Garmin's new partner terms surfaced: Intervals expects to have to

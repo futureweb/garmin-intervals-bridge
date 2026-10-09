@@ -68,6 +68,12 @@ badges, workouts, training plans) as `raw/account/<date>.json`;
 `garmin-intervals-bridge-account.timer` runs it monthly. Nothing is ever deleted; later fields or other
 targets can be fed from the archive without asking Garmin again.
 
+The regular runs keep the mirror complete on their own: the watch fetches the
+recording of a new activity, the next half-hourly sync adds its summary and
+extras (in upload mode the upload run does both), so `--archive-only` is only
+ever needed for the past. Weather and gear that Garmin has not attached yet
+are asked for again on the next run during the activity's first two days.
+
 Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and
 activities already handled are skipped.

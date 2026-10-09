@@ -256,7 +256,9 @@ class GarminSource:
         """What Garmin knows about an activity beyond the recording: weather, gear, exercise sets."""
         gid = str(activity.get("activityId"))
         out: dict = {"weather": None, "gear": None, "exercise_sets": None, "errors": {}}
-        type_key = str(((activity.get("activityType") or {}).get("typeKey")) or "")
+        # the list endpoint says activityType, the detail endpoint activityTypeDTO
+        kind = activity.get("activityType") or activity.get("activityTypeDTO") or {}
+        type_key = str(kind.get("typeKey") or "") if isinstance(kind, dict) else ""
         calls = [("weather", "get_activity_weather"), ("gear", "get_activity_gear")]
         if any(t in type_key for t in SET_ACTIVITY_TYPES):
             calls.append(("exercise_sets", "get_activity_exercise_sets"))
