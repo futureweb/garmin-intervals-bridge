@@ -1,5 +1,7 @@
 services:
   bridge:
+    # the published image (amd64 + arm64); `docker compose build` still works from the source
+    image: ghcr.io/futureweb/garmin-intervals-bridge:latest
     build: .
     init: true
     env_file: .env

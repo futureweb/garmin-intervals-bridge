@@ -213,13 +213,20 @@ keeps polling Intervals every minute, does a full run every 30 minutes and
 a health probe once a day, all in one process. A step-by-step guide for
 non-technical users is in [docs/WINDOWS.md](docs/WINDOWS.md).
 
-**Docker / Podman:** the image runs as a non-root user and takes the same
-environment variables.
+**Docker / Podman:** a ready-made image is on the GitHub Container Registry,
+`ghcr.io/futureweb/garmin-intervals-bridge` (tags `latest` and the version,
+amd64 and arm64, so it runs on a NAS too). It runs as a non-root user and
+takes the same environment variables; without compose:
+
+```bash
+docker run --rm -it -v $PWD/data:/data -e INTERVALS_API_KEY=... ghcr.io/futureweb/garmin-intervals-bridge login
+docker run --rm    -v $PWD/data:/data -e INTERVALS_API_KEY=... ghcr.io/futureweb/garmin-intervals-bridge sync --apply
+```
 
 ```bash
 cp .env.example .env            # fill INTERVALS_API_KEY
 mkdir -p data && chown 10001:10001 data
-docker compose build
+docker compose pull             # ghcr.io/futureweb/garmin-intervals-bridge (amd64 + arm64); or: docker compose build
 docker compose run --rm bridge login
 docker compose run --rm bridge enrich --activity-id <garmin id>
 docker compose run --rm bridge sync --apply

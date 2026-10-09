@@ -1,0 +1,57 @@
+# Container image on the GitHub Container Registry, for amd64 and arm64 (NAS boxes).
+# A release publishes <version> and latest; the manual trigger builds any ref.
+# Docker Hub: set the repository variable DOCKERHUB_IMAGE (e.g. futureweb/garmin-intervals-bridge)
+# and the secrets DOCKERHUB_USERNAME / DOCKERHUB_TOKEN, and the same image is pushed there too.
+name: Container image
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Image tag to publish (e.g. 0.2.0); the ref the workflow runs on is built"
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Docker Hub (optional)
+        if: ${{ vars.DOCKERHUB_IMAGE != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Image tags
+        id: tags
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then v="${GITHUB_REF_NAME#v}"; else v="${{ inputs.tag }}"; fi
+          tags="ghcr.io/${{ github.repository }}:${v},ghcr.io/${{ github.repository }}:latest"
+          if [ -n "${{ vars.DOCKERHUB_IMAGE }}" ]; then tags="${tags},${{ vars.DOCKERHUB_IMAGE }}:${v},${{ vars.DOCKERHUB_IMAGE }}:latest"; fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=Puts back what Garmin strips from the FIT files it sends to Intervals.icu, and syncs the wellness data the official sync misses
+            org.opencontainers.image.licenses=MIT
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

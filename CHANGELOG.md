@@ -40,7 +40,7 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - Per-scope instance locks, so a long wellness backfill does not stall the
   activity watcher.
 - Hardened systemd units (`deploy/`), container image smoke-tested with
-  Podman, CI with ruff, pip-audit and pytest.
+  Podman and published to ghcr.io (amd64 + arm64), CI with ruff, pip-audit and pytest.
 
 - `setup-charts`: nineteen private fitness charts for the synced values, using
   Intervals' real chart field ids (read from its app bundle), unique item
