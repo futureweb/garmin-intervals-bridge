@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.2.1 — 2026-10-09
+
+The day Garmin's new partner terms surfaced: Intervals expects to have to
+block Garmin-sourced data in its API; files an athlete uploads are expected
+to stay accessible. This release makes the bridge's upload mode the
+first-class answer and completes the local mirror.
+
+### Added
+
+- **Upload mode, first-class and live-verified.** `run --mode upload` polls
+  Garmin every ten minutes and uploads the original of every new activity
+  as the athlete's own file; `backfill --scope activities --mode upload`
+  does the same for the past; a 10-minute upload timer in `deploy/`.
+  Intervals computes every custom field and stream from the complete file
+  itself, nothing is flagged as edited.
+- A complete local mirror: eight more daily endpoints in the archive
+  (all-day heart rate, intraday steps and floors, Body Battery and all-day
+  events, four-week load balance, resting HR course, daily training status),
+  `--endpoints` takes a list of keys to add to days fetched earlier,
+  `backfill --scope activities --archive-only` downloads every original FIT
+  plus Garmin's summary, weather, gear and exercise sets without touching
+  Intervals, and `snapshot-account` archives profile, settings, devices,
+  zones, gear, personal records, badges, workouts and training plans.
+- Container image on ghcr.io (amd64 + arm64), built by GitHub Actions on
+  every release; compose pulls it.
+- Monthly `snapshot-account` timer in `deploy/`.
+- README: legal note (your account, your data, Garmin's terms, trademarks),
+  how login works in the container, screenshots.
+
+### Changed
+
+- Readiness: the score is the morning's, recovery time and acute load are
+  the day's last reading (a hard session shows its recovery on its own day);
+  `GarminRecoveryTimeHours` backs the chart; `backfill --rewrite` replaces
+  the bridge's own `Garmin…` values from the archive after such a correction.
+- VO₂max is written once the day is over, weigh-ins the same day, an
+  unlogged hydration day stays empty, floors are whole numbers.
+- Weight in the charts as a 7-day average; daily weigh-ins as dots.
+
+### Fixed
+
+- Chained FIT files (two complete files back to back in one Garmin
+  original) are accepted and decoded together.
+- A 4xx answer from a Garmin endpoint that did not exist for an old date no
+  longer counts as an outage; a port number in an error message is no longer
+  read as an HTTP status.
+- The scheduled sync does the free scope while a backfill holds the other,
+  instead of failing (and alerting).
+
 ## 0.2.0 — 2026-10-08
 
 First version used in anger. Everything below was verified against a live
@@ -40,7 +89,7 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - Per-scope instance locks, so a long wellness backfill does not stall the
   activity watcher.
 - Hardened systemd units (`deploy/`), container image smoke-tested with
-  Podman and published to ghcr.io (amd64 + arm64), CI with ruff, pip-audit and pytest.
+  Podman, CI with ruff, pip-audit and pytest.
 
 - `setup-charts`: nineteen private fitness charts for the synced values, using
   Intervals' real chart field ids (read from its app bundle), unique item
@@ -56,14 +105,6 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
 - `run`: the three timers in one long-running process, for Windows and
   anything without systemd; `.env` file support; file locks on Windows;
   `python -m garmin_intervals_bridge`. Step-by-step Windows guide.
-- A complete local mirror: eight more daily endpoints in the archive
-  (all-day heart rate, intraday steps and floors, Body Battery and all-day
-  events, four-week load balance, resting HR course, daily training status),
-  `--endpoints` takes a list of keys to add to days fetched earlier,
-  `backfill --scope activities --archive-only` downloads every original FIT
-  plus Garmin's summary, weather, gear and exercise sets without touching
-  Intervals, and `snapshot-account` archives profile, settings, devices,
-  zones, gear, personal records, badges, workouts and training plans.
 
 ### Fixed after the code review
 
@@ -101,15 +142,6 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
   day); a short activity window costs one Garmin request instead of two;
   the enrich candidate list is fetched with a field list; FIT downloads are
   capped at 32 MB.
-
-### Upload mode, live-verified (2026-10-09)
-
-Garmin's partner terms bar Intervals from passing Garmin-sourced data on
-through its own API. Upload mode (official import off, originals uploaded
-as the athlete's own files) is the answer and was verified live: Intervals
-computes every custom field and stream from the complete file itself,
-nothing is flagged as edited. `run --mode upload` and a 10-minute upload
-timer in `deploy/`.
 
 ### Known limitations
 
