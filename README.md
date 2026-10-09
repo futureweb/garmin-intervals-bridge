@@ -283,6 +283,24 @@ file named by `BRIDGE_ENV_FILE`); variables already set always win.
   in Intervals' one-value-per-day wellness model; they stay in the raw
   archive.
 
+## Troubleshooting
+
+| Symptom | Meaning |
+| --- | --- |
+| `Garmin login needed` | Run `login` interactively in the same environment the service uses. |
+| `429` during `login` | The mobile login path was refused; the web path usually follows. Do not retry in a loop. |
+| `Another bridge instance is running (wellness)` | A backfill holds that scope's lock; activities keep running. |
+| `outcome: unmatched` | The official import has not created the activity yet; the next run looks again. |
+| `status` lists a *pending* upload | Upload mode: the request's outcome is unknown. Check Intervals before `reset-pending`. |
+| `203/EXEC Permission denied` under systemd | SELinux: the virtualenv must not live under a web document root. |
+
+## Security and privacy
+
+Read [SECURITY.md](SECURITY.md). In short: no passwords stored,
+tokens and the API key readable by the service user only, the data
+directory is personal (routes, health data) and must never be committed or
+shared, dry run by default, no deletions ever.
+
 ## Legal note
 
 - The bridge signs in to Garmin Connect with **your** credentials and reads **your** data
@@ -301,24 +319,6 @@ file named by `BRIDGE_ENV_FILE`); variables already set always win.
 - Independent hobby project: not affiliated with, endorsed by or supported by Garmin Ltd. or
   Intervals.icu. Garmin is a trademark of Garmin Ltd.; names are used only to describe
   compatibility. MIT licence: provided as is, without warranty of any kind.
-
-## Troubleshooting
-
-| Symptom | Meaning |
-| --- | --- |
-| `Garmin login needed` | Run `login` interactively in the same environment the service uses. |
-| `429` during `login` | The mobile login path was refused; the web path usually follows. Do not retry in a loop. |
-| `Another bridge instance is running (wellness)` | A backfill holds that scope's lock; activities keep running. |
-| `outcome: unmatched` | The official import has not created the activity yet; the next run looks again. |
-| `status` lists a *pending* upload | Upload mode: the request's outcome is unknown. Check Intervals before `reset-pending`. |
-| `203/EXEC Permission denied` under systemd | SELinux: the virtualenv must not live under a web document root. |
-
-## Security and privacy
-
-Read [SECURITY.md](SECURITY.md). In short: no passwords stored,
-tokens and the API key readable by the service user only, the data
-directory is personal (routes, health data) and must never be committed or
-shared, dry run by default, no deletions ever.
 
 ## Acknowledgements
 
