@@ -283,6 +283,25 @@ file named by `BRIDGE_ENV_FILE`); variables already set always win.
   in Intervals' one-value-per-day wellness model; they stay in the raw
   archive.
 
+## Legal note
+
+- The bridge signs in to Garmin Connect with **your** credentials and reads **your** data
+  through the same private endpoints the Garmin Connect web app uses. Garmin offers no
+  official API for personal use, and Garmin's [Terms of Use](https://www.garmin.com/en-US/legal/terms-of-use/)
+  prohibit automated access to the site. Using this tool is your decision and your risk; the
+  consequence Garmin's terms provide for is suspension of your Garmin account. No such case is
+  known for any of the long-standing open-source Garmin clients, but there is no guarantee.
+- Keep the load modest. The defaults – one download per new activity, a few wellness reads a
+  day, paced backfills – make the bridge behave like a person using the site. Don't shorten the
+  pauses to hammer the API; it would hurt everyone using tools like this one.
+- Everything the bridge fetches stays on your machine. Nothing leaves it except what you choose
+  to write into your own Intervals.icu account.
+- In the EU, the Data Act (Regulation (EU) 2023/2854) and the GDPR give you a right to the data
+  your device generates; this tool is one way of exercising it for your own use.
+- Independent hobby project: not affiliated with, endorsed by or supported by Garmin Ltd. or
+  Intervals.icu. Garmin is a trademark of Garmin Ltd.; names are used only to describe
+  compatibility. MIT licence: provided as is, without warranty of any kind.
+
 ## Troubleshooting
 
 | Symptom | Meaning |
@@ -307,7 +326,6 @@ shared, dry run by default, no deletions ever.
 Garmin's [FIT SDK](https://developer.garmin.com/fit/), the
 [Intervals.icu API](https://intervals.icu/api/v1/docs), and the
 [forum thread](https://forum.intervals.icu/t/garmin-fit-fields-not-coming-in-possible-garmin-is-filtering-data-prior-to-sending-to-intervals-icu/124287)
-that documented the problem. Independent hobby project, not affiliated with
-Garmin or Intervals.icu.
+that documented the problem.
 
 MIT licensed.
