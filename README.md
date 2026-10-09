@@ -213,6 +213,32 @@ keeps polling Intervals every minute, does a full run every 30 minutes and
 a health probe once a day, all in one process. A step-by-step guide for
 non-technical users is in [docs/WINDOWS.md](docs/WINDOWS.md).
 
+### Upload mode: when the official import is off
+
+Garmin's partner terms now bar Intervals from passing Garmin-sourced data on
+through its own API, and Intervals has said it will probably have to block
+that. Data you upload yourself is not affected. The bridge's **upload mode**
+is built for exactly this: switch the official Garmin import off in
+Intervals, and the bridge uploads the **original, unfiltered FIT** of every
+new activity as your own file (`source: UPLOAD`, `external_id: garmin:<id>`).
+Intervals then computes everything from the complete file itself: Stamina
+streams, Recovery Time, VO₂max, Performance Condition, Training Effect,
+Sweat Loss and your other custom items appear without any enrichment, and no
+`icu_intervals_edited` flag is set. Wellness works the same in both modes.
+
+```bash
+garmin-intervals-bridge sync --scope activities --mode upload --activity-days 2          # dry run
+garmin-intervals-bridge sync --scope activities --mode upload --allow-activity-upload --apply
+garmin-intervals-bridge run --mode upload --apply       # keeps polling Garmin every 10 minutes
+garmin-intervals-bridge backfill --scope activities --from 2026-01-01 --archive-only     # mirror first, upload later
+```
+
+Uploads are de-duplicated against what Intervals already has (external id,
+file hash, start time) and never retried blindly: an upload with an unknown
+outcome stays `pending` until you check. Systemd users swap the watch timer
+for `deploy/systemd/garmin-intervals-bridge-upload.timer` (10 minutes) and
+keep the 30-minute unit for wellness.
+
 **Docker / Podman:** a ready-made image is on the GitHub Container Registry,
 `ghcr.io/futureweb/garmin-intervals-bridge` (tags `latest` and the version,
 amd64 and arm64, so it runs on a NAS too). It runs as a non-root user and

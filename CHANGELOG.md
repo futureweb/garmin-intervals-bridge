@@ -102,6 +102,15 @@ Garmin and Intervals.icu account; see `docs/PLAN.md` for the evidence.
   the enrich candidate list is fetched with a field list; FIT downloads are
   capped at 32 MB.
 
+### Upload mode, live-verified (2026-10-09)
+
+Garmin's partner terms bar Intervals from passing Garmin-sourced data on
+through its own API. Upload mode (official import off, originals uploaded
+as the athlete's own files) is the answer and was verified live: Intervals
+computes every custom field and stream from the complete file itself,
+nothing is flagged as edited. `run --mode upload` and a 10-minute upload
+timer in `deploy/`.
+
 ### Known limitations
 
 - Writing streams sets `icu_intervals_edited` on the activity; the API

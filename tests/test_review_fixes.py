@@ -465,3 +465,19 @@ def test_status_code_comes_from_the_message_not_from_a_port_number():
     assert _status_code(RuntimeError("API Error 404 Not Found")) == 404
     assert _status_code(RuntimeError("429 Client Error: Too Many Requests")) == 429
     assert _status_code(RuntimeError("Activity 2442901 not found")) is None
+
+
+def test_run_loop_upload_mode_polls_garmin_and_uploads(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import cli
+    calls = []
+    monkeypatch.setattr(cli, "sync_activities", lambda *a, **k: calls.append(("upload", k.get("allow_upload"), k.get("activity_days")))
+                        or {"seen": 1, "uploaded": 1, "would_upload": 0})
+    monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: calls.append("wellness") or {"days_checked": 0, "writes": 0})
+    monkeypatch.setattr(cli, "watch_once", lambda *a, **k: calls.append("watch") or {"new": 0})
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    st = Store(tmp_path)
+    assert cli.run_loop(_loop_settings(tmp_path), st, apply=True, poll_seconds=600, sync_minutes=30, iterations=3,
+                        mode="upload") == 0
+    assert calls == [("upload", True, None), "wellness", ("upload", True, 2), ("upload", True, 2)]
+    assert "watch" not in calls
+    st.close()

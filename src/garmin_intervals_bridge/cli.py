@@ -61,7 +61,12 @@ def build_parser() -> argparse.ArgumentParser:
                                      "health probe once a day. For Windows and anything without systemd "
                                      "(dry run unless --apply)")
     run.add_argument("--apply", action="store_true")
-    run.add_argument("--poll-seconds", type=int, default=60, help="Seconds between Intervals polls (default 60)")
+    run.add_argument("--mode", choices=["enrich", "upload"], default="enrich",
+                     help="enrich = official import stays on, the bridge adds what Garmin stripped (default); "
+                          "upload = official import off, the bridge uploads every original as your own file")
+    run.add_argument("--poll-seconds", type=int, default=60,
+                     help="Seconds between polls: Intervals in enrich mode (default 60), Garmin in upload mode "
+                          "(default 600, min 300)")
     run.add_argument("--sync-minutes", type=int, default=30, help="Minutes between full runs (default 30)")
     run.add_argument("--iterations", type=int, help=argparse.SUPPRESS)      # tests
     backfill = sub.add_parser("backfill", help="Enrich a date range from the past, paced (dry run unless --apply)")
@@ -98,18 +103,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int, sync_minutes: int,
-             iterations: int | None = None) -> int:
+             iterations: int | None = None, mode: str = "enrich") -> int:
     """What the three systemd timers do, in one long-running process.
 
     A fresh Garmin session per full run (like the timer), the cheap poll in between,
     a health probe once a day written to the log. A Garmin block pauses everything
     for 15 minutes; any other error is logged and the loop goes on.
+
+    Upload mode (official import off): the poll asks Garmin for new activities and
+    uploads their originals; the full run does the same plus wellness.
     """
     log = logging.getLogger("bridge")
     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
     garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
     next_sync, next_health, count = 0.0, time.time() + 300, 0
-    log.info("Running: poll every %ds, full run every %d min, %s", poll_seconds, sync_minutes,
+    log.info("Running (%s mode): poll every %ds, full run every %d min, %s", mode, poll_seconds, sync_minutes,
              "writing to Intervals" if apply else "DRY RUN (add --apply to write)")
     while iterations is None or count < iterations:
         count += 1
@@ -117,16 +125,32 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
         try:
             if now >= next_sync:
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                results: dict = {"apply": apply, "scope": "all", "mode": "enrich"}
-                results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply)
+                results: dict = {"apply": apply, "scope": "all", "mode": mode}
+                if mode == "upload":
+                    results["activities"] = sync_activities(settings, garmin, intervals, store, apply=apply,
+                                                            allow_upload=True)
+                else:
+                    results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply)
                 results["wellness"] = sync_wellness(settings, garmin, intervals, store, apply=apply)
                 results["garmin_requests"] = garmin.requests
                 store.record_run("sync", results)
                 a, w = results["activities"], results["wellness"]
-                log.info("Full run: %d activities seen, %d enriched, %d planned; wellness %d days checked, "
-                         "%d written; %d Garmin requests", a["seen"], a["enriched"], a["planned"],
-                         w["days_checked"], w["writes"], garmin.requests)
+                labels = {("upload", True): ("uploaded", "uploaded"),
+                          ("upload", False): ("would_upload", "to upload"),
+                          ("enrich", True): ("enriched", "enriched"),
+                          ("enrich", False): ("planned", "planned")}
+                key, label = labels[(mode, apply)]
+                done = a.get(key, 0)
+                log.info("Full run: %d activities seen, %d %s; wellness %d days checked, %d written; "
+                         "%d Garmin requests", a["seen"], done, label, w["days_checked"], w["writes"], garmin.requests)
                 next_sync = now + sync_minutes * 60
+            elif mode == "upload":
+                garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                result = sync_activities(settings, garmin, intervals, store, apply=apply, allow_upload=True,
+                                         activity_days=2)
+                store.record_run("watch", {"apply": apply, "mode": mode, "garmin_requests": garmin.requests, **result})
+                if result.get("uploaded") or result.get("would_upload"):
+                    log.info("Garmin poll: %d uploaded, %d would upload", result["uploaded"], result["would_upload"])
             else:
                 result = watch_once(settings, garmin, intervals, store, apply=apply)
                 store.record_run("watch", {"apply": apply, "garmin_requests": garmin.requests, **result})
@@ -286,10 +310,13 @@ def main(argv: list[str] | None = None) -> int:
                                       "sha256": sha256(fit)}, indent=2))
                     return 0
                 if args.cmd == "run":
-                    if args.poll_seconds < 30 or args.sync_minutes < 5:
-                        raise ValueError("--poll-seconds must be >= 30 and --sync-minutes >= 5")
-                    return run_loop(settings, store, apply=args.apply, poll_seconds=args.poll_seconds,
-                                    sync_minutes=args.sync_minutes, iterations=args.iterations)
+                    poll = args.poll_seconds
+                    if args.mode == "upload" and poll == 60:
+                        poll = 600                            # a Garmin poll costs three requests, not one
+                    if poll < (300 if args.mode == "upload" else 30) or args.sync_minutes < 5:
+                        raise ValueError("--poll-seconds too small for this mode, or --sync-minutes < 5")
+                    return run_loop(settings, store, apply=args.apply, poll_seconds=poll,
+                                    sync_minutes=args.sync_minutes, iterations=args.iterations, mode=args.mode)
                 if args.cmd == "watch":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     result = watch_once(settings, garmin, intervals, store, apply=args.apply)

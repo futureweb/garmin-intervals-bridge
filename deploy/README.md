@@ -72,6 +72,15 @@ Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential
 download; the pause keeps a long backfill polite. Runs are resumable: days and
 activities already handled are skipped.
 
+## Upload mode
+
+When the official Garmin import is off (or Intervals can no longer expose
+Garmin-imported data through its API), install
+`garmin-intervals-bridge-upload.{service,timer}` instead of the watch timer:
+it asks Garmin every 10 minutes for new activities and uploads their originals
+(dry run until `--apply`). Change the 30-minute unit to `--scope wellness`.
+Three Garmin requests per poll, about 450 a day.
+
 ## Failure alerts
 
 All three service units carry `OnFailure=garmin-intervals-bridge-alert@%n.service`.
