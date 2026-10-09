@@ -36,7 +36,8 @@ _TRANSIENT_TEXT = re.compile(r"timed out|Connection (aborted|reset|refused)|Max 
 _BLOCK_TEXT = re.compile(r"(?<!\d)(401|429)(?!\d)")        # a status code, not digits inside an id
 # "API Error 404", "429 Client Error", "status 503": a status code in the message, not a port
 # number or an id (the library's connection errors mention "port=443").
-_STATUS_TEXT = re.compile(r"(?:API Error|[Ss]tatus(?: code)?:?|HTTP)\s*([45]\d\d)(?!\d)|(?<![\w=:])([45]\d\d) (?:Client|Server) Error")
+_STATUS_TEXT = re.compile(r"(?:API Error|[Ss]tatus(?: code)?:?|HTTP)\s*([45]\d\d)(?!\d)"
+                          r"|(?<![\w=:])([45]\d\d) (?:Client|Server) Error")
 
 
 def _chain(exc: BaseException):
