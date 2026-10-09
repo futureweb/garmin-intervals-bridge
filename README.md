@@ -47,17 +47,22 @@ This bridge is a small self-hosted service that:
 Everything is a dry run until you say `--apply`. Values that exist are never
 overwritten unless they demonstrably came from a filtered file.
 
+**Sister project:** the [Futureweb Intervals MCP](https://github.com/futureweb/intervals-mcp-server)
+lets ChatGPT, Claude and any other MCP client read and analyse everything the bridge writes:
+every custom activity field and stream, every native and `Garmin…` wellness field, with the
+names and units of your own definitions. [More below](#analyse-it-with-ai-the-intervals-mcp).
+
 ## What gets synced
 
 | | Activities (enrich mode) | Daily wellness |
 | --- | --- | --- |
-| **Source** | Original FIT from Garmin Connect | Garmin's daily endpoints (23 of them) |
+| **Source** | Original FIT from Garmin Connect | Garmin's daily endpoints (up to 30 of them) |
 | **Target** | Your Intervals custom activity fields and custom streams, defined by you, read from your own definitions | Native Intervals wellness fields first, private `Garmin…` custom fields for the rest |
 | **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute load, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow |
 | **Archive** | Original + partner copy of every activity | Raw JSON of every endpoint, every day |
 
-Version 0.2.0. Verified end to end on one account (fenix 8, Edge 1040);
+Version 0.2.1. Verified end to end on one account (fenix 8, Edge 1040);
 the first live writes and the evidence are recorded in
 [docs/PLAN.md](docs/PLAN.md).
 
@@ -200,6 +205,31 @@ and completes them later as fields appear (for example after a backfill
 with every endpoint). Charts you made yourself are never touched, even with
 the same name. Intervals' API cannot place a chart on a Fitness tab; that
 last click is yours either way.
+
+## Analyse it with AI: the Intervals MCP
+
+Charts show the data; the sister project
+[Futureweb Intervals MCP](https://github.com/futureweb/intervals-mcp-server) lets an AI
+assistant work with it. It is a [Model Context Protocol](https://modelcontextprotocol.io)
+server for ChatGPT, Claude and any other MCP client that reads your Intervals.icu account:
+read-only by default, through the Intervals.icu API only, never Garmin. It resolves your
+custom items at run time, so every field and stream the bridge fills shows up in its tools
+with name, code, value and units, without extra configuration:
+
+| What the bridge writes | Where the MCP reads it |
+| --- | --- |
+| Activity fields: Training Effect, Recovery Time, VO₂max, Performance Condition, Stamina at start/end, Sweat Loss … | `get_activity_details` |
+| Streams: Stamina, Potential Stamina, grade-adjusted speed … | `get_activity_streams`, and per interval in `get_activity_intervals` (for example the stamina drop of each interval) |
+| Wellness: SpO₂, respiration, sleeping HR, HRV detail, sleep stages, Body Battery, readiness, recovery hours, skin temperature, scores, race predictions … | `get_recovery_snapshot` (against 42-day baselines), `get_wellness_trends`, `get_wellness_data` |
+| Nutrition: kcal and macros, total and active burn, daily balance, weight | `get_nutrition_summary`, which reads the bridge's `GarminTotalCalories`, `GarminActiveCalories` and `GarminKcalBalance` by default |
+| All of it over weeks and months | `get_training_summary`: sums only for additive values, Garmin loads kept apart from the Intervals.icu load |
+
+Questions like *"How much stamina did each interval of yesterday's ride cost?"*, *"Is my HRV
+below baseline after this block, and what did sleep stress and respiration do?"* or *"Was I in
+a calorie deficit last month, and did my weight follow?"* are then answered from your own
+data. Each project works without the other; the MCP's
+[Garmin Bridge guide](https://github.com/futureweb/intervals-mcp-server/blob/main/docs/GARMIN_BRIDGE.md)
+has the details and worked examples.
 
 ## Running it
 

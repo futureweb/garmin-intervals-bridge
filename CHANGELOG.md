@@ -13,6 +13,14 @@
 - Exercise sets are also fetched when the activity comes from the detail
   endpoint (`activityTypeDTO`), not only from the list.
 
+### Documentation
+
+- README links the sister project, the
+  [Futureweb Intervals MCP](https://github.com/futureweb/intervals-mcp-server):
+  it lets ChatGPT, Claude and other MCP clients read and analyse every field
+  and stream the bridge writes. A table maps the bridge's data to the MCP
+  tools that read it.
+
 ## 0.2.1 — 2026-10-09
 
 The day Garmin's new partner terms surfaced: Intervals expects to have to
