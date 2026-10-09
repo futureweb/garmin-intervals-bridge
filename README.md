@@ -230,6 +230,7 @@ Sweat Loss and your other custom items appear without any enrichment, and no
 garmin-intervals-bridge sync --scope activities --mode upload --activity-days 2          # dry run
 garmin-intervals-bridge sync --scope activities --mode upload --allow-activity-upload --apply
 garmin-intervals-bridge run --mode upload --apply       # keeps polling Garmin every 10 minutes
+garmin-intervals-bridge backfill --scope activities --mode upload --from 2026-01-01 --apply   # the past, as your uploads
 garmin-intervals-bridge backfill --scope activities --from 2026-01-01 --archive-only     # mirror first, upload later
 ```
 

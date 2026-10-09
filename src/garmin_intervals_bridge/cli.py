@@ -71,6 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--iterations", type=int, help=argparse.SUPPRESS)      # tests
     backfill = sub.add_parser("backfill", help="Enrich a date range from the past, paced (dry run unless --apply)")
     backfill.add_argument("--scope", choices=["activities", "wellness"], required=True)
+    backfill.add_argument("--mode", choices=["enrich", "upload"], default="enrich",
+                          help="Activities: enrich the officially imported ones (default) or upload the originals "
+                               "of those Intervals does not have (official import off)")
     backfill.add_argument("--from", dest="start", required=True, help="YYYY-MM-DD")
     backfill.add_argument("--to", dest="end", help="YYYY-MM-DD (default: today)")
     backfill.add_argument("--apply", action="store_true")
@@ -345,6 +348,11 @@ def main(argv: list[str] | None = None) -> int:
                                             pause_seconds=0 if args.from_archive else args.pause,
                                             endpoints=endpoints, from_archive=args.from_archive,
                                             rewrite=rewrite or None)
+                    elif args.mode == "upload" and not args.archive_only:
+                        log.info("Backfill activities %s..%s, UPLOAD mode: originals of activities Intervals "
+                                 "does not have, %.1fs pause", start, end, args.pause)
+                        out = sync_activities(settings, garmin, intervals, store, apply=args.apply,
+                                              allow_upload=True, date_range=(start, end), pause_seconds=args.pause)
                     else:
                         log.info("Backfill activities %s..%s, one original download per new activity, %.1fs pause%s",
                                  start, end, args.pause, " (archive only)" if args.archive_only else "")

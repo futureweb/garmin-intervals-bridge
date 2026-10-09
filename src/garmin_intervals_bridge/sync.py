@@ -109,10 +109,16 @@ def _sync_one_activity(activity: dict, gid: str, garmin: Any, intervals: Any, st
 
 def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Store,
                     *, apply: bool, allow_upload: bool, activity_days: int | None = None,
-                    today: date | None = None) -> dict:
-    current = today or datetime.now(settings.timezone).date()
-    lookback = activity_days or settings.activity_days
-    start = current - timedelta(days=lookback - 1)
+                    today: date | None = None, date_range: tuple[date, date] | None = None,
+                    pause_seconds: float = 0.0) -> dict:
+    """Upload mode: every Garmin activity Intervals does not have is uploaded as the athlete's
+    own file. `date_range` replaces the lookback for a backfill; `pause_seconds` paces it."""
+    if date_range:
+        start, current = date_range
+    else:
+        current = today or datetime.now(settings.timezone).date()
+        lookback = activity_days or settings.activity_days
+        start = current - timedelta(days=lookback - 1)
     activities = garmin.activities(start, current)
     metrics = {"seen": 0, "downloaded": 0, "remote_exists": 0, "uploaded": 0, "pending": 0,
                "would_upload": 0, "skipped": 0, "deferred": 0, "failed": 0}
@@ -137,8 +143,11 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
         # One broken activity must never stop the others. Errors are recorded
         # per activity with backoff; only a Garmin-wide block aborts the run.
         try:
+            before = metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"]
             _sync_one_activity(activity, gid, garmin, intervals, store, remote, metrics,
                                apply=apply, allow_upload=allow_upload)
+            if pause_seconds and metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"] > before:
+                time.sleep(pause_seconds)
         except GarminBlocked:
             raise
         except Exception as exc:

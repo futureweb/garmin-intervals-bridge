@@ -296,3 +296,12 @@ def test_schema_migrates_a_v01_database_in_place(tmp_path):
     assert st.is_deferred("9") is False
     assert st.record_failure("9", "ignored") == 0 and st.activity_status("9") == "uploaded"
     st.close()
+
+
+def test_upload_backfill_walks_a_date_range(tmp_path):
+    st = Store(tmp_path)
+    g, i = FlakyGarmin(), IntervalsFake()
+    out = sync_activities(settings(tmp_path), g, i, st, apply=False, allow_upload=True,
+                          date_range=(date(2026, 10, 1), date(2026, 10, 8)))
+    assert out["seen"] == 3 and out["would_upload"] == 3 and g.download_count == 3
+    st.close()
