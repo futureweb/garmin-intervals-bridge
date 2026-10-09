@@ -105,3 +105,15 @@ def test_compare_reports_what_only_the_original_carries(tmp_path):
         "session": ["total_anaerobic_training_effect", "total_training_effect"]}
     assert result["only_in_b_fields"] == {}
     assert "record" not in result["message_count_differences"]
+
+
+def test_chained_fit_files_are_valid_and_decoded_together():
+    from garmin_intervals_bridge.fit import decode_fit, fit_segments
+    one, two = build_fit(records=3), build_fit(records=2)
+    chained = one + two
+    assert len(fit_segments(chained)) == 2
+    validate_fit(chained)
+    messages, _ = decode_fit(chained)
+    assert len(messages["record"]) == 5
+    with pytest.raises(InvalidFIT):
+        validate_fit(one + b"garbage")            # trailing bytes that are not a FIT file

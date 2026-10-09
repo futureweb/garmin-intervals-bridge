@@ -28,24 +28,42 @@ class InvalidFIT(ValueError):
 MAX_FIT_BYTES = 32 * 1024 * 1024
 
 
+def fit_segments(data: bytes) -> list[bytes]:
+    """The FIT files inside a download: usually one, sometimes several back to back.
+
+    Garmin originals can be "chained": a second complete FIT file follows the first
+    (the device appended another file to the same recording). Each segment carries its
+    own header, data size and CRC; the download is valid when every segment is.
+    """
+    segments: list[bytes] = []
+    pos = 0
+    while pos < len(data):
+        if len(data) - pos < 14:
+            if pos:
+                raise InvalidFIT(f"FIT length mismatch: expected {pos}, got {len(data)}")   # trailing bytes
+            raise InvalidFIT("File is shorter than FIT header/trailer")
+        size = data[pos]
+        if size not in (12, 14):
+            raise InvalidFIT(f"Unexpected FIT header size {size}")
+        if data[pos + 8:pos + 12] != b".FIT":
+            raise InvalidFIT("FIT magic header missing")
+        declared = struct.unpack_from("<I", data, pos + 4)[0]
+        end = pos + size + declared + 2  # FIT CRC after data
+        if end > len(data):
+            raise InvalidFIT(f"FIT length mismatch: expected {end}, got {len(data)}")
+        segments.append(data[pos:end])
+        pos = end
+    return segments
+
+
 def validate_fit(data: bytes) -> None:
-    """Structural check followed by the SDK's CRC check of header and data."""
-    if len(data) < 14:
-        raise InvalidFIT("File is shorter than FIT header/trailer")
-    size = data[0]
-    if size not in (12, 14):
-        raise InvalidFIT(f"Unexpected FIT header size {size}")
-    if data[8:12] != b".FIT":
-        raise InvalidFIT("FIT magic header missing")
-    declared = struct.unpack_from("<I", data, 4)[0]
-    expected = size + declared + 2  # FIT CRC after data
-    if len(data) != expected:
-        raise InvalidFIT(f"FIT length mismatch: expected {expected}, got {len(data)}")
-    decoder = Decoder(Stream.from_byte_array(bytearray(data)))
-    if not decoder.is_fit():
-        raise InvalidFIT("Not a FIT file according to the SDK")
-    if not decoder.check_integrity():
-        raise InvalidFIT("FIT CRC check failed")
+    """Structural check followed by the SDK's CRC check of header and data, per segment."""
+    for segment in fit_segments(data):
+        decoder = Decoder(Stream.from_byte_array(bytearray(segment)))
+        if not decoder.is_fit():
+            raise InvalidFIT("Not a FIT file according to the SDK")
+        if not decoder.check_integrity():
+            raise InvalidFIT("FIT CRC check failed")
 
 
 def extract_original_fit(download: bytes) -> bytes:
@@ -77,14 +95,17 @@ def decode_fit(data: bytes) -> tuple[dict[str, list[dict]], list]:
     Timestamps stay numeric (FIT epoch seconds) so results are JSON-safe.
     Heart-rate merging is off: the record stream must stay what the device wrote.
     """
-    validate_fit(data)
-    decoder = Decoder(Stream.from_byte_array(bytearray(data)))
-    messages, errors = decoder.read(convert_datetimes_to_dates=False, merge_heart_rates=False)
     normalised: dict[str, list[dict]] = {}
-    for key, items in messages.items():
-        # Profile messages arrive as "<name>_mesgs"; unknown ones as their number.
-        name = key[:-6] if key.endswith("_mesgs") else key
-        normalised[name] = items
+    errors: list = []
+    validate_fit(data)
+    for segment in fit_segments(data):           # a chained file: every segment's messages, in order
+        decoder = Decoder(Stream.from_byte_array(bytearray(segment)))   # a fresh stream: the check consumed its own
+        messages, segment_errors = decoder.read(convert_datetimes_to_dates=False, merge_heart_rates=False)
+        errors.extend(segment_errors)
+        for key, items in messages.items():
+            # Profile messages arrive as "<name>_mesgs"; unknown ones as their number.
+            name = key[:-6] if key.endswith("_mesgs") else key
+            normalised.setdefault(name, []).extend(items)
     return normalised, errors
 
 
