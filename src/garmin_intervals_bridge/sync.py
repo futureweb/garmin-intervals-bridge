@@ -224,7 +224,7 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
 def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
                 activity_days: int | None = None, today: date | None = None,
                 date_range: tuple[date, date] | None = None, pause_seconds: float = 0.0,
-                archive_only: bool = False) -> dict:
+                archive_only: bool = False, scan_interval_minutes: int = 0) -> dict:
     """Scheduled enrich mode: for every recent Garmin activity, add to the officially
     synced Intervals activity what the partner copy lacks. Never uploads, never deletes.
 
@@ -232,7 +232,20 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     activities out so a long backfill stays polite towards Garmin. `archive_only`
     downloads the originals that are not on disk yet and leaves Intervals alone: a
     local mirror of every recording, for whatever is extracted from it later.
+
+    `scan_interval_minutes` is for the scheduled runs: the watch already enriches every
+    activity the moment Intervals imports it, so the scan of Garmin's list is a safety
+    net (late imports, retries, new field definitions) and is skipped while the last one
+    is younger than this, unless a failed activity is due for its retry.
     """
+    if scan_interval_minutes and not date_range and not archive_only:
+        last = store.meta_updated("activity_scan")
+        retry_due = any(not f["next_retry"] or f["next_retry"] <= time.time() for f in store.failed_activities())
+        if last and time.time() - last < scan_interval_minutes * 60 and not retry_due:
+            return {"seen": 0, "skipped": 0, "deferred": 0, "failed": 0, "unmatched": 0,
+                    "already_enriched": 0, "nothing_to_add": 0, "planned": 0, "enriched": 0,
+                    "fields_written": 0, "streams_written": 0, "archived": 0, "on_disk": 0,
+                    "archive_pending": 0, "archive_failed": 0, "scan_skipped": 1}
     if date_range:
         start, current = date_range
     else:
@@ -299,6 +312,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             log.info("%s %s -> %s: fields %s, streams %s",
                      "ENRICHED" if outcome == "enriched" else "DRY-RUN would enrich",
                      gid, result["intervals_id"], fields, streams)
+    if not date_range and not archive_only:
+        store.set_meta("activity_scan")
     return metrics
 
 
@@ -354,13 +369,22 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   *, apply: bool, force: bool = False, wellness_days: int | None = None,
                   today: date | None = None, days: list[date] | None = None,
                   pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None,
-                  from_archive: bool = False, rewrite: set[str] | None = None) -> dict:
-    """Daily wellness. `days` (a backfill) replaces the lookback; `pause_seconds`
-    is slept between days because each day costs up to ~23 Garmin requests.
+                  from_archive: bool = False, rewrite: set[str] | None = None,
+                  now: datetime | None = None) -> dict:
+    """Daily wellness.
 
-    `from_archive` maps the locally archived snapshots instead of asking Garmin: after
-    the mapping gained fields, the past is completed without a single Garmin request.
+    The scheduled run (no `days`, no `force`) goes through `wellness_check`: the
+    night's values as soon as the watch has synced, the finished day once the device
+    has synced after it ended. Explicit runs read what they are told: `days` (a
+    backfill) replaces the lookback, `force` reads the whole lookback now;
+    `pause_seconds` is slept between days because each day costs up to 30 Garmin
+    requests. `from_archive` maps the locally archived snapshots instead of asking
+    Garmin: after the mapping gained fields, the past is completed without a single
+    Garmin request.
     """
+    if days is None and not force and endpoints is None and not from_archive and rewrite is None:
+        return wellness_check(settings, garmin, intervals, store, apply=apply, now=now,
+                              lookback=wellness_days, throttle=False)
     current = today or datetime.now(settings.timezone).date()
     lookback = wellness_days or settings.wellness_days
     metrics = {"days_checked": 0, "days_skipped_recent": 0, "days_from_archive": 0, "days_locked": 0,
@@ -393,11 +417,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             chosen = (endpoints if endpoints is not None
                       else None if fetched is None or fetched < midnight else ESSENTIAL_ENDPOINTS)
             raw = garmin.snapshot(day, **({"endpoints": chosen} if chosen else {}))
-            if chosen is not None and (previous := store.load_snapshot(day)):
-                # A partial read must not shrink the archived day: keep what was not re-read.
-                errors = {k: v for k, v in (previous.get("errors") or {}).items() if k not in raw["data"]}
-                raw = {**previous, "data": {**(previous.get("data") or {}), **raw["data"]},
-                       "errors": {**errors, **raw.get("errors", {})}}
+            if chosen is not None:
+                raw = _merge_partial(store.load_snapshot(day), raw)
             store.save_snapshot(day, raw)
             metrics["days_checked"] += 1
             if not raw.get("data"):
@@ -413,6 +434,226 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             continue
         if apply and unlocked:
             store.mark_wellness(day, written=True)
+    metrics["new_fields"] = sorted(set(metrics["new_fields"]))
+    return metrics
+
+
+def _merge_partial(previous: dict | None, raw: dict) -> dict:
+    """A partial read must not shrink the archived day: keep what was not re-read."""
+    if not previous:
+        return raw
+    errors = {k: v for k, v in (previous.get("errors") or {}).items() if k not in raw["data"]}
+    return {**previous, "data": {**(previous.get("data") or {}), **raw["data"]},
+            "errors": {**errors, **raw.get("errors", {})}}
+
+
+# ---- when Garmin is asked for a day's wellness ----
+#
+# What can be written for today comes from four endpoints and only exists once the watch
+# has synced after waking up; everything else about a day is final once the day is over
+# and the device has synced after it. So instead of re-reading on a clock, the bridge
+# waits for evidence, which it gets from Intervals for free: the official integration
+# puts last night's sleep into today's record within minutes of the watch syncing.
+
+MORNING_ENDPOINTS = ("sleep", "hrv", "training_readiness", "body_composition")
+CHECK_MINUTES = 10              # Intervals pre-check cadence; costs no Garmin request
+SIGNAL_DAYS = 2                 # official sleep seen this recently: wait for it instead of asking Garmin
+FALLBACK_SLOTS = ((6, 30), (7, 30), (8, 30), (10, 0), (12, 0), (16, 0), (20, 0))
+LATE_SLOTS = ((12, 0), (16, 0), (20, 0))     # with a signal: in case it stays silent all day
+MORNING_BACKOFF_MINUTES = (30, 60, 120, 240)
+READINESS_RETRIES, READINESS_RETRY_MINUTES = 2, 30
+VERIFY_BACKOFF_MINUTES = (60, 120, 240)
+FINAL_ANYWAY_HOUR = 20          # a past day is read at 20:00 the day after, synced or not
+
+
+def _positive(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0
+
+
+def _has_sleep(raw: dict | None) -> bool:
+    sleep = ((raw or {}).get("data", {}).get("sleep") or {}).get("dailySleepDTO") or {}
+    return _positive(sleep.get("sleepTimeSeconds"))
+
+
+def _has_morning_readiness(raw: dict | None) -> bool:
+    entries = (raw or {}).get("data", {}).get("training_readiness")
+    return isinstance(entries, list) and any(
+        isinstance(x, dict) and x.get("inputContext") in ("AFTER_WAKEUP_RESET", "MORNING_REPORT") for x in entries)
+
+
+def _last_device_sync(raw: dict | None) -> datetime | None:
+    """Garmin reports the device's last sync only in the current day's summary."""
+    stats = (raw or {}).get("data", {}).get("stats") or {}
+    return _time(stats.get("lastSyncTimestampGMT"), garmin_gmt=True)
+
+
+def _slot_due(store: Store, day: date, now: datetime, slots: tuple) -> bool:
+    """True once per slot that has passed; a run that comes late uses up all passed slots at once."""
+    passed = [i for i, (h, m) in enumerate(slots)
+              if now >= datetime.combine(day, datetime.min.time(), tzinfo=now.tzinfo) + timedelta(hours=h, minutes=m)]
+    key = f"wellness:slot:{day}:{len(slots)}"
+    used = int(store.get_meta(key) or -1)
+    if not passed or passed[-1] <= used:
+        return False
+    store.set_meta(key, str(passed[-1]))
+    return True
+
+
+def _backoff(store: Store, key: str, steps: tuple, now_ts: float) -> None:
+    tries = int(store.get_meta(f"{key}:tries") or 0)
+    store.set_meta(f"{key}:tries", str(tries + 1))
+    store.set_meta(key, str(now_ts + steps[min(tries, len(steps) - 1)] * 60))
+
+
+def _wellness_metrics() -> dict:
+    return {"days_checked": 0, "days_skipped_recent": 0, "days_from_archive": 0, "days_locked": 0,
+            "days_with_changes": 0, "writes": 0, "failed": 0, "new_fields": [],
+            "intervals_checks": 0, "sync_checks": 0, "morning": 0, "final": 0}
+
+
+def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
+                   now: datetime | None = None, lookback: int | None = None, throttle: bool = True) -> dict:
+    """The scheduled wellness run; cheap enough to be called every minute.
+
+    Today: nothing is asked of Garmin until there is a night to read. The evidence is
+    Intervals' own record for today: once the official integration has put the sleep
+    there, the watch has synced, and the four endpoints that make today's values are
+    read exactly once (Training Readiness gets two more tries if it lags behind).
+    Without that signal (official wellness sync off, or Intervals no longer passing
+    Garmin data through its API) Garmin itself is checked at a few fixed times.
+
+    Past days: read in full once the device has synced after the day ended, so the
+    day's totals are complete; that is proven by today's sleep, or by Garmin's last
+    sync time once Intervals shows anything new for today. A day that never gets a
+    sync is read anyway at 20:00 the day after.
+
+    Every check of Intervals costs one small request and none of Garmin; when nothing
+    is pending, not even that.
+    """
+    tz = settings.timezone
+    now = now or datetime.now(tz)
+    now_ts = now.timestamp()
+    current = now.date()
+    midnight = datetime.combine(current, datetime.min.time(), tzinfo=tz)
+    metrics = _wellness_metrics()
+    days = lookback or settings.wellness_days
+    past = [current - timedelta(days=o) for o in reversed(range(1, max(days, 1)))]
+
+    if store.get_meta("wellness:since") is None:
+        # First run of this schedule: days already read after they ended count as final, and the
+        # official integration is assumed to deliver sleep until two mornings prove otherwise.
+        for day in past:
+            fetched, _ = store.wellness_state(day)
+            day_end = datetime.combine(day + timedelta(days=1), datetime.min.time(), tzinfo=tz).timestamp()
+            if fetched and fetched >= day_end:
+                store.set_meta(f"wellness:final:{day}", "migrated")
+        store.set_meta("wellness:official_sleep", (current - timedelta(days=1)).isoformat())
+        store.set_meta("wellness:since", now.isoformat(timespec="seconds"))
+
+    morning = store.get_meta(f"wellness:morning:{current}")
+    pending_past = [d for d in past if store.get_meta(f"wellness:final:{d}") is None]
+    readiness_key = f"wellness:readiness:{current}"
+    readiness_due = (morning == "no-readiness"
+                     and int(store.get_meta(f"{readiness_key}:tries") or 0) < READINESS_RETRIES
+                     and now_ts >= float(store.get_meta(readiness_key) or 0))
+    unwritten = [d for d in past + [current]
+                 if apply and (state := store.wellness_state(d))[0] and not state[1]
+                 and (d == current and morning or store.get_meta(f"wellness:final:{d}"))]
+    if morning and not pending_past and not readiness_due and not unwritten:
+        return metrics
+    if throttle and not unwritten and (last := store.meta_updated("wellness:check")) \
+            and now_ts - last < CHECK_MINUTES * 60 - 5:
+        return metrics
+    store.set_meta("wellness:check")
+
+    def read(day: date, endpoints: tuple[str, ...] | None) -> dict:
+        raw = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))
+        if endpoints:
+            raw = _merge_partial(store.load_snapshot(day), raw)
+        store.save_snapshot(day, raw)
+        store.mark_wellness(day)
+        metrics["days_checked"] += 1
+        return raw
+
+    def write(day: date, raw: dict) -> None:
+        try:
+            if _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply) and apply:
+                store.mark_wellness(day, written=True)
+        except Exception as exc:                         # one day's Intervals trouble must not end the run
+            metrics["failed"] += 1
+            log.warning("Wellness %s not written: %s", day, type(exc).__name__)
+
+    for day in unwritten:                                # read by a dry run, never written: no new request
+        if (raw := store.load_snapshot(day)) is not None:
+            metrics["days_from_archive"] += 1
+            write(day, raw)
+
+    record = intervals.wellness(current)
+    metrics["intervals_checks"] += 1
+    official_sleep = _positive(record.get("sleepSecs"))
+    touched = official_sleep or any(_positive(record.get(k)) for k in ("steps", "restingHR", "hrv", "weight"))
+    if official_sleep and not morning:
+        store.set_meta("wellness:official_sleep", current.isoformat())
+    seen = store.get_meta("wellness:official_sleep")
+    signal = bool(seen) and (current - date.fromisoformat(seen)).days <= SIGNAL_DAYS
+    synced = official_sleep          # the official integration had the night: the device synced after midnight
+
+    morning_key = f"wellness:next:{current}"
+    if not morning and now_ts >= float(store.get_meta(morning_key) or 0) and (
+            official_sleep or _slot_due(store, current, now, LATE_SLOTS if signal else FALLBACK_SLOTS)):
+        raw = read(current, MORNING_ENDPOINTS)
+        if _has_sleep(raw):
+            morning = "ok" if _has_morning_readiness(raw) else "no-readiness"
+            store.set_meta(f"wellness:morning:{current}", morning)
+            store.set_meta(readiness_key, str(now_ts + READINESS_RETRY_MINUTES * 60))
+            metrics["morning"] = 1
+            synced = True
+            log.info("Morning values of %s read (%s)", current,
+                     "with readiness" if morning == "ok" else "readiness not there yet")
+            write(current, raw)
+        else:
+            _backoff(store, morning_key, MORNING_BACKOFF_MINUTES, now_ts)
+            log.info("Garmin has no sleep for %s yet; asking again later", current)
+    elif readiness_due:
+        raw = read(current, ("training_readiness",))
+        if _has_morning_readiness(raw):
+            store.set_meta(f"wellness:morning:{current}", "ok")
+            write(current, raw)
+        else:
+            _backoff(store, readiness_key, (READINESS_RETRY_MINUTES,), now_ts)
+
+    if morning:
+        synced = True                    # Garmin has today's sleep: the device synced after midnight
+    verify_key = f"wellness:verify:{current}"
+    if pending_past and not synced and touched and now_ts >= float(store.get_meta(verify_key) or 0):
+        # Something new arrived in Intervals for today; ask Garmin whether that was a device sync.
+        raw = garmin.snapshot(current, endpoints=("stats",))
+        store.save_snapshot(current, _merge_partial(store.load_snapshot(current), raw))
+        metrics["sync_checks"] += 1
+        last_sync = _last_device_sync(raw)
+        if last_sync is not None and last_sync >= midnight:
+            synced = True
+        else:
+            _backoff(store, verify_key, VERIFY_BACKOFF_MINUTES, now_ts)
+    for day in pending_past:
+        anyway = now >= datetime.combine(day + timedelta(days=1), datetime.min.time(),
+                                         tzinfo=tz) + timedelta(hours=FINAL_ANYWAY_HOUR)
+        retry_key = f"wellness:retry:{day}"
+        if not (synced or anyway) or now_ts < float(store.get_meta(retry_key) or 0):
+            continue
+        raw = read(day, None)
+        if not raw.get("data"):
+            _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
+            log.warning("No Garmin wellness payload for %s; trying again later", day)
+            continue
+        store.set_meta(f"wellness:final:{day}", "synced" if synced else "anyway")
+        metrics["final"] += 1
+        log.info("Final read of %s (%s)", day, "device synced after the day" if synced else "no sync by 20:00")
+        write(day, raw)
+
+    if store.get_meta("wellness:pruned") != current.strftime("%Y-%m"):
+        store.delete_meta("wellness:*:20*", now_ts - 40 * 86400)     # per-day bookkeeping, once a month
+        store.set_meta("wellness:pruned", current.strftime("%Y-%m"))
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
     return metrics
 

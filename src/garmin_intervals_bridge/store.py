@@ -200,6 +200,16 @@ class Store:
         row = self.db.execute("SELECT updated FROM meta WHERE key=?", (key,)).fetchone()
         return float(row[0]) if row else None
 
+    def get_meta(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def delete_meta(self, pattern: str, older_than: float) -> int:
+        """Remove bookkeeping keys matching a GLOB `pattern` last touched before `older_than`."""
+        cursor = self.db.execute("DELETE FROM meta WHERE key GLOB ? AND updated < ?", (pattern, older_than))
+        self.db.commit()
+        return cursor.rowcount
+
     def intervals_seen(self, intervals_id: str) -> bool:
         row = self.db.execute("SELECT 1 FROM intervals_seen WHERE intervals_id=?", (intervals_id,)).fetchone()
         return row is not None

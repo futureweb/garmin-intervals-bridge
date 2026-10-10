@@ -25,7 +25,7 @@ Environment=BRIDGE_DATA_DIR=/var/lib/garmin-intervals-bridge
 Environment=GARMIN_TOKEN_DIR=/var/lib/garmin-intervals-bridge/tokens
 Environment=PYTHONDONTWRITEBYTECODE=1
 Environment=BRIDGE_TIMEZONE=Europe/Vienna
-ExecStart=/opt/garmin-intervals-bridge/venv/bin/garmin-intervals-bridge sync --scope all --mode enrich --activity-days 4
+ExecStart=/opt/garmin-intervals-bridge/venv/bin/garmin-intervals-bridge sync --scope all --mode enrich --activity-days 4 --activity-interval 120
 # Hardening: the process needs the network, its data directory and nothing else.
 NoNewPrivileges=yes
 PrivateTmp=yes

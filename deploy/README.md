@@ -39,10 +39,15 @@ Read a few journals first: every run prints what it would write, per activity.
 
 - `garmin-intervals-bridge-watch` runs every minute, asks Intervals for the
   last three days (one ~450-byte request) and enriches only activities it sees
-  for the first time. Latency after the official import: about a minute.
+  for the first time. Latency after the official import: about a minute. Every
+  ten minutes it also looks at today's wellness record in Intervals and reads
+  last night's values from Garmin once the official sync has delivered the
+  sleep (see *Wellness* in the main README).
 - `garmin-intervals-bridge` runs every 30 minutes over the last four days and
   catches anything the watcher missed (an import that lagged, a failed download
-  that is due for its retry).
+  that is due for its retry, new field definitions). With `--activity-interval 120`
+  it reads Garmin's activity list every two hours, sooner when a retry is due;
+  a run with nothing to do makes no Garmin request at all.
 
 Both are dry runs until `--apply` is appended to their `ExecStart`.
 
@@ -130,8 +135,8 @@ systemctl enable --now garmin-intervals-bridge-health.timer
 ## Notes
 
 - A `watch` without `--apply` still records the activities it saw; after
-  you add `--apply`, those are enriched by the next 30-minute run (which
-  walks Garmin's activity list), not by the watcher.
+  you add `--apply`, those are enriched by the next scan of Garmin's activity
+  list (within two hours), not by the watcher.
 - `status` takes no lock and works during a backfill; `health` has its own.
 - The units carry two hardening layers: read-only system, private /tmp, no
   new privileges, and a system-call filter (`@system-service`), no
@@ -139,6 +144,7 @@ systemctl enable --now garmin-intervals-bridge-health.timer
   dependency needs more, the journal shows the refused call; loosen one
   directive rather than removing the block.
 - The daily `health` digest counts the Garmin requests of the last 24 h
-  (recorded per run); a normal day is a few hundred, a backfill day more.
+  (recorded per run); a normal day is about 75 plus a few per new activity,
+  a backfill day more.
 - Disk: one JSON snapshot per wellness day (about 100 kB) and the original
   plus partner FIT per activity (a few MB each); a year is well under 1 GB.

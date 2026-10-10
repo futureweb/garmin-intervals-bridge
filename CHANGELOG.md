@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Changed
+
+- **Wellness is read on evidence, not on a clock.** Last night's values
+  (sleep, SpO₂, respiration, sleeping HR, HRV detail, sleep stages, Training
+  Readiness, skin temperature) reach Intervals within about ten minutes of
+  the morning watch sync instead of up to four hours later. The watch checks
+  Intervals' record for today every ten minutes, which costs no Garmin
+  request, and reads four Garmin endpoints once the official integration has
+  delivered the sleep; Training Readiness gets two more tries if it lags. A
+  finished day is read in full once the device has synced after it ended
+  (proven by Garmin's last-sync time), so its totals are complete; a day
+  without any sync is read anyway at 20:00 the day after. Without the
+  official wellness sync, Garmin is checked at a few fixed morning times.
+- The scheduled runs ask Garmin far less: no more four-hourly re-reads of
+  today and yesterday, no re-read of the day before yesterday, no login on
+  runs with nothing to do, and in enrich mode the Garmin activity list is
+  scanned every two hours (`sync --activity-interval`, also in `run`); the
+  watch enriches new activities in between. About 75 requests on a normal
+  day instead of about 310.
+
 ### Fixed
 
 - The regular enrich and upload runs now archive Garmin's summary, weather,

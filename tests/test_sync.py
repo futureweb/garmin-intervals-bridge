@@ -139,7 +139,7 @@ def test_wellness_dryrun_does_not_write(tmp_path):
     g, i = GarminFake(), IntervalsFake()
     i.current_wellness = {"locked": False, "restingHR": 44, "BodyBatteryMax": 95, "TrainingAdvice": 2}
     result = sync_wellness(settings(tmp_path), g, i, st, apply=False, wellness_days=2,
-                           today=date(2026, 10, 8))
+                           today=date(2026, 10, 8), force=True)
     assert result["days_checked"] == 2
     assert result["days_with_changes"] == 2
     assert not i.wellness_writes
@@ -154,7 +154,7 @@ def test_wellness_apply_never_overwrites_existing_and_respects_lock(tmp_path):
     g, i = GarminFake(), IntervalsFake()
     i.current_wellness = {"locked": False, "hrv": 55, "BodyBatteryMax": 99}
     result = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=1,
-                           today=date(2026, 10, 8))
+                           today=date(2026, 10, 8), force=True)
     assert result["writes"] == 1
     day, patch = i.wellness_writes[0]
     assert "hrv" not in patch and "BodyBatteryMax" not in patch

@@ -98,8 +98,13 @@ def test_watch_skips_the_poll_when_the_lock_is_held(tmp_path, monkeypatch):
     monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
     monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+    from garmin_intervals_bridge import cli
+    checked, polled = [], []
+    monkeypatch.setattr(cli, "wellness_check", lambda *a, **k: checked.append(1) or {})
+    monkeypatch.setattr(cli, "watch_once", lambda *a, **k: polled.append(1) or {})
     with single_instance(tmp_path, ("activities",)):
-        assert main(["watch"]) == 0                        # skipped, no error exit, no alert
+        assert main(["watch"]) == 0                        # poll skipped, no error exit, no alert
+        assert polled == [] and checked == [1]             # the free wellness scope still does its check
         assert main(["status"]) == 0                       # reads only, needs no lock
         assert main(["sync", "--scope", "activities"]) == 0           # nothing free: a quiet no-op
         assert main(["backfill", "--scope", "activities", "--from", "2026-10-01"]) == 1   # a person's command fails loudly
@@ -161,16 +166,16 @@ def test_dry_run_throttles_garmin_and_apply_maps_the_archive(tmp_path):
     g, i = CountingGarmin(), IntervalsFake()
     i.current_wellness = {"locked": False}
     s = settings(tmp_path)
-    day = date(2026, 10, 8)
-    dry = sync_wellness(s, g, i, st, apply=False, wellness_days=1, today=day)
+    day = date(2026, 10, 3)                                   # a backfill day
+    dry = sync_wellness(s, g, i, st, apply=False, days=[day], today=date(2026, 10, 8))
     assert dry["days_checked"] == 1 and not i.wellness_writes and len(g.snapshots) == 1
-    dry2 = sync_wellness(s, g, i, st, apply=False, wellness_days=1, today=day)
+    dry2 = sync_wellness(s, g, i, st, apply=False, days=[day], today=date(2026, 10, 8))
     assert dry2["days_skipped_recent"] == 1 and len(g.snapshots) == 1        # a second dry run asks nothing
-    real = sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    real = sync_wellness(s, g, i, st, apply=True, days=[day], today=date(2026, 10, 8))
     assert real["days_from_archive"] == 1 and real["writes"] == 1 and len(g.snapshots) == 1
     fetched, written = st.wellness_state(day)
     assert fetched and written
-    again = sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    again = sync_wellness(s, g, i, st, apply=True, days=[day], today=date(2026, 10, 8))
     assert again["days_skipped_recent"] == 1 and len(g.snapshots) == 1
     st.close()
 
@@ -182,11 +187,11 @@ def test_refresh_within_a_day_reads_only_the_essential_endpoints_and_keeps_the_a
     i.current_wellness = {"locked": False}
     s = settings(tmp_path)
     day = date(2026, 10, 8)
-    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day, force=True)
     assert g.snapshots[0][1] is None                                          # first read: everything
     st.db.execute("UPDATE wellness SET fetched = ?", (time.time() - 9 * 3600,))
     st.db.commit()
-    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day)
+    sync_wellness(s, g, i, st, apply=True, wellness_days=1, today=day, force=True)
     assert g.snapshots[1][1] == ESSENTIAL_ENDPOINTS
     archived = st.load_snapshot(day)
     assert set(archived["data"]) >= set(GarminFake().snapshot(day)["data"])   # nothing lost by the partial read
@@ -218,7 +223,8 @@ def test_one_days_intervals_error_does_not_end_the_run(tmp_path):
             raise ValueError("custom field of another type")
         return {"locked": False}
     i.wellness = wellness
-    out = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=2, today=date(2026, 10, 8))
+    out = sync_wellness(settings(tmp_path), g, i, st, apply=True, wellness_days=2, today=date(2026, 10, 8),
+                        force=True)
     assert out["failed"] == 1 and out["writes"] == 1 and len(calls) == 2
     st.close()
 
@@ -346,11 +352,12 @@ def test_run_loop_does_a_full_run_then_polls(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "sync_enrich", lambda *a, **k: calls.append("sync") or {"seen": 1, "enriched": 0, "planned": 0})
     monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: calls.append("wellness") or {"days_checked": 1, "writes": 0})
     monkeypatch.setattr(cli, "watch_once", lambda *a, **k: calls.append("watch") or {"new": 0, "enriched": 0, "planned": 0})
+    monkeypatch.setattr(cli, "wellness_check", lambda *a, **k: calls.append("check") or {"intervals_checks": 1})
     monkeypatch.setattr(cli, "probe", lambda *a, **k: calls.append("probe") or {"findings": []})
     monkeypatch.setattr(cli.time, "sleep", lambda s: calls.append(("sleep", s)))
     st = Store(tmp_path)
     assert cli.run_loop(_loop_settings(tmp_path), st, apply=False, poll_seconds=60, sync_minutes=30, iterations=3) == 0
-    assert calls == ["sync", "wellness", ("sleep", 60), "watch", ("sleep", 60), "watch"]
+    assert calls == ["sync", "wellness", ("sleep", 60), "watch", "check", ("sleep", 60), "watch", "check"]
     assert [r["command"] for r in st.recent_runs(1)] == ["sync", "watch", "watch"]
     st.close()
 
@@ -367,6 +374,7 @@ def test_run_loop_survives_a_block_and_other_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "sync_enrich", enrich)
     monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: {"days_checked": 0, "writes": 0})
     monkeypatch.setattr(cli, "watch_once", lambda *a, **k: {"new": 0, "enriched": 0, "planned": 0})
+    monkeypatch.setattr(cli, "wellness_check", lambda *a, **k: {})
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
     st = Store(tmp_path)
     # iteration 1: block (pauses the full run), 2: poll, 3: poll ... the loop never dies
@@ -474,10 +482,11 @@ def test_run_loop_upload_mode_polls_garmin_and_uploads(tmp_path, monkeypatch):
                         or {"seen": 1, "uploaded": 1, "would_upload": 0})
     monkeypatch.setattr(cli, "sync_wellness", lambda *a, **k: calls.append("wellness") or {"days_checked": 0, "writes": 0})
     monkeypatch.setattr(cli, "watch_once", lambda *a, **k: calls.append("watch") or {"new": 0})
+    monkeypatch.setattr(cli, "wellness_check", lambda *a, **k: calls.append("check") or {})
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
     st = Store(tmp_path)
     assert cli.run_loop(_loop_settings(tmp_path), st, apply=True, poll_seconds=600, sync_minutes=30, iterations=3,
                         mode="upload") == 0
-    assert calls == [("upload", True, None), "wellness", ("upload", True, 2), ("upload", True, 2)]
+    assert calls == [("upload", True, None), "wellness", ("upload", True, 2), "check", ("upload", True, 2), "check"]
     assert "watch" not in calls
     st.close()

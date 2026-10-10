@@ -165,6 +165,19 @@ raw response is archived as JSON. Values are written to Intervals only where
 the day has nothing yet, locked days are skipped, and running totals of the
 current day wait for tomorrow.
 
+**When Garmin is asked: on evidence, not on a clock.** Today's values come
+from four endpoints (sleep, HRV, Training Readiness, scale) and only exist
+once the watch has synced after you wake up. Every ten minutes the bridge
+looks at Intervals' own record for today, which costs no Garmin request; as
+soon as the official integration has put last night's sleep there, it reads
+those four endpoints once, typically within ten minutes of the watch sync,
+and asks twice more for Training Readiness if that lags behind. A finished
+day is read in full once the device has synced after it ended, so its
+totals are complete; a night-time phone sync is enough. Without the official
+wellness sync, Garmin itself is checked at a few fixed times in the morning,
+and a day that never sees a sync is read anyway at 20:00 the day after. A
+normal day costs about 75 Garmin requests, plus a few per new activity.
+
 Native Intervals fields filled when empty: `restingHR`, `hrv`, `sleepSecs`,
 `sleepScore`, `readiness`, `vo2max`, `steps`, `floorsClimbed`,
 `hydrationVolume`, `spO2`, `respiration`, `avgSleepingHR`, `weight`,
@@ -314,7 +327,7 @@ file named by `BRIDGE_ENV_FILE`); variables already set always win.
 | `BRIDGE_TIMEZONE` | `Europe/Vienna` | Your local day boundary |
 | `BRIDGE_ACTIVITY_LOOKBACK_DAYS` | `4` | `sync` window for activities (1–30) |
 | `BRIDGE_WELLNESS_LOOKBACK_DAYS` | `3` | `sync` window for wellness (1–30) |
-| `BRIDGE_WELLNESS_REFRESH_HOURS` | `4` | Re-read today this often; yesterday once after midnight and then every second period; older days once after midnight |
+| `BRIDGE_WELLNESS_REFRESH_HOURS` | `4` | Backfills only: how soon a backfill re-reads today or yesterday. The scheduled runs read on evidence instead (see [Wellness](#wellness)) |
 | `BRIDGE_WELLNESS_PROFILE` | `recommended` | `recommended` or `all` custom fields |
 | `BRIDGE_GARMIN_REQUEST_DELAY` | `0.5` | Seconds between Garmin requests (minimum 0.25) |
 | `BRIDGE_STALE_HOURS` | `24` | `health` alerts once a service has failed this long |

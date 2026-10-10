@@ -18,7 +18,7 @@ from .garmin import DAY_ENDPOINTS, GarminBlocked, GarminSource, parse_endpoints
 from .health import probe
 from .intervals import IntervalsClient
 from .store import InstanceBusy, Store, single_instance
-from .sync import sync_activities, sync_enrich, sync_wellness, watch_once
+from .sync import sync_activities, sync_enrich, sync_wellness, watch_once, wellness_check
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -54,8 +54,12 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--force-wellness", action="store_true", help="Ignore cached wellness refresh window")
     sync.add_argument("--activity-days", type=int, help="Override activity lookback (1-30 days)")
     sync.add_argument("--wellness-days", type=int, help="Override wellness lookback (1-30 days)")
+    sync.add_argument("--activity-interval", type=int, default=0, metavar="MINUTES",
+                      help="Enrich mode, for scheduled runs: skip the Garmin activity scan while the last one "
+                           "is younger than this (the watch enriches new activities in between)")
     watch = sub.add_parser("watch", help="One cheap poll of Intervals; enrich only what appeared "
-                                         "since the last poll (dry run unless --apply)")
+                                         "since the last poll, and read last night's wellness once the "
+                                         "watch has synced (dry run unless --apply)")
     watch.add_argument("--apply", action="store_true")
     run = sub.add_parser("run", help="Keep running: poll Intervals every minute, full sync every 30 minutes, "
                                      "health probe once a day. For Windows and anything without systemd "
@@ -105,6 +109,9 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+ACTIVITY_SCAN_MINUTES = 120     # run loop, enrich mode: the poll catches new activities in between
+
+
 def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int, sync_minutes: int,
              iterations: int | None = None, mode: str = "enrich") -> int:
     """What the three systemd timers do, in one long-running process.
@@ -133,7 +140,8 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                     results["activities"] = sync_activities(settings, garmin, intervals, store, apply=apply,
                                                             allow_upload=True)
                 else:
-                    results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply)
+                    results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply,
+                                                        scan_interval_minutes=ACTIVITY_SCAN_MINUTES)
                 results["wellness"] = sync_wellness(settings, garmin, intervals, store, apply=apply)
                 results["garmin_requests"] = garmin.requests
                 store.record_run("sync", results)
@@ -151,11 +159,15 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
                 result = sync_activities(settings, garmin, intervals, store, apply=apply, allow_upload=True,
                                          activity_days=2)
+                result["wellness"] = wellness_check(settings, garmin, intervals, store, apply=apply)
                 store.record_run("watch", {"apply": apply, "mode": mode, "garmin_requests": garmin.requests, **result})
                 if result.get("uploaded") or result.get("would_upload"):
                     log.info("Garmin poll: %d uploaded, %d would upload", result["uploaded"], result["would_upload"])
             else:
                 result = watch_once(settings, garmin, intervals, store, apply=apply)
+                wellness = wellness_check(settings, garmin, intervals, store, apply=apply)
+                if wellness.get("intervals_checks"):
+                    result["wellness"] = wellness
                 store.record_run("watch", {"apply": apply, "garmin_requests": garmin.requests, **result})
                 if result["new"]:
                     log.info("Poll: %d new, %d enriched, %d planned", result["new"], result["enriched"],
@@ -202,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
             print("Garmin authenticated; session tokens saved locally.")
             return 0
         scope = getattr(args, "scope", None)
-        lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync", "run")
+        lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync", "run", "watch")
                        else ("wellness",) if scope == "wellness"
                        else ("health",) if args.cmd == "health"
                        else () if args.cmd in ("status", "snapshot-account")   # no shared state
@@ -254,8 +266,9 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"apply": args.apply, "missing_codes": fields}, indent=2))
                     return 0
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                if args.cmd != "watch" and not (args.cmd == "backfill" and args.from_archive):
+                if args.cmd not in ("watch", "sync", "run") and not (args.cmd == "backfill" and args.from_archive):
                     garmin.login(interactive=False)      # fail early for one-off commands
+                # (the scheduled ones log in on their first Garmin request, so a run with nothing to do costs none)
                 if args.cmd == "snapshot-account":
                     raw = garmin.account_snapshot()
                     path = store.save_account_snapshot(raw)
@@ -322,9 +335,16 @@ def main(argv: list[str] | None = None) -> int:
                                     sync_minutes=args.sync_minutes, iterations=args.iterations, mode=args.mode)
                 if args.cmd == "watch":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
-                    result = watch_once(settings, garmin, intervals, store, apply=args.apply)
-                    store.record_run("watch", {"apply": args.apply, "garmin_requests": garmin.requests, **result})
-                    print(json.dumps({"apply": args.apply, "watch": result}, indent=2))
+                    result: dict = {}
+                    if "activities" in held:
+                        result = watch_once(settings, garmin, intervals, store, apply=args.apply)
+                    wellness = (wellness_check(settings, garmin, intervals, store, apply=args.apply)
+                                if "wellness" in held else {})
+                    record = {"apply": args.apply, "garmin_requests": garmin.requests, **result}
+                    if wellness.get("intervals_checks") or wellness.get("days_from_archive"):
+                        record["wellness"] = wellness
+                    store.record_run("watch", record)
+                    print(json.dumps({"apply": args.apply, "watch": result, "wellness": wellness}, indent=2))
                     return 0
                 if args.cmd == "backfill":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
@@ -374,7 +394,8 @@ def main(argv: list[str] | None = None) -> int:
                     results["mode"] = args.mode
                     if args.scope in ("all", "activities") and args.mode == "enrich":
                         results["activities"] = sync_enrich(settings, garmin, intervals, store,
-                            apply=args.apply, activity_days=args.activity_days)
+                            apply=args.apply, activity_days=args.activity_days,
+                            scan_interval_minutes=max(args.activity_interval, 0))
                     elif args.scope in ("all", "activities"):
                         if args.apply and not args.allow_activity_upload:
                             log.warning("Activity uploads disabled; add --allow-activity-upload ONLY AFTER "
