@@ -34,6 +34,18 @@ streams carry the Garmin-internal IDs (message 140, session fields 178 and
 205–207, record fields 137/138); adding them to your account is all it
 takes for the bridge to fill them.
 
+### Fluid and food logged for an activity
+
+Garmin keeps what you logged during or after an activity in its activity
+summary, not in the FIT file: `waterConsumed` (ml) and `caloriesConsumed`
+(kcal). The bridge writes them into two private activity fields it creates
+itself, `GarminFluidIntake` (ml) and `GarminCaloriesConsumed` (kcal), only
+where the activity has no value yet. Because a drink is usually logged after
+the ride, the summary is read once more about twelve hours after the start
+(one request per activity); `backfill --scope activities --from DATE --intake`
+fills the past from the archive without asking Garmin. Garmin records no
+sodium and no grams of carbohydrate, and no time of each intake.
+
 ## Wellness: an explicit, unit-checked table
 
 Only scalars with reviewed meaning are written, and only where the day has

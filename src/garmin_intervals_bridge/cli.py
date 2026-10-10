@@ -19,7 +19,15 @@ from .garmin import DAY_ENDPOINTS, GarminBlocked, GarminSource, parse_endpoints
 from .health import probe
 from .intervals import IntervalsClient
 from .store import InstanceBusy, Store, single_instance
-from .sync import sync_activities, sync_enrich, sync_wellness, sync_wellness_files, watch_once, wellness_check
+from .sync import (
+    backfill_intake,
+    sync_activities,
+    sync_enrich,
+    sync_wellness,
+    sync_wellness_files,
+    watch_once,
+    wellness_check,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -93,6 +101,10 @@ def build_parser() -> argparse.ArgumentParser:
                           help="Wellness: mirror the device's original wellness files of each day (monitoring, sleep, "
                                "HRV, Health Snapshots ...) into wellness-files/; one Garmin request per day, no "
                                "Intervals")
+    backfill.add_argument("--intake", action="store_true",
+                          help="Activities: fluid (ml) and food (kcal) logged in Garmin into the activity fields "
+                               "GarminFluidIntake / GarminCaloriesConsumed, from the archived summaries; no Garmin "
+                               "request")
     backfill.add_argument("--archive-only", action="store_true",
                           help="Activities: download the original FIT files that are not on disk yet and "
                                "leave Intervals alone (a local mirror of every recording)")
@@ -278,7 +290,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps({"apply": args.apply, "missing_codes": fields}, indent=2))
                     return 0
                 garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                if args.cmd not in ("watch", "sync", "run") and not (args.cmd == "backfill" and args.from_archive):
+                if args.cmd not in ("watch", "sync", "run") and not (
+                        args.cmd == "backfill" and (args.from_archive or args.intake)):
                     garmin.login(interactive=False)      # fail early for one-off commands
                 # (the scheduled ones log in on their first Garmin request, so a run with nothing to do costs none)
                 if args.cmd == "snapshot-account":
@@ -390,6 +403,9 @@ def main(argv: list[str] | None = None) -> int:
                                             pause_seconds=0 if args.from_archive else args.pause,
                                             endpoints=endpoints, from_archive=args.from_archive,
                                             rewrite=rewrite or None)
+                    elif args.intake:
+                        log.info("Backfill intake %s..%s from the archived summaries, no Garmin requests", start, end)
+                        out = backfill_intake(intervals, store, start=start, end=end, apply=args.apply)
                     elif args.mode == "upload" and not args.archive_only:
                         log.info("Backfill activities %s..%s, UPLOAD mode: originals of activities Intervals "
                                  "does not have, %.1fs pause", start, end, args.pause)

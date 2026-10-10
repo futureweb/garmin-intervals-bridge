@@ -12,6 +12,15 @@
 - `GarminSleepSpO2Avg` and `GarminSleepRespirationAvg` are written in the
   default profile again (an AI coach reading Garmin's names finds them).
 
+### Added
+
+- **Fluid and food per activity:** what you log in Garmin (`waterConsumed`
+  in ml, `caloriesConsumed` in kcal) goes into the activity fields
+  `GarminFluidIntake` and `GarminCaloriesConsumed`, created by the bridge.
+  The summary is read once more half a day after the activity (one request
+  per activity); `backfill --scope activities --from DATE --intake` fills
+  the past from the archive without asking Garmin.
+
 ## 0.3.1 — 2026-10-10
 
 Easier diagnosis next to a running container.

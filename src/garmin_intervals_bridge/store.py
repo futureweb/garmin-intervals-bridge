@@ -60,6 +60,14 @@ class Store:
             self.db.execute("ALTER TABLE enrichment ADD COLUMN mapping TEXT")  # 0.2.0: field definitions used
         self.db.commit()
 
+    def activity_intervals_id(self, garmin_id: str) -> str | None:
+        """The Intervals activity the bridge enriched or uploaded for this Garmin activity, if any."""
+        for table in ("enrichment", "activity"):
+            row = self.db.execute(f"SELECT intervals_id FROM {table} WHERE garmin_id=?", (garmin_id,)).fetchone()
+            if row and row[0]:
+                return str(row[0])
+        return None
+
     def activity_status(self, garmin_id: str) -> str | None:
         row = self.db.execute("SELECT status FROM activity WHERE garmin_id=?", (garmin_id,)).fetchone()
         return row[0] if row else None
