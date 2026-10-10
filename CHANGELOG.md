@@ -35,6 +35,14 @@
 - Garmin's own splits of every activity (typed splits and split summaries)
   in the activity extras; `backfill --archive-only` adds them to older
   archive entries without fetching anything else again.
+- **Health Snapshots in Intervals**: the day's first snapshot (heart rate,
+  RMSSD, SDRR, respiration, SpO₂, stress) in `GarminSnapshot…` fields with
+  a new chart. Where the official integration had written a snapshot into
+  resting HR, HRV or SpO₂, the night's value is put back; that is the only
+  case besides a filtered file in which the bridge replaces a value.
+- More of the night: lowest SpO₂, lowest and highest respiration, Body
+  Battery change during sleep and Garmin's HRV baseline band, all from the
+  archive (the HRV and SpO₂ charts show them).
 - The account snapshot also keeps goals, gear defaults, training plan
   details, the calendar of scheduled workouts, Garmin's FTP (latest and
   daily history, cycling and running), running tolerance and the activity

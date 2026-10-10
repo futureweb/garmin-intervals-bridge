@@ -62,7 +62,27 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminPredictedMarathonSeconds": CustomField("Garmin Predicted Marathon", "s"),
     "GarminHydrationGoalLitres": CustomField("Garmin Daily Hydration Goal", "L"),
     "GarminSweatLossLitres": CustomField("Garmin Estimated Sweat Loss", "L"),
+    # the night beyond its averages
+    "GarminSleepSpO2Lowest": CustomField("Garmin Sleep SpO2 Lowest", "%", 100),
+    "GarminSleepRespirationLowest": CustomField("Garmin Sleep Respiration Lowest", "breaths/min"),
+    "GarminSleepRespirationHighest": CustomField("Garmin Sleep Respiration Highest", "breaths/min"),
+    "GarminSleepBodyBatteryChange": CustomField("Garmin Body Battery Change During Sleep"),
+    "GarminHRVBaselineLow": CustomField("Garmin HRV Baseline Low", "ms"),
+    "GarminHRVBaselineHigh": CustomField("Garmin HRV Baseline High", "ms"),
+    # the day's first Health Snapshot (two minutes at rest), from the device's original files
+    "GarminSnapshotHR": CustomField("Garmin Health Snapshot Heart Rate", "bpm"),
+    "GarminSnapshotRMSSD": CustomField("Garmin Health Snapshot HRV (RMSSD)", "ms"),
+    "GarminSnapshotSDRR": CustomField("Garmin Health Snapshot HRV (SDRR)", "ms"),
+    "GarminSnapshotRespiration": CustomField("Garmin Health Snapshot Respiration", "breaths/min"),
+    "GarminSnapshotSpO2": CustomField("Garmin Health Snapshot SpO2", "%", 100),
+    "GarminSnapshotStress": CustomField("Garmin Health Snapshot Stress", None, 100),
 }
+
+# Index key of a Health Snapshot -> custom code, and native fields a snapshot import overwrites
+SNAPSHOT_CODES = {"hr_avg": "GarminSnapshotHR", "hrv_rmssd": "GarminSnapshotRMSSD", "hrv_sdrr": "GarminSnapshotSDRR",
+                  "respiration_avg": "GarminSnapshotRespiration", "spo2_avg": "GarminSnapshotSpO2",
+                  "stress_avg": "GarminSnapshotStress"}
+SNAPSHOT_NATIVE = {"restingHR": "hr_avg", "hrv": "hrv_rmssd", "spO2": "spo2_avg"}
 
 
 # Custom codes the "recommended" profile leaves out: duplicates of native fields,
@@ -208,6 +228,22 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     put(custom, "GarminSleepRespirationAvg", choose(sleep, ("averageRespirationValue",), high=60), high=60)
     put(custom, "GarminSkinTempDeviationC", choose(data.get("sleep"), ("avgSkinTempDeviationC",),
                                                      low=-20, high=20), low=-20, high=20)
+    put(custom, "GarminSleepSpO2Lowest", choose(sleep, ("lowestSpO2Value",), low=50, high=100), low=50, high=100)
+    put(custom, "GarminSleepRespirationLowest", choose(sleep, ("lowestRespirationValue",), low=1, high=60),
+        low=1, high=60)
+    put(custom, "GarminSleepRespirationHighest", choose(sleep, ("highestRespirationValue",), low=1, high=60),
+        low=1, high=60)
+    put(custom, "GarminSleepBodyBatteryChange", choose(data.get("sleep"), ("bodyBatteryChange",),
+                                                         low=-100, high=100), low=-100, high=100)
+    put(custom, "GarminHRVBaselineLow", choose(hrv, ("baseline", "balancedLow"), low=1, high=400), low=1, high=400)
+    put(custom, "GarminHRVBaselineHigh", choose(hrv, ("baseline", "balancedUpper"), low=1, high=400),
+        low=1, high=400)
+    # Health Snapshots: the first of the day (a morning check is what is comparable from day to day)
+    snapshots = [x for x in (data.get("health_snapshots") or []) if isinstance(x, dict)]
+    if snapshots:
+        first = sorted(snapshots, key=lambda x: str(x.get("start_utc") or ""))[0]
+        for key, code in SNAPSHOT_CODES.items():
+            put(custom, code, choose(first, (key,), high=400), high=400)
 
     # Energy totals change all day; only import after the day has finished.
     if target < today:
@@ -272,6 +308,26 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     if profile == "recommended":
         custom = {k: v for k, v in custom.items() if k not in RECOMMENDED_EXCLUDES}
     return native, custom
+
+
+def snapshot_corrections(existing: dict, native: dict, snapshots: list[dict]) -> dict:
+    """Native values a Health Snapshot import replaced, put back to the night's.
+
+    The official integration writes a Health Snapshot's heart rate, RMSSD and SpO2 into
+    resting HR, HRV and SpO2, so two minutes in a chair overwrite the overnight values.
+    A native value is put back only when it equals one of that day's snapshots and the
+    night's value differs: that is evidence, not a guess. The snapshot keeps its own fields.
+    """
+    if existing.get("locked") is True or not snapshots:
+        return {}
+    fixes: dict = {}
+    for field, key in SNAPSHOT_NATIVE.items():
+        current, night = existing.get(field), native.get(field)
+        if not isinstance(current, (int, float)) or night is None or abs(current - night) < 0.5:
+            continue
+        if any(isinstance(s.get(key), (int, float)) and abs(current - s[key]) < 0.5 for s in snapshots):
+            fixes[field] = night
+    return fixes
 
 
 def merge_wellness(existing: dict, native: dict, custom: dict, rewrite: set[str] | None = None) -> dict:

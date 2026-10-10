@@ -11,7 +11,7 @@ from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
 from .fit import sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
-from .mapping import map_wellness, merge_wellness
+from .mapping import map_wellness, merge_wellness, snapshot_corrections
 from .store import Store
 from .times import external_id_names, parse_utc
 
@@ -408,6 +408,12 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         log.info("Skipping locked wellness day %s", day)
         return False
     changes = merge_wellness(existing, native, custom, rewrite)
+    fixes = snapshot_corrections(existing, native, (raw.get("data") or {}).get("health_snapshots") or [])
+    if fixes:
+        log.info("Wellness %s: %s put back to the night's values (a Health Snapshot had replaced them)",
+                 day, ", ".join(sorted(fixes)))
+        changes.update(fixes)
+        metrics["snapshot_fixes"] = metrics.get("snapshot_fixes", 0) + 1
     if changes:
         metrics["days_with_changes"] += 1
         log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
@@ -484,8 +490,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                 continue
             store.mark_wellness(day)                     # the throttle counts the read, not the write
         try:
-            unlocked = _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply,
-                                           rewrite=rewrite)
+            unlocked = _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
+                                           apply=apply, rewrite=rewrite)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             metrics["failed"] += 1
             log.warning("Wellness %s not written: %s", day, type(exc).__name__)
@@ -494,6 +500,14 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             store.mark_wellness(day, written=True)
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
     return metrics
+
+
+def _with_files(store: Store, day: date, raw: dict) -> dict:
+    """The day's Health Snapshots (from the index of its original files) next to Garmin's JSON."""
+    snapshots = (store.load_wellness_index(day) or {}).get("health_snapshots") or []
+    if not snapshots:
+        return raw
+    return {**raw, "data": {**(raw.get("data") or {}), "health_snapshots": snapshots}}
 
 
 def _merge_partial(previous: dict | None, raw: dict) -> dict:
@@ -637,11 +651,25 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
 
     def write(day: date, raw: dict) -> None:
         try:
-            if _write_wellness_day(day, raw, current, settings, intervals, metrics, apply=apply) and apply:
+            if _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
+                                   apply=apply) and apply:
                 store.mark_wellness(day, written=True)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             metrics["failed"] += 1
             log.warning("Wellness %s not written: %s", day, type(exc).__name__)
+
+    def mirror(day: date) -> bool:
+        """The device's original files of a finished day; True when they were just saved."""
+        try:
+            saved = mirror_wellness_files(day, garmin, store) == "saved"
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            _backoff(store, f"wellness:files:{day}", VERIFY_BACKOFF_MINUTES, now_ts)
+            log.warning("Wellness files of %s not mirrored: %s; trying again later", day, type(exc).__name__)
+            return False
+        metrics["files"] += int(saved)
+        return saved
 
     for day in unwritten:                                # read by a dry run, never written: no new request
         if (raw := store.load_snapshot(day)) is not None:
@@ -709,18 +737,12 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         store.set_meta(f"wellness:final:{day}", "synced" if synced else "anyway")
         metrics["final"] += 1
         log.info("Final read of %s (%s)", day, "device synced after the day" if synced else "no sync by 20:00")
+        mirror(day)                                     # its Health Snapshots belong to the same write
         write(day, raw)
-        files_due.append(day)
 
-    for day in files_due:                               # the device's original files of a finished day
-        try:
-            if mirror_wellness_files(day, garmin, store) == "saved":
-                metrics["files"] += 1
-        except GarminBlocked:
-            raise
-        except Exception as exc:
-            _backoff(store, f"wellness:files:{day}", VERIFY_BACKOFF_MINUTES, now_ts)
-            log.warning("Wellness files of %s not mirrored: %s; trying again later", day, type(exc).__name__)
+    for day in files_due:                               # finished earlier, files still missing
+        if mirror(day) and (raw := store.load_snapshot(day)) is not None:
+            write(day, raw)
 
     if store.get_meta("wellness:pruned") != current.strftime("%Y-%m"):
         store.delete_meta("wellness:*:20*", now_ts - 40 * 86400)     # per-day bookkeeping, once a month

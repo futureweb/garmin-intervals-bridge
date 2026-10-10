@@ -9,7 +9,7 @@
 > training load untouched. It also syncs the daily wellness data the official sync misses
 > (night SpO₂, respiration, sleeping HR, Body Battery, HRV details, sleep stages, stress,
 > readiness, logged nutrition and total burn, endurance & hill scores, race predictions,
-> fitness age …), backfills the past, and comes with 19 charts for all of it in Intervals'
+> fitness age, Health Snapshots …), backfills the past, and comes with 20 charts for all of it in Intervals'
 > chart library. Runs on Linux (systemd timers), in a container, or on **Windows with one
 > command** ([guide](docs/WINDOWS.md)).
 
@@ -23,7 +23,7 @@
 </p>
 <p align="center">
 <img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/fitness-charts.png" alt="Fitness page with Garmin Bridge charts: sleep stages, stress and Body Battery, kcal consumed vs. burned" width="900"><br>
-<sub>Three of the nineteen charts from the chart library: sleep stages, stress & Body Battery, intake vs. total burn.</sub>
+<sub>Three of the twenty charts from the chart library: sleep stages, stress & Body Battery, intake vs. total burn.</sub>
 </p>
 
 Since the end of September 2026 the file Garmin hands to partners is not
@@ -201,14 +201,14 @@ already fetched, so it can be interrupted and resumed.
 
 ## Charts
 
-The bridge's nineteen fitness charts are published in Intervals' chart
+The bridge's twenty fitness charts are published in Intervals' chart
 library: Fitness page → a tab → *custom charts* → search for **Garmin
 Bridge** and tick what you want: readiness & recovery, sleep stages, sleep
 score & sleeping HR, SpO₂ & respiration, stress & Body Battery, HRV detail,
 nutrition intake vs. burn, macro energy, energy balance per week and month
 with weight, endurance & hill scores, VO₂max & fitness age, race
 predictions, intensity minutes & sweat loss, hydration, steps, body
-composition, skin temperature. Each is built from the fields the bridge
+composition, skin temperature, Health Snapshot. Each is built from the fields the bridge
 writes, with one axis per unit and values that hold until the next
 measurement carried across the days in between.
 

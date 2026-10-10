@@ -218,6 +218,7 @@ CHARTS: list[dict[str, Any]] = [
         "plots": [
             ("native", "spo2", "spo2", "dec1", "SpO2", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
             ("native", "spo2", "spo2", "dec1", "SpO2 7d", "line", "moving_avg", 7, "#1F77B400", "#1F77B4FF"),
+            ("custom", "GarminSleepSpO2Lowest", "Low", "dot", "none", None, "#17BECF66", "#17BECFFF", "", "spo2"),
             ("native", "respiration", "/min", "dec1", "Resp.", "dot", "none", None, "#D6272866", "#D62728FF"),
             ("native", "respiration", "/min", "dec1", "Resp 7d", "line", "moving_avg", 7, "#D6272800", "#D62728FF"),
         ],
@@ -280,6 +281,23 @@ CHARTS: list[dict[str, Any]] = [
             ("native", "hrv", "ms", "dec0", "HRV", "bars", "none", None, "#1F77B44D", "#1F77B4FF"),
             ("custom", "GarminHRV5MinHigh", "5min", "dot", "none", None, "#9467BD66", "#9467BDFF", "", "ms"),
             ("custom", "GarminHRV7DayAvg", "7d avg", "line", "fill_in", None, "#2CA02C00", "#2CA02CFF", "", "ms"),
+            ("custom", "GarminHRVBaselineLow", "Base lo", "line", "fill_in", None, "#7F7F7F00", "#7F7F7F99", "", "ms"),
+            ("custom", "GarminHRVBaselineHigh", "Base hi", "line", "fill_in", None, "#7F7F7F00", "#7F7F7F99", "", "ms"),
+        ],
+    },
+    {
+        "name": "Garmin Bridge: Health Snapshot",
+        "title": "First Health Snapshot of the day: HRV as RMSSD and SDRR (left axis), heart rate and "
+                 "respiration (right axes)",
+        "y": "ms",
+        "y2": "bpm",
+        "height": 180,
+        "plots": [
+            ("custom", "GarminSnapshotRMSSD", "RMSSD", "dot", "none", None, "#1F77B4AA", "#1F77B4FF", "", "ms"),
+            ("custom", "GarminSnapshotSDRR", "SDRR", "dot", "none", None, "#9467BDAA", "#9467BDFF", "", "ms"),
+            ("custom", "GarminSnapshotHR", "HR", "dot", "none", None, "#D62728AA", "#D62728FF", "", "bpm"),
+            ("custom", "GarminSnapshotRespiration", "Resp.", "dot", "none", None, "#2CA02CAA", "#2CA02CFF", "",
+             "/min", "dec1"),
         ],
     },
 ]

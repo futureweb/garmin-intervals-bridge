@@ -87,6 +87,11 @@ definitions with the same code are reused, never changed.
 | `GarminPredicted5KSeconds`, `…10KSeconds`, `…HalfSeconds`, `…MarathonSeconds` | race predictions | both |
 | `GarminSweatLossLitres` | `hydration.sweatLossInML / 1000` | both |
 | `GarminVO2MaxCycling` | `max_metrics.cycling` | both |
+| `GarminSleepSpO2Lowest` | `sleep.dailySleepDTO.lowestSpO2Value` | both |
+| `GarminSleepRespirationLowest`, `…Highest` | `sleep.dailySleepDTO.lowest/highestRespirationValue` | both |
+| `GarminSleepBodyBatteryChange` | `sleep.bodyBatteryChange` (may be negative) | both |
+| `GarminHRVBaselineLow`, `…High` | `hrv.hrvSummary.baseline.balancedLow/balancedUpper` (Garmin's "balanced" band) | both |
+| `GarminSnapshotHR`, `…RMSSD`, `…SDRR`, `…Respiration`, `…SpO2`, `…Stress` | the day's first Health Snapshot, from the device's original wellness files (session averages) | both |
 | `GarminSleepSpO2Avg`, `GarminSleepRespirationAvg` | duplicates of native `spO2` / `respiration` | `all` only |
 | `GarminStepsGoal`, `GarminHydrationGoalLitres` | targets, not measurements | `all` only |
 | `GarminAchievableFitnessAge` | derived from fitness age | `all` only |
@@ -94,6 +99,17 @@ definitions with the same code are reused, never changed.
 Everything Garmin returns is archived as `raw/YYYY-MM-DD.json` regardless
 of whether it is mapped, so a future mapping can be added without
 re-fetching the past.
+
+### Health Snapshots and the native fields
+
+The official integration writes a Health Snapshot's heart rate, RMSSD and
+SpO2 into Intervals' resting HR, HRV and SpO2, replacing the night's values
+with two minutes in a chair. When a native value equals one of that day's
+snapshots and the night's value differs, the bridge puts the night's value
+back (the only case besides a filtered file in which it replaces an existing
+value); the snapshot keeps its own `GarminSnapshot…` fields. Untick SpO2 in
+Intervals' Garmin wellness settings: the official integration only ever
+delivers it from snapshots, the bridge brings the overnight average.
 
 ## Notes on enrich mode
 

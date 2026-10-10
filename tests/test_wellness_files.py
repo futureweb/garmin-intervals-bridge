@@ -179,3 +179,90 @@ def test_account_snapshot_reaches_back_in_chunks_only_when_asked(tmp_path):
     assert all(c[2].get("sport") == "CYCLING" for c in src.client.calls
                if c[0] == "get_functional_threshold_power_range" and c[2].get("sport") == "CYCLING")
     assert len(full["data"]["scheduled_workouts"]) == 83 and full["history_start"] == "2020-01-01"
+
+
+# ---- what reaches Intervals ----
+
+def night(**sleep):
+    return {"data": {
+        "stats": {"restingHeartRate": 49},
+        "hrv": {"hrvSummary": {"lastNightAvg": 38, "baseline": {"balancedLow": 34, "balancedUpper": 47}}},
+        "sleep": {"bodyBatteryChange": 61, "dailySleepDTO": {
+            "sleepTimeSeconds": 28080, "averageSpO2Value": 95, "lowestSpO2Value": 82,
+            "lowestRespirationValue": 7.0, "highestRespirationValue": 20.0, **sleep}}}}
+
+
+def test_the_night_beyond_its_averages_and_the_first_snapshot_of_the_day():
+    from garmin_intervals_bridge.mapping import map_wellness
+    raw = night()
+    raw["data"]["health_snapshots"] = [
+        {"start_utc": "2026-10-09T16:00:00+00:00", "hr_avg": 70, "hrv_rmssd": 30},
+        {"start_utc": "2026-10-09T05:30:00+00:00", "hr_avg": 63, "hrv_rmssd": 37, "hrv_sdrr": 51,
+         "respiration_avg": 17.94, "spo2_avg": 99, "stress_avg": 28}]
+    native, custom = map_wellness(raw, DAY, date(2026, 10, 10), "all")
+    assert custom["GarminSleepSpO2Lowest"] == 82 and custom["GarminSleepRespirationLowest"] == 7.0
+    assert custom["GarminSleepRespirationHighest"] == 20.0 and custom["GarminSleepBodyBatteryChange"] == 61
+    assert custom["GarminHRVBaselineLow"] == 34 and custom["GarminHRVBaselineHigh"] == 47
+    assert custom["GarminSnapshotHR"] == 63 and custom["GarminSnapshotRMSSD"] == 37      # the morning one
+    assert custom["GarminSnapshotSDRR"] == 51 and custom["GarminSnapshotSpO2"] == 99
+    assert native["restingHR"] == 49 and native["hrv"] == 38 and native["spO2"] == 95  # natives stay the night's
+
+
+def test_a_snapshot_that_replaced_the_night_is_put_back_and_nothing_else_is():
+    from garmin_intervals_bridge.mapping import snapshot_corrections
+    snaps = [{"hr_avg": 63, "hrv_rmssd": 37, "spo2_avg": 99}]
+    native = {"restingHR": 49, "hrv": 38, "spO2": 95}
+    assert snapshot_corrections({"restingHR": 63, "hrv": 37, "spO2": 99}, native, snaps) == native
+    assert snapshot_corrections({"restingHR": 52, "hrv": 37, "spO2": 95}, native, snaps) == {"hrv": 38}  # 52: not a snapshot
+    assert snapshot_corrections({"restingHR": 63, "locked": True}, native, snaps) == {}
+    assert snapshot_corrections({"restingHR": 63}, native, []) == {}
+
+
+class WriteIntervals:
+    def __init__(self, record):
+        self.record = dict(record)
+        self.writes = []
+
+    def wellness(self, day):
+        return dict(self.record)
+
+    def write_wellness(self, day, changes):
+        self.writes.append((day, changes))
+        self.record.update(changes)
+
+    def provision_fields(self, apply, needed):
+        return list(needed)
+
+
+def test_replaying_the_archive_writes_snapshot_fields_and_puts_the_night_back(tmp_path):
+    from garmin_intervals_bridge.sync import sync_wellness
+    st = Store(tmp_path)
+    st.save_snapshot(DAY, night())
+    mirror_wellness_files(DAY, FilesGarmin(bundle([("1_ACTIVITY.fit", snapshot_fit())])), st)
+    i = WriteIntervals({"restingHR": 63, "hrv": 37.0, "spO2": 99.0, "sleepSecs": 28080})
+    s = SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), wellness_days=3,
+                        wellness_profile="all", wellness_refresh_hours=4)
+    out = sync_wellness(s, None, i, st, apply=True, days=[DAY], today=date(2026, 10, 10), from_archive=True)
+    (day, changes), = i.writes
+    assert changes["restingHR"] == 49 and changes["hrv"] == 38 and changes["spO2"] == 95
+    assert changes["GarminSnapshotRMSSD"] == 37 and changes["GarminSnapshotHR"] == 63
+    assert out["snapshot_fixes"] == 1
+    st.close()
+
+
+def test_the_final_read_saves_the_files_first_so_the_snapshot_is_in_the_same_write(tmp_path):
+    from test_wellness_schedule import Garmin, at
+    st = Store(tmp_path)
+    st.set_meta("wellness:since", "test")
+    st.set_meta("wellness:official_sleep", "2026-10-09")
+    st.set_meta("wellness:morning:2026-10-10", "ok")
+    g = Garmin()
+    g.wellness_files = lambda day: bundle([("1_ACTIVITY.fit", snapshot_fit())])
+    i = WriteIntervals({})
+    s = SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), wellness_days=2,
+                        wellness_profile="all")
+    m = wellness_check(s, g, i, st, apply=True, now=at(20, 1), throttle=False)    # read anyway at 20:00
+    assert m["final"] == 1 and m["files"] == 1
+    (day, changes), = i.writes
+    assert day == DAY and changes["GarminSnapshotRMSSD"] == 37 and "sleepSecs" in changes
+    st.close()
