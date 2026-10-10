@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-10-10
+
+Easier diagnosis next to a running container.
 
 ### Added
 
