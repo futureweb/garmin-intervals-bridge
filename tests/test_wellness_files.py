@@ -266,3 +266,16 @@ def test_the_final_read_saves_the_files_first_so_the_snapshot_is_in_the_same_wri
     (day, changes), = i.writes
     assert day == DAY and changes["GarminSnapshotRMSSD"] == 37 and "sleepSecs" in changes
     st.close()
+
+
+def test_the_files_backfill_leaves_the_running_day_to_its_final_read(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import cli
+    seen = []
+    monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
+    monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+    monkeypatch.setattr(cli.GarminSource, "login", lambda self, interactive=True: None)
+    monkeypatch.setattr(cli, "sync_wellness_files", lambda s, g, st, days, pause_seconds: seen.extend(days) or {})
+    today = datetime.now(ZoneInfo("Europe/Vienna")).date()
+    assert cli.main(["backfill", "--scope", "wellness", "--wellness-files", "--from", "2026-01-01"]) == 0
+    assert seen and max(seen) < today

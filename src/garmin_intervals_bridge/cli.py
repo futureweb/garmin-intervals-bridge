@@ -363,7 +363,10 @@ def main(argv: list[str] | None = None) -> int:
                     if start > end:
                         raise ValueError("--from must not be after --to")
                     if args.scope == "wellness" and args.wellness_files:
-                        days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
+                        # only finished days: today's files are fetched with its final read, complete
+                        today = datetime.now(settings.timezone).date()
+                        days = [start + timedelta(days=n) for n in range((end - start).days + 1)
+                                if start + timedelta(days=n) < today]
                         log.info("Backfill wellness files: %d days, one Garmin request each, %.1fs pause",
                                  len(days), args.pause)
                         out = sync_wellness_files(settings, garmin, store, days=days, pause_seconds=args.pause)
