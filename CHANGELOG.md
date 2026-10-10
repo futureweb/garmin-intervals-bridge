@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Documentation
+
+- README: "Use it with an AI coach (MCP)" with the sister project's install
+  channels (PyPI via `uvx`, Docker Hub, Claude Desktop bundle, MCP Registry).
+
 ## 0.3.1 — 2026-10-10
 
 Easier diagnosis next to a running container.
