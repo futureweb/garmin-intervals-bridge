@@ -29,9 +29,11 @@ class GarminFake:
         self.details += 1
         return next(a for a in self.acts if str(a["activityId"]) == str(gid))
 
-    def activity_extras(self, activity):
+    def activity_extras(self, activity, keys=None):
         self.extras_calls += 1
-        return {"weather": {"temp": 12}, "gear": None, "exercise_sets": None, "errors": {}}
+        found = {"weather": {"temp": 12}, "gear": None, "exercise_sets": None, "typed_splits": {"splits": []},
+                 "split_summaries": {"splitSummaries": []}}
+        return {**{k: v for k, v in found.items() if keys is None or k in keys}, "errors": {}}
 
 
 class IntervalsFake:
@@ -114,8 +116,9 @@ def test_archive_waits_for_the_extras_of_a_fresh_activity(tmp_path):
     from garmin_intervals_bridge.sync import archive_activity
     st, g = Store(tmp_path), GarminFake()
     activity = g.acts[0]
-    g.activity_extras = lambda a: {"weather": None, "gear": None, "exercise_sets": None,
-                                   "errors": {"weather": "HTTPError"}}
+    g.activity_extras = lambda a, keys=None: {"weather": None, "gear": None, "exercise_sets": None,
+                                              "typed_splits": None, "split_summaries": None,
+                                              "errors": {"weather": "HTTPError"}}
     just_after = datetime(2026, 10, 7, 9, 0, tzinfo=timezone.utc)
     assert archive_activity("42", activity, g, st, now=just_after) == "pending"
     assert st.activity_json_path("42").is_file() and not st.activity_extras_path("42").is_file()

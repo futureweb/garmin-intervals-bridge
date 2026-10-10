@@ -18,7 +18,7 @@ from .garmin import DAY_ENDPOINTS, GarminBlocked, GarminSource, parse_endpoints
 from .health import probe
 from .intervals import IntervalsClient
 from .store import InstanceBusy, Store, single_instance
-from .sync import sync_activities, sync_enrich, sync_wellness, watch_once, wellness_check
+from .sync import sync_activities, sync_enrich, sync_wellness, sync_wellness_files, watch_once, wellness_check
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -86,6 +86,10 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--endpoints", default="essential",
                           help="Wellness: 'essential' (per-day measurements, default), 'all', or a comma-separated "
                                "list of endpoint keys (e.g. heart_rates,steps_intraday) to add to days fetched before")
+    backfill.add_argument("--wellness-files", action="store_true",
+                          help="Wellness: mirror the device's original wellness files of each day (monitoring, sleep, "
+                               "HRV, Health Snapshots ...) into wellness-files/; one Garmin request per day, no "
+                               "Intervals")
     backfill.add_argument("--archive-only", action="store_true",
                           help="Activities: download the original FIT files that are not on disk yet and "
                                "leave Intervals alone (a local mirror of every recording)")
@@ -104,8 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     pending.add_argument("--i-checked-intervals", action="store_true", required=True,
                          help="Confirm you checked Intervals for duplicates and verified it is absent")
     sub.add_parser("status", help="Show pending uploads requiring manual reconciliation")
-    sub.add_parser("snapshot-account", help="Archive what is not a time series: profile, settings, devices, zones, "
-                                            "gear, personal records, badges, workouts, training plans")
+    account = sub.add_parser("snapshot-account", help="Archive what is not a time series: profile, settings, "
+                                                      "devices, zones, gear, personal records, badges, workouts, "
+                                                      "training plans, goals, the calendar, FTP and running "
+                                                      "tolerance of the recent weeks")
+    account.add_argument("--history-from", metavar="DATE",
+                         help="Also the calendar and Garmin's FTP / running tolerance series since DATE (YYYY-MM-DD)")
     return parser
 
 
@@ -270,7 +278,9 @@ def main(argv: list[str] | None = None) -> int:
                     garmin.login(interactive=False)      # fail early for one-off commands
                 # (the scheduled ones log in on their first Garmin request, so a run with nothing to do costs none)
                 if args.cmd == "snapshot-account":
-                    raw = garmin.account_snapshot()
+                    raw = garmin.account_snapshot(
+                        history_start=date.fromisoformat(args.history_from) if args.history_from else None,
+                        today=datetime.now(settings.timezone).date())
                     path = store.save_account_snapshot(raw)
                     print(json.dumps({"file": str(path), "sections": sorted(raw["data"]), "errors": raw["errors"],
                                       "garmin_requests": garmin.requests}, indent=2))
@@ -352,7 +362,12 @@ def main(argv: list[str] | None = None) -> int:
                     end = date.fromisoformat(args.end) if args.end else datetime.now(settings.timezone).date()
                     if start > end:
                         raise ValueError("--from must not be after --to")
-                    if args.scope == "wellness":
+                    if args.scope == "wellness" and args.wellness_files:
+                        days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
+                        log.info("Backfill wellness files: %d days, one Garmin request each, %.1fs pause",
+                                 len(days), args.pause)
+                        out = sync_wellness_files(settings, garmin, store, days=days, pause_seconds=args.pause)
+                    elif args.scope == "wellness":
                         days = [start + timedelta(days=n) for n in range((end - start).days + 1)]
                         if args.from_archive:
                             log.info("Backfill wellness from the archive: %d days, no Garmin requests", len(days))

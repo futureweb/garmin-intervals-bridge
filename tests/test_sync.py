@@ -33,8 +33,10 @@ class GarminFake:
     def activity(self, activity_id):
         return next(a for a in self.acts if str(a["activityId"]) == str(activity_id))
 
-    def activity_extras(self, activity):
-        return {"weather": {"temp": 20}, "gear": None, "exercise_sets": None, "errors": {}}
+    def activity_extras(self, activity, keys=None):
+        found = {"weather": {"temp": 20}, "gear": None, "exercise_sets": None, "typed_splits": {"splits": []},
+                 "split_summaries": {"splitSummaries": []}}
+        return {**{k: v for k, v in found.items() if keys is None or k in keys}, "errors": {}}
 
     def snapshot(self, day, endpoints=None):
         return sample()

@@ -61,23 +61,37 @@ garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --pause 3 
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --from-archive --apply   # after new fields
 garmin-intervals-bridge backfill --scope wellness   --from 2026-01-01 --endpoints heart_rates,floors --force-wellness --apply   # add endpoints to fetched days
 garmin-intervals-bridge backfill --scope activities --from 2020-01-01 --archive-only --pause 3   # mirror every original FIT + summary, no Intervals
+garmin-intervals-bridge backfill --scope wellness   --from 2020-01-01 --wellness-files --pause 3 # the device's original wellness files, no Intervals
+garmin-intervals-bridge snapshot-account --history-from 2020-01-01                               # once: calendar, FTP and running-tolerance history
 ```
 
 The archive is yours: `raw/<day>.json` holds every endpoint's full answer for
 that day (30 of them with `--endpoints all`, intraday series included),
 `raw/activities/<id>.json` Garmin's summary of an activity,
-`raw/activities/<id>.extras.json` its weather, gear and exercise sets, and
-`fits/<id>.fit` the recording itself. `snapshot-account` adds what is not a
-time series (profile, settings, devices, zones, gear, personal records,
-badges, workouts, training plans) as `raw/account/<date>.json`;
+`raw/activities/<id>.extras.json` its weather, gear, exercise sets and Garmin's
+own splits (run/walk/stand, climbs, intervals), and `fits/<id>.fit` the
+recording itself. `wellness-files/<day>.zip` keeps the device's original
+wellness files of each day exactly as Garmin delivers them (all-day heart
+rate, respiration, stress, SpO₂ readings, overnight HRV, sleep, skin
+temperature, Health Snapshots and a few dozen undocumented Garmin messages);
+`wellness-files/<day>.json` lists what is inside, with every FIT file
+CRC-checked and each Health Snapshot summarised (heart rate, RMSSD and SDRR,
+respiration, SpO₂, stress). `snapshot-account` adds what is not a time
+series (profile, settings, devices, zones, gear, personal records, badges,
+goals, workouts, training plans with their details, the calendar, Garmin's
+FTP and running tolerance of the recent weeks) as `raw/account/<date>.json`;
 `garmin-intervals-bridge-account.timer` runs it monthly. Nothing is ever deleted; later fields or other
-targets can be fed from the archive without asking Garmin again.
+targets can be fed from the archive without asking Garmin again. ECG
+recordings are not among the files Garmin offers this way.
 
 The regular runs keep the mirror complete on their own: the watch fetches the
 recording of a new activity, the next half-hourly sync adds its summary and
 extras (in upload mode the upload run does both), so `--archive-only` is only
-ever needed for the past. Weather and gear that Garmin has not attached yet
-are asked for again on the next run during the activity's first two days.
+ever needed for the past; run against an older archive, it adds just what an
+entry lacks (the splits, for example). Weather and gear that Garmin has not
+attached yet are asked for again on the next run during the activity's first
+two days. A finished day's wellness files are fetched with its final read,
+one request per day.
 
 Each wellness day costs about 25 Garmin requests (12 with `--endpoints essential`), each activity one original
 download; the pause keeps a long backfill polite. Runs are resumable: days and

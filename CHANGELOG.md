@@ -22,6 +22,24 @@
   watch enriches new activities in between. About 75 requests on a normal
   day instead of about 310.
 
+### Added
+
+- **The device's original wellness files.** Every finished day's ZIP of the
+  watch's own wellness FIT files is mirrored to `wellness-files/<day>.zip`
+  with its final read (one request a day): all-day heart rate, respiration
+  per minute, stress, SpO₂ readings, overnight HRV, sleep, skin temperature,
+  and Health Snapshots, which exist nowhere else. An index next to it lists
+  the files (each CRC-checked) and summarises every Health Snapshot (heart
+  rate, RMSSD and SDRR, respiration, SpO₂, stress). `backfill --scope
+  wellness --wellness-files` fetches the past.
+- Garmin's own splits of every activity (typed splits and split summaries)
+  in the activity extras; `backfill --archive-only` adds them to older
+  archive entries without fetching anything else again.
+- The account snapshot also keeps goals, gear defaults, training plan
+  details, the calendar of scheduled workouts, Garmin's FTP (latest and
+  daily history, cycling and running), running tolerance and the activity
+  type table; `snapshot-account --history-from DATE` reaches back once.
+
 ### Fixed
 
 - The regular enrich and upload runs now archive Garmin's summary, weather,

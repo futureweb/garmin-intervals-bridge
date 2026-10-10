@@ -6,7 +6,7 @@ import logging
 import re
 import sys
 import time
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -126,7 +126,18 @@ ACCOUNT_ENDPOINTS = {
     "earned_badges": "get_earned_badges",
     "workouts": "get_workouts",
     "training_plans": "get_training_plans",
+    "cycling_ftp": "get_cycling_ftp",
+    "activity_types": "get_activity_types",
 }
+# Garmin series kept with the account snapshot: (key, method, positional args after the range, keywords)
+ACCOUNT_RANGES = (
+    ("ftp_history_cycling", "get_functional_threshold_power_range", (), {"sport": "CYCLING", "aggregation": "daily"}),
+    ("ftp_history_running", "get_functional_threshold_power_range", (), {"sport": "RUNNING", "aggregation": "daily"}),
+    ("running_tolerance", "get_running_tolerance", ("daily",), {}),
+)
+RANGE_CHUNK_DAYS = 180
+# What Garmin knows about an activity beyond the recording. Sets only exist for some types.
+EXTRA_KEYS = ("weather", "gear", "exercise_sets", "typed_splits", "split_summaries")
 
 # Activity types whose Garmin summary carries exercise sets (names, reps, weights).
 SET_ACTIVITY_TYPES = ("strength_training", "hiit", "indoor_cardio", "cardio_training", "yoga", "pilates")
@@ -252,16 +263,22 @@ class GarminSource:
             result.setdefault("duration", result["summaryDTO"].get("duration"))
         return result
 
-    def activity_extras(self, activity: dict) -> dict:
-        """What Garmin knows about an activity beyond the recording: weather, gear, exercise sets."""
+    def activity_extras(self, activity: dict, keys: tuple[str, ...] | None = None) -> dict:
+        """What Garmin knows about an activity beyond the recording: weather, gear, exercise
+        sets, and its own splits (run/walk/stand, climbs, intervals; computed on Garmin's side).
+        `keys` limits the reads to what an older archive entry still lacks."""
         gid = str(activity.get("activityId"))
-        out: dict = {"weather": None, "gear": None, "exercise_sets": None, "errors": {}}
+        wanted = keys or EXTRA_KEYS
+        out: dict = {key: None for key in wanted}
+        out["errors"] = {}
         # the list endpoint says activityType, the detail endpoint activityTypeDTO
         kind = activity.get("activityType") or activity.get("activityTypeDTO") or {}
         type_key = str(kind.get("typeKey") or "") if isinstance(kind, dict) else ""
-        calls = [("weather", "get_activity_weather"), ("gear", "get_activity_gear")]
-        if any(t in type_key for t in SET_ACTIVITY_TYPES):
-            calls.append(("exercise_sets", "get_activity_exercise_sets"))
+        methods = {"weather": "get_activity_weather", "gear": "get_activity_gear",
+                   "exercise_sets": "get_activity_exercise_sets", "typed_splits": "get_activity_typed_splits",
+                   "split_summaries": "get_activity_split_summaries"}
+        calls = [(key, methods[key]) for key in wanted
+                 if key != "exercise_sets" or any(t in type_key for t in SET_ACTIVITY_TYPES)]
         for key, method in calls:
             try:
                 out[key] = self._call(method, gid)
@@ -271,10 +288,72 @@ class GarminSource:
                 out["errors"][key] = type(exc).__name__
         return out
 
-    def account_snapshot(self) -> dict:
-        """One read of everything about the account that is not a time series."""
+    def wellness_files(self, day: date) -> bytes | None:
+        """The device's original wellness files of one day (monitoring, sleep, HRV, skin
+        temperature, Health Snapshots ...) as Garmin's ZIP; None when Garmin has none."""
+        try:
+            return self._call("download_health_snapshot", day.isoformat())
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            if _status_code(exc) == 404:
+                return None
+            raise
+
+    def _account_extras(self, raw: dict, today: date, history_start: date | None) -> None:
+        """Goals, gear defaults, plan details, the calendar and Garmin's own series (FTP, running
+        tolerance): the recent weeks on every snapshot, everything since `history_start` once."""
+        def keep(key: str, call) -> Any:
+            try:
+                return call()
+            except GarminBlocked:
+                raise
+            except Exception as exc:
+                raw["errors"][key] = type(exc).__name__
+                return None
+
+        data = raw["data"]
+        data["goals"] = {status: keep(f"goals:{status}", lambda st=status: self._call("get_goals", st))
+                         for status in ("active", "future", "past")}
+        number = getattr(self._client(), "profile_id", None) or (data.get("user_profile") or {}).get("id")
+        if number:
+            data["gear_defaults"] = keep("gear_defaults", lambda: self._call("get_gear_defaults", str(number)))
+        plans = (data.get("training_plans") or {}).get("trainingPlanList") if isinstance(
+            data.get("training_plans"), dict) else None
+        for plan in plans if isinstance(plans, list) else []:
+            plan_id = str((plan or {}).get("trainingPlanId") or "")
+            if plan_id.isdecimal():
+                method = ("get_adaptive_training_plan_by_id" if plan.get("trainingPlanCategory") == "FBT_ADAPTIVE"
+                          else "get_training_plan_by_id")
+                data.setdefault("training_plan_details", {})[plan_id] = keep(
+                    f"training_plan:{plan_id}", lambda m=method, i=plan_id: self._call(m, i))
+        start = history_start or today - timedelta(days=62)
+        month = date(start.year, start.month, 1)
+        last = date(today.year + (today.month == 12), today.month % 12 + 1, 1)      # through next month
+        while month <= last:
+            label = f"{month.year}-{month.month:02d}"
+            data.setdefault("scheduled_workouts", {})[label] = keep(
+                f"scheduled_workouts:{label}", lambda y=month.year, mo=month.month: self._call(
+                    "get_scheduled_workouts", y, mo))
+            month = date(month.year + (month.month == 12), month.month % 12 + 1, 1)
+        for key, method, args, kwargs in ACCOUNT_RANGES:
+            chunks = []
+            lo = start
+            while lo <= today:
+                hi = min(lo + timedelta(days=RANGE_CHUNK_DAYS - 1), today)
+                chunks.append({"start": lo.isoformat(), "end": hi.isoformat(), "data": keep(
+                    f"{key}:{lo}", lambda a=lo, b=hi: self._call(method, a.isoformat(), b.isoformat(), *args,
+                                                                  **kwargs))})
+                lo = hi + timedelta(days=1)
+            data[key] = chunks
+
+    def account_snapshot(self, history_start: date | None = None, today: date | None = None) -> dict:
+        """One read of everything about the account that is not a time series, plus the
+        recent weeks of Garmin's account-level series; `history_start` reaches further back."""
         from datetime import datetime, timezone
         raw: dict = {"taken": datetime.now(timezone.utc).isoformat(timespec="seconds"), "data": {}, "errors": {}}
+        if history_start:
+            raw["history_start"] = history_start.isoformat()
         for key, method in ACCOUNT_ENDPOINTS.items():
             try:
                 raw["data"][key] = self._call(method)
@@ -305,6 +384,7 @@ class GarminSource:
                 raise
             except Exception as exc:
                 raw["errors"]["gear"] = type(exc).__name__
+        self._account_extras(raw, today or datetime.now().date(), history_start)
         return raw
 
     def original_fit(self, activity_id: int | str) -> bytes:

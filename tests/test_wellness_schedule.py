@@ -25,9 +25,14 @@ class Garmin:
 
     def __init__(self):
         self.reads = []
+        self.files = []
         self.sleep = False
         self.readiness = False
         self.last_sync = None            # naive GMT string, as Garmin sends it
+
+    def wellness_files(self, day):
+        self.files.append(day)
+        return None                                  # no files that day (recorded, not asked again)
 
     def snapshot(self, day, endpoints=None):
         self.reads.append((day, endpoints))

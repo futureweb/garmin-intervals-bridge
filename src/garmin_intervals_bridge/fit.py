@@ -9,6 +9,7 @@ lives exactly in those unknown messages and fields.
 """
 from __future__ import annotations
 
+import datetime as _dt
 import hashlib
 import io
 import struct
@@ -194,3 +195,70 @@ def compare_fit(first: Path, second: Path) -> dict:
         "unknown_field_samples_a": a["unknown_fields"],
         "unknown_field_samples_b": b["unknown_fields"],
     }
+
+
+# ---- a day's original wellness files ----
+
+MAX_WELLNESS_MEMBERS = 5000                 # a busy day is ~120 files
+MAX_WELLNESS_BYTES = 128 * 1024 * 1024      # uncompressed, all members together
+FIT_EPOCH = 631065600                       # 1989-12-31T00:00:00Z in Unix seconds
+SNAPSHOT_FIELDS = {                         # session field -> name in the index
+    "avg_heart_rate": "hr_avg", "min_heart_rate": "hr_min", "max_heart_rate": "hr_max",
+    "rmssd_hrv": "hrv_rmssd", "sdrr_hrv": "hrv_sdrr", "enhanced_avg_respiration_rate": "respiration_avg",
+    "avg_spo2": "spo2_avg", "avg_stress": "stress_avg", "total_elapsed_time": "duration_s",
+}
+
+
+def _is_health_snapshot(session: dict) -> bool:
+    name = str(session.get("sport_profile_name") or "")
+    return "snapshot" in name.lower() or session.get("sport") in (60, "60")
+
+
+def wellness_bundle_index(data: bytes) -> dict:
+    """Check a day's wellness download (a ZIP of the device's original FIT files) and describe it.
+
+    Every member is CRC-checked; damaged ones are listed, not dropped, because the ZIP is
+    kept exactly as Garmin delivered it. Health Snapshots (two-minute recordings stored
+    as an activity file) are summarised so later mappings need not decode the files again.
+    Nothing personal from the files (the user profile message carries the name) goes into
+    the index.
+    """
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(data))
+    except zipfile.BadZipFile as exc:
+        raise ValueError("Garmin wellness download is not a ZIP") from exc
+    members = [i for i in archive.infolist() if not i.is_dir()]
+    if len(members) > MAX_WELLNESS_MEMBERS or sum(i.file_size for i in members) > MAX_WELLNESS_BYTES:
+        raise ValueError("Garmin wellness download is implausibly large")
+    kinds: dict[str, int] = {}
+    invalid: list[str] = []
+    snapshots: list[dict] = []
+    for info in members:
+        name = Path(info.filename).name
+        # "<file id>_<KIND>.fit", where the kind itself may contain underscores (SLEEP_DATA, HRV_STATUS)
+        kind = name.split("_", 1)[1].rsplit(".", 1)[0].upper() if "_" in name else "OTHER"
+        kinds[kind] = kinds.get(kind, 0) + 1
+        content = archive.read(info)
+        try:
+            validate_fit(content)
+        except ValueError:
+            invalid.append(name)
+            continue
+        if kind != "ACTIVITY":
+            continue
+        messages, _ = decode_fit(content)
+        for session in messages.get("session", []):
+            if not _is_health_snapshot(session):
+                continue
+            start = session.get("start_time")
+            entry: dict = {"file": name, "start_utc": (
+                _dt.datetime.fromtimestamp(start + FIT_EPOCH, _dt.timezone.utc).isoformat(timespec="seconds")
+                if isinstance(start, (int, float)) else None)}
+            for field, key in SNAPSHOT_FIELDS.items():
+                value = session.get(field)
+                if isinstance(value, (int, float)) and value == value:          # not NaN
+                    entry[key] = round(float(value), 2)
+            snapshots.append(entry)
+    snapshots.sort(key=lambda s: s.get("start_utc") or "")
+    return {"files": len(members), "bytes": len(data), "sha256": sha256(data), "kinds": dict(sorted(kinds.items())),
+            "invalid": invalid, "health_snapshots": snapshots}

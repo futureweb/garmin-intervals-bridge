@@ -1,6 +1,7 @@
 """Fail-closed Garmin -> Intervals sync orchestration."""
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -8,8 +9,8 @@ from typing import Any
 
 from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
-from .fit import sha256, validate_fit
-from .garmin import ESSENTIAL_ENDPOINTS, GarminBlocked
+from .fit import sha256, validate_fit, wellness_bundle_index
+from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .mapping import map_wellness, merge_wellness
 from .store import Store
 from .times import external_id_names, parse_utc
@@ -54,24 +55,38 @@ def _garmin_day(garmin: dict) -> date:
 ARCHIVE_SETTLE_DAYS = 2     # Garmin attaches weather and gear to a fresh activity a little after the upload
 
 
+def _archived_extras(store: Store, gid: str) -> dict | None:
+    path = store.activity_extras_path(gid)
+    if not path.is_file():
+        return None
+    try:
+        obj = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 def archive_activity(gid: str, activity: dict, garmin: Any, store: Store, *, now: datetime | None = None) -> str:
     """Complete the local mirror of one activity: the recording itself, Garmin's own
     summary of it (names what the FIT only numbers) and what is not in the file at
-    all (weather, gear, exercise sets).
+    all (weather, gear, exercise sets, Garmin's own splits).
 
     Returns `on_disk`, `archived` or `pending`: extras that came back incomplete
     for a fresh activity are not kept, the next pass asks again. Older activities
-    keep whatever Garmin still has.
+    keep whatever Garmin still has. An archive entry from an earlier version gets
+    only the extras it lacks.
     """
-    path, meta, extras = store.fit_path(gid), store.activity_json_path(gid), store.activity_extras_path(gid)
-    if path.is_file() and meta.is_file() and extras.is_file():
+    path, meta = store.fit_path(gid), store.activity_json_path(gid)
+    old = _archived_extras(store, gid)
+    missing = tuple(k for k in EXTRA_KEYS if old is None or k not in old)
+    if path.is_file() and meta.is_file() and not missing:
         return "on_disk"
     if not path.is_file():
         store.atomic_save(path, garmin.original_fit(gid))
     if not meta.is_file():
         store.save_activity_json(gid, garmin.activity(gid))
-    if not extras.is_file():
-        found = garmin.activity_extras(activity)
+    if missing:
+        found = garmin.activity_extras(activity, keys=None if old is None else missing)
         started = _time(activity.get("startTimeGMT"), garmin_gmt=True)
         current = now or datetime.now(timezone.utc)
         fresh = started is not None and current - started < timedelta(days=ARCHIVE_SETTLE_DAYS)
@@ -79,8 +94,51 @@ def archive_activity(gid: str, activity: dict, garmin: Any, store: Store, *, now
             log.info("Extras of %s not complete yet (%s); asking again next run",
                      gid, ", ".join(sorted(found["errors"])))
             return "pending"
+        if old is not None:
+            found = {**old, **found, "errors": {**(old.get("errors") or {}), **found.get("errors", {})}}
         store.save_activity_extras(gid, found)
     return "archived"
+
+
+def mirror_wellness_files(day: date, garmin: Any, store: Store) -> str:
+    """Keep the device's original wellness files of a finished day: `on_disk`, `saved`, or
+    `none` when Garmin has no files for it (recorded too, so the day is not asked again)."""
+    if store.load_wellness_index(day) is not None:
+        return "on_disk"
+    data = garmin.wellness_files(day)
+    fetched = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if not data:
+        store.save_wellness_files(day, None, {"files": 0, "kinds": {}, "invalid": [], "health_snapshots": [],
+                                              "fetched": fetched})
+        return "none"
+    index = {**wellness_bundle_index(data), "fetched": fetched}
+    store.save_wellness_files(day, data, index)
+    if index["invalid"]:
+        log.warning("Wellness files of %s: %d of %d failed the FIT check; kept as delivered",
+                    day, len(index["invalid"]), index["files"])
+    return "saved"
+
+
+def sync_wellness_files(settings: Settings, garmin: Any, store: Store, *, days: list[date],
+                        pause_seconds: float = 0.0) -> dict:
+    """Backfill: mirror the original wellness files of every given day not on disk yet."""
+    metrics = {"days": len(days), "saved": 0, "on_disk": 0, "none": 0, "failed": 0, "health_snapshots": 0}
+    for day in days:
+        try:
+            state = mirror_wellness_files(day, garmin, store)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            metrics["failed"] += 1
+            log.warning("Wellness files of %s not mirrored: %s", day, type(exc).__name__)
+            continue
+        metrics[state] += 1
+        if state == "saved":
+            metrics["health_snapshots"] += len((store.load_wellness_index(day) or {}).get("health_snapshots") or [])
+            log.info("Mirrored wellness files of %s", day)
+        if state != "on_disk" and pause_seconds:
+            time.sleep(pause_seconds)
+    return metrics
 
 
 def _complete_archive(gid: str, activity: dict, garmin: Any, store: Store, metrics: dict) -> str:
@@ -508,7 +566,7 @@ def _backoff(store: Store, key: str, steps: tuple, now_ts: float) -> None:
 def _wellness_metrics() -> dict:
     return {"days_checked": 0, "days_skipped_recent": 0, "days_from_archive": 0, "days_locked": 0,
             "days_with_changes": 0, "writes": 0, "failed": 0, "new_fields": [],
-            "intervals_checks": 0, "sync_checks": 0, "morning": 0, "final": 0}
+            "intervals_checks": 0, "sync_checks": 0, "morning": 0, "final": 0, "files": 0}
 
 
 def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store, *, apply: bool,
@@ -556,12 +614,14 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     readiness_due = (morning == "no-readiness"
                      and int(store.get_meta(f"{readiness_key}:tries") or 0) < READINESS_RETRIES
                      and now_ts >= float(store.get_meta(readiness_key) or 0))
+    files_due = [d for d in past if store.get_meta(f"wellness:final:{d}") and store.load_wellness_index(d) is None
+                 and now_ts >= float(store.get_meta(f"wellness:files:{d}") or 0)]
     unwritten = [d for d in past + [current]
                  if apply and (state := store.wellness_state(d))[0] and not state[1]
                  and (d == current and morning or store.get_meta(f"wellness:final:{d}"))]
-    if morning and not pending_past and not readiness_due and not unwritten:
+    if morning and not pending_past and not readiness_due and not unwritten and not files_due:
         return metrics
-    if throttle and not unwritten and (last := store.meta_updated("wellness:check")) \
+    if throttle and not unwritten and not files_due and (last := store.meta_updated("wellness:check")) \
             and now_ts - last < CHECK_MINUTES * 60 - 5:
         return metrics
     store.set_meta("wellness:check")
@@ -650,6 +710,17 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         metrics["final"] += 1
         log.info("Final read of %s (%s)", day, "device synced after the day" if synced else "no sync by 20:00")
         write(day, raw)
+        files_due.append(day)
+
+    for day in files_due:                               # the device's original files of a finished day
+        try:
+            if mirror_wellness_files(day, garmin, store) == "saved":
+                metrics["files"] += 1
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            _backoff(store, f"wellness:files:{day}", VERIFY_BACKOFF_MINUTES, now_ts)
+            log.warning("Wellness files of %s not mirrored: %s; trying again later", day, type(exc).__name__)
 
     if store.get_meta("wellness:pruned") != current.strftime("%Y-%m"):
         store.delete_meta("wellness:*:20*", now_ts - 40 * 86400)     # per-day bookkeeping, once a month

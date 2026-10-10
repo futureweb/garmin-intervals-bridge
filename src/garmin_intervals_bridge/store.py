@@ -259,6 +259,30 @@ class Store:
                                 + "\n").encode())
         return path
 
+    def wellness_files_path(self, day: date) -> Path:
+        """The day's original wellness files from the device, as Garmin's ZIP."""
+        return self.base / "wellness-files" / f"{day.isoformat()}.zip"
+
+    def wellness_index_path(self, day: date) -> Path:
+        return self.wellness_files_path(day).with_suffix(".json")
+
+    def save_wellness_files(self, day: date, data: bytes | None, index: dict) -> None:
+        """ZIP first, index last: an index on disk means the day is mirrored (or has no files)."""
+        if data:
+            self.atomic_save(self.wellness_files_path(day), data)
+        self.atomic_save(self.wellness_index_path(day),
+                         (json.dumps(index, indent=2, sort_keys=True, allow_nan=False) + "\n").encode())
+
+    def load_wellness_index(self, day: date) -> dict | None:
+        path = self.wellness_index_path(day)
+        if not path.is_file():
+            return None
+        try:
+            obj = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        return obj if isinstance(obj, dict) else None
+
     def save_account_snapshot(self, obj: dict) -> Path:
         path = self.base / "raw" / "account" / f"{date.today().isoformat()}.json"
         self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
