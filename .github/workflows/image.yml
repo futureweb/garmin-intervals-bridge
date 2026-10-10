@@ -1,6 +1,7 @@
 # Container image on the GitHub Container Registry, for amd64 and arm64 (NAS boxes).
-# A release publishes <version> and latest; the manual trigger builds any ref.
-# Docker Hub: set the repository variable DOCKERHUB_IMAGE (e.g. futureweb/garmin-intervals-bridge)
+# A release publishes <version> and latest; the manual trigger builds the ref it runs on under the
+# given tag and moves latest only when asked to.
+# Docker Hub: set the repository variable DOCKERHUB_IMAGE (e.g. futurewebat/garmin-intervals-bridge)
 # and the secrets DOCKERHUB_USERNAME / DOCKERHUB_TOKEN, and the same image is pushed there too.
 name: Container image
 
@@ -10,8 +11,12 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Image tag to publish (e.g. 0.2.0); the ref the workflow runs on is built"
+        description: "Image tag to publish (e.g. edge); the ref the workflow runs on is built"
         required: true
+      latest:
+        description: "Also move the latest tag (a release always does)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -38,10 +43,22 @@ jobs:
       - name: Image tags
         id: tags
         shell: bash
+        env:                                   # inputs reach the shell as data, never as script
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          MOVE_LATEST: ${{ github.event_name == 'release' || inputs.latest }}
+          HUB_IMAGE: ${{ vars.DOCKERHUB_IMAGE }}
+          REPO: ${{ github.repository }}
         run: |
-          if [ "${{ github.event_name }}" = "release" ]; then v="${GITHUB_REF_NAME#v}"; else v="${{ inputs.tag }}"; fi
-          tags="ghcr.io/${{ github.repository }}:${v},ghcr.io/${{ github.repository }}:latest"
-          if [ -n "${{ vars.DOCKERHUB_IMAGE }}" ]; then tags="${tags},${{ vars.DOCKERHUB_IMAGE }}:${v},${{ vars.DOCKERHUB_IMAGE }}:latest"; fi
+          if [ "$EVENT" = "release" ]; then v="${GITHUB_REF_NAME#v}"; else v="$INPUT_TAG"; fi
+          [[ "$v" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || { echo "invalid image tag: $v"; exit 1; }
+          images="ghcr.io/${REPO}"
+          if [ -n "$HUB_IMAGE" ]; then images="${images} ${HUB_IMAGE}"; fi
+          tags=""
+          for image in $images; do
+            tags="${tags:+${tags},}${image}:${v}"
+            if [ "$MOVE_LATEST" = "true" ]; then tags="${tags},${image}:latest"; fi
+          done
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
         with:
