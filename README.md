@@ -60,9 +60,9 @@ names and units of your own definitions. [More below](#analyse-it-with-ai-the-in
 | **Target** | Your Intervals custom activity fields and custom streams, defined by you, read from your own definitions | Native Intervals wellness fields first, private `Garmin…` custom fields for the rest |
 | **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute load, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow |
-| **Archive** | Original + partner copy of every activity | Raw JSON of every endpoint, every day |
+| **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.2.1. Verified end to end on one account (fenix 8, Edge 1040);
+Version 0.3.0. Verified end to end on one account (fenix 8, Edge 1040);
 the first live writes and the evidence are recorded in
 [docs/PLAN.md](docs/PLAN.md).
 
@@ -284,9 +284,11 @@ for `deploy/systemd/garmin-intervals-bridge-upload.timer` (10 minutes) and
 keep the 30-minute unit for wellness.
 
 **Docker / Podman:** a ready-made image is on the GitHub Container Registry,
-`ghcr.io/futureweb/garmin-intervals-bridge` (tags `latest` and the version,
-amd64 and arm64, so it runs on a NAS too). It runs as a non-root user and
-takes the same environment variables; without compose:
+`ghcr.io/futureweb/garmin-intervals-bridge`, and on Docker Hub,
+`futurewebat/garmin-intervals-bridge` (for NAS boxes whose container manager
+only knows Docker Hub, e.g. Synology). Tags `latest` and the version, amd64
+and arm64. It runs as a non-root user and takes the same environment
+variables; without compose:
 
 ```bash
 docker run --rm -it -v $PWD/data:/data -e INTERVALS_API_KEY=... ghcr.io/futureweb/garmin-intervals-bridge login

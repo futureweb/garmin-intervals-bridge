@@ -1,6 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-10
+
+The night's values within minutes of the morning watch sync, a quarter of the
+Garmin requests, and a mirror that now includes what the watch itself
+recorded: the original wellness files of every day, Health Snapshots among
+them, which Intervals now shows too.
+
+Upgrading: systemd users add `--activity-interval 120` to the 30-minute
+unit's `ExecStart` (the copy in `deploy/systemd/` has it). The first run
+takes over the new schedule on its own. To mirror the past once:
+`backfill --scope wellness --from 2020-01-01 --wellness-files --pause 3`,
+`backfill --scope activities --from 2020-01-01 --archive-only --pause 3`
+(adds Garmin's splits) and `snapshot-account --history-from 2020-01-01`.
+If Intervals' Garmin settings import SpO2, untick it: the official
+integration only ever delivers it from Health Snapshots.
 
 ### Changed
 
@@ -21,6 +35,8 @@
   scanned every two hours (`sync --activity-interval`, also in `run`); the
   watch enriches new activities in between. About 75 requests on a normal
   day instead of about 310.
+- Manual container builds move `latest` only when asked; a release always
+  does. The tag of a manual build is validated before it reaches the shell.
 
 ### Added
 
@@ -45,6 +61,9 @@
 - More of the night: lowest SpO₂, lowest and highest respiration, Body
   Battery change during sleep and Garmin's HRV baseline band, all from the
   archive (the HRV and SpO₂ charts show them).
+- The container image is also on Docker Hub,
+  `futurewebat/garmin-intervals-bridge`, for NAS container managers that
+  only know Docker Hub.
 - The account snapshot also keeps goals, gear defaults, training plan
   details, the calendar of scheduled workouts, Garmin's FTP (latest and
   daily history, cycling and running), running tolerance and the activity
