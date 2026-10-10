@@ -11,7 +11,8 @@ from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
 from .fit import sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
-from .mapping import map_wellness, merge_wellness, snapshot_corrections
+from .intake import intake_values, write_intake
+from .mapping import PROVISIONAL_CODES, map_wellness, merge_wellness, snapshot_corrections
 from .store import Store
 from .times import external_id_names, parse_utc
 
@@ -98,6 +99,98 @@ def archive_activity(gid: str, activity: dict, garmin: Any, store: Store, *, now
             found = {**old, **found, "errors": {**(old.get("errors") or {}), **found.get("errors", {})}}
         store.save_activity_extras(gid, found)
     return "archived"
+
+
+INTAKE_SETTLE_HOURS = 12      # a drink is logged after the ride: Garmin's summary is asked again once, later
+
+
+def complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin: Any, intervals: Any, store: Store,
+                    metrics: dict, *, apply: bool, now: datetime | None = None) -> None:
+    """Fluid and food logged for an activity, into its Intervals fields, once the athlete had time to log.
+
+    The summary archived with the activity is reused when it was fetched late enough;
+    otherwise it is asked for once more (one request), and the archive keeps the newer one.
+    Dry runs ask nothing: the first real run does it.
+    """
+    key = f"intake:{gid}"
+    if not apply or not intervals_id or store.get_meta(key) is not None:
+        return
+    started = _time(activity.get("startTimeGMT"), garmin_gmt=True)
+    current = now or datetime.now(timezone.utc)
+    settled = started is not None and current - started >= timedelta(hours=INTAKE_SETTLE_HOURS)
+    if not settled:
+        return
+    path = store.activity_json_path(gid)
+    summary = None
+    if path.is_file() and path.stat().st_mtime >= started.timestamp() + INTAKE_SETTLE_HOURS * 3600:
+        try:
+            summary = json.loads(path.read_text())
+        except (OSError, ValueError):
+            summary = None
+    if summary is None:
+        summary = garmin.activity(gid)
+        store.save_activity_json(gid, summary)
+    values = intake_values(summary)
+    written = write_intake(intervals_id, values, intervals, apply=apply)
+    if written:
+        metrics["intake_written"] = metrics.get("intake_written", 0) + 1
+        log.info("Intake of %s -> %s: %s", gid, intervals_id, written)
+    store.set_meta(key, json.dumps(values, sort_keys=True))
+
+
+def _complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin: Any, intervals: Any, store: Store,
+                     metrics: dict, *, apply: bool) -> None:
+    """Like _complete_archive: a failure here is logged and tried next run, never held against the activity."""
+    try:
+        complete_intake(gid, activity, intervals_id, garmin, intervals, store, metrics, apply=apply)
+    except GarminBlocked:
+        raise
+    except Exception as exc:
+        log.warning("Intake of %s not written: %s; next run tries again", gid, type(exc).__name__)
+
+
+def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, apply: bool) -> dict:
+    """Intake fields for past activities from the archived Garmin summaries: no Garmin request.
+
+    The Intervals activity is the one the bridge enriched or uploaded, else the one whose
+    external id names the Garmin activity (a bare number only from the official sync).
+    """
+    found = []
+    for path in sorted((store.base / "raw" / "activities").glob("*.json")):
+        gid = path.stem
+        if path.name.endswith(".extras.json") or not gid.isdecimal():
+            continue
+        try:
+            summary = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        day = str((summary.get("summaryDTO") or {}).get("startTimeLocal") or "")[:10]
+        if start.isoformat() <= day <= end.isoformat() and (values := intake_values(summary)):
+            found.append((day, gid, values))
+    metrics = {"with_intake": len(found), "written": 0, "already": 0, "unmatched": 0}
+    months: dict[str, list[dict]] = {}
+    for day, gid, values in found:
+        intervals_id = store.activity_intervals_id(gid)
+        if not intervals_id:
+            month = day[:7]
+            if month not in months:
+                first = date.fromisoformat(f"{month}-01")
+                after = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
+                months[month] = intervals.activities(first - timedelta(days=1), after,
+                                                     fields=["id", "external_id", "source"])
+            match = next((a for a in months[month]
+                          if external_id_names(str(a.get("external_id") or ""), gid)
+                          and (str(a.get("source") or "").upper() == "GARMIN_CONNECT"
+                               or not str(a.get("external_id") or "").isdecimal())), None)
+            intervals_id = str(match["id"]) if match else None
+        if not intervals_id:
+            metrics["unmatched"] += 1
+            continue
+        written = write_intake(intervals_id, values, intervals, apply=apply)
+        metrics["written" if written else "already"] += 1
+        if apply:
+            store.set_meta(f"intake:{gid}", json.dumps(values, sort_keys=True))
+    return metrics
 
 
 def mirror_wellness_files(day: date, garmin: Any, store: Store) -> str:
@@ -260,6 +353,8 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
             _sync_one_activity(activity, gid, garmin, intervals, store, remote, metrics,
                                apply=apply, allow_upload=allow_upload)
             asked = _complete_archive(gid, activity, garmin, store, metrics) != "on_disk"
+            _complete_intake(gid, activity, store.activity_intervals_id(gid), garmin, intervals, store, metrics,
+                             apply=apply)
             moved = metrics["downloaded"] + metrics["uploaded"] + metrics["would_upload"] > before
             if pause_seconds and (asked or moved):
                 time.sleep(pause_seconds)
@@ -347,6 +442,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
             result = enrich_activity(gid, garmin, intervals, store, apply=apply,
                                      remote_candidates=remote, mappings=mappings)
             asked = _complete_archive(gid, activity, garmin, store, metrics) != "on_disk"
+            _complete_intake(gid, activity, result.get("intervals_id"), garmin, intervals, store, metrics,
+                             apply=apply)
             if pause_seconds and (asked or result["outcome"] not in ("already_enriched",)):
                 time.sleep(pause_seconds)
         except GarminBlocked:
@@ -529,7 +626,9 @@ def _merge_partial(previous: dict | None, raw: dict) -> dict:
 # waits for evidence, which it gets from Intervals for free: the official integration
 # puts last night's sleep into today's record within minutes of the watch syncing.
 
-MORNING_ENDPOINTS = ("sleep", "hrv", "training_readiness", "body_composition")
+MORNING_ENDPOINTS = ("sleep", "hrv", "training_readiness", "body_composition",
+                     # Garmin's status metrics as of this morning (replaced at the final read)
+                     "endurance_score", "hill_score", "max_metrics", "fitness_age", "race_predictions")
 CHECK_MINUTES = 10              # Intervals pre-check cadence; costs no Garmin request
 SIGNAL_DAYS = 2                 # official sleep seen this recently: wait for it instead of asking Garmin
 FALLBACK_SLOTS = ((6, 30), (7, 30), (8, 30), (10, 0), (12, 0), (16, 0), (20, 0))
@@ -653,10 +752,10 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         metrics["days_checked"] += 1
         return raw
 
-    def write(day: date, raw: dict) -> None:
+    def write(day: date, raw: dict, rewrite: set[str] | frozenset[str] | None = None) -> None:
         try:
             if _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
-                                   apply=apply) and apply:
+                                   apply=apply, rewrite=set(rewrite) if rewrite else None) and apply:
                 store.mark_wellness(day, written=True)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             metrics["failed"] += 1
@@ -764,7 +863,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         metrics["final"] += 1
         log.info("Final read of %s (%s)", day, "device synced after the day" if synced else "no sync by 20:00")
         mirror(day)                                     # its Health Snapshots belong to the same write
-        write(day, raw)
+        write(day, raw, rewrite=PROVISIONAL_CODES)      # the evening's values replace this morning's
 
     for day in files_due:                               # finished earlier, files still missing
         if mirror(day) and (raw := store.load_snapshot(day)) is not None:

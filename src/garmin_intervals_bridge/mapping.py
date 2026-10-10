@@ -78,6 +78,15 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminSnapshotStress": CustomField("Garmin Health Snapshot Stress", None, 100),
 }
 
+# Values written for the running day from the morning's readings and replaced by the day's last
+# at its final read: the bridge's own fields, so replacing them is allowed (natives never are).
+PROVISIONAL_CODES = frozenset({
+    "GarminRecoveryTimeMinutes", "GarminRecoveryTimeHours", "GarminAcuteLoad", "GarminVO2MaxCycling",
+    "GarminEnduranceScore", "GarminHillScore", "GarminHillStrength", "GarminHillEndurance",
+    "GarminFitnessAge", "GarminAchievableFitnessAge", "GarminPredicted5KSeconds", "GarminPredicted10KSeconds",
+    "GarminPredictedHalfSeconds", "GarminPredictedMarathonSeconds",
+})
+
 # Index key of a Health Snapshot -> custom code, and native fields a snapshot import overwrites
 SNAPSHOT_CODES = {"hr_avg": "GarminSnapshotHR", "hrv_rmssd": "GarminSnapshotRMSSD", "hrv_sdrr": "GarminSnapshotSDRR",
                   "respiration_avg": "GarminSnapshotRespiration", "spo2_avg": "GarminSnapshotSpO2",
@@ -88,7 +97,6 @@ SNAPSHOT_NATIVE = {"restingHR": "hr_avg", "hrv": "hrv_rmssd", "spO2": "spo2_avg"
 # Custom codes the "recommended" profile leaves out: duplicates of native fields,
 # goals rather than measurements, and sub-scores of a score that is kept.
 RECOMMENDED_EXCLUDES = frozenset({
-    "GarminSleepSpO2Avg", "GarminSleepRespirationAvg",      # native spO2 / respiration carry these
     "GarminStepsGoal", "GarminHydrationGoalLitres",         # targets, not measurements
     "GarminAchievableFitnessAge",                           # derived from GarminFitnessAge
 })
@@ -190,18 +198,34 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     if readiness_score is not None:
         put(native, "readiness", readiness_score, high=100)
         put(custom, "GarminTrainingReadiness", readiness_score, high=100)
-    if target < today or not entries:
-        # the day's last reading, final once the day is over (an old archive only has the morning)
-        put(custom, "GarminRecoveryTimeMinutes", choose(end_of_day, ("recoveryTime",), high=30000), high=30000)
-        if "GarminRecoveryTimeMinutes" in custom:
-            custom["GarminRecoveryTimeHours"] = round(custom["GarminRecoveryTimeMinutes"] / 60, 1)
-        put(custom, "GarminAcuteLoad", choose(end_of_day, ("acuteLoad",)), high=3000)
+    # Recovery time and acute load: the day's last reading once the day is over (an old archive only
+    # has the morning); while it runs, the wake-up reading, replaced by the evening's at the final read.
+    load_source = end_of_day if (target < today or not entries) else morning
+    put(custom, "GarminRecoveryTimeMinutes", choose(load_source, ("recoveryTime",), high=30000), high=30000)
+    if "GarminRecoveryTimeMinutes" in custom:
+        custom["GarminRecoveryTimeHours"] = round(custom["GarminRecoveryTimeMinutes"] / 60, 1)
+    put(custom, "GarminAcuteLoad", choose(load_source, ("acuteLoad",)), high=3000)
     if target < today:
-        # a run or ride later today may revise the day's estimate: final once the day is over
+        # a run or ride later today may revise the day's estimate; the native field is never replaced
         put(native, "vo2max", choose(maximum, ("generic", "vo2MaxPreciseValue"),
                                       ("generic", "vo2MaxValue"), high=100), high=100)
-        put(custom, "GarminVO2MaxCycling", choose(maximum, ("cycling", "vo2MaxPreciseValue"),
-                                                   ("cycling", "vo2MaxValue"), high=100), high=100)
+    # Garmin's status metrics as of this morning; the final read replaces them with the day's last
+    put(custom, "GarminVO2MaxCycling", choose(maximum, ("cycling", "vo2MaxPreciseValue"),
+                                               ("cycling", "vo2MaxValue"), high=100), high=100)
+    put(custom, "GarminEnduranceScore",
+        choose(endurance, ("overallScore",), ("enduranceScore",), high=10000), high=10000)
+    put(custom, "GarminHillScore", choose(hill, ("overallScore",), high=100), high=100)
+    put(custom, "GarminHillStrength", choose(hill, ("strengthScore",), high=100), high=100)
+    put(custom, "GarminHillEndurance", choose(hill, ("enduranceScore",), high=100), high=100)
+    put(custom, "GarminFitnessAge", choose(age, ("fitnessAge",), high=130), high=130)
+    put(custom, "GarminAchievableFitnessAge", choose(age, ("achievableFitnessAge",), high=130), high=130)
+    for code, key, max_sec in (
+        ("GarminPredicted5KSeconds", "time5K", 15000),
+        ("GarminPredicted10KSeconds", "time10K", 30000),
+        ("GarminPredictedHalfSeconds", "timeHalfMarathon", 60000),
+        ("GarminPredictedMarathonSeconds", "timeMarathon", 120000),
+    ):
+        put(custom, code, choose(race, (key,), high=max_sec), high=max_sec)
     # Scale data: a weigh-in is final the moment it is taken (the official sync usually brings weight).
     # get_body_composition() answers {"dateWeightList": [{calendarDate, weight (g), bodyFat, ...}], ...}
     composition = (_day_record(get(data, "body_composition", "dateWeightList"), target)
@@ -280,20 +304,6 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(custom, "BodyBatteryMin", choose(stats, ("bodyBatteryLowestValue",), high=100), high=100)
         put(custom, "GarminBodyBatteryCharged", choose(battery, ("charged",), high=100), high=100)
         put(custom, "GarminBodyBatteryDrained", choose(battery, ("drained",), high=100), high=100)
-        put(custom, "GarminEnduranceScore",
-            choose(endurance, ("overallScore",), ("enduranceScore",), high=10000), high=10000)
-        put(custom, "GarminHillScore", choose(hill, ("overallScore",), high=100), high=100)
-        put(custom, "GarminHillStrength", choose(hill, ("strengthScore",), high=100), high=100)
-        put(custom, "GarminHillEndurance", choose(hill, ("enduranceScore",), high=100), high=100)
-        put(custom, "GarminFitnessAge", choose(age, ("fitnessAge",), high=130), high=130)
-        put(custom, "GarminAchievableFitnessAge", choose(age, ("achievableFitnessAge",), high=130), high=130)
-        for code, key, max_sec in (
-            ("GarminPredicted5KSeconds", "time5K", 15000),
-            ("GarminPredicted10KSeconds", "time10K", 30000),
-            ("GarminPredictedHalfSeconds", "timeHalfMarathon", 60000),
-            ("GarminPredictedMarathonSeconds", "timeMarathon", 120000),
-        ):
-            put(custom, code, choose(race, (key,), high=max_sec), high=max_sec)
         # 0 ml is "nothing logged", not "drank nothing": leave the day empty (as with food)
         volume_ml = choose(hydration, ("valueInML",), low=1, high=30000)
         if volume_ml is not None:

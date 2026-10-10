@@ -40,6 +40,16 @@ def test_wellness_maps_scales_without_conflation():
     assert custom["GarminCarbsKcal"] == 1122 and custom["GarminProteinKcal"] == 472 and custom["GarminFatKcal"] == 812
 
 
+def test_status_metrics_of_the_running_day_come_from_this_mornings_records():
+    src = sample()
+    src["data"].update({"endurance_score": {"calendarDate": "2026-10-08", "overallScore": 6942},
+                        "race_predictions": [{"calendarDate": "2026-10-08", "time10K": 3228}],
+                        "fitness_age": {"fitnessAge": 39.7}})
+    nat, custom = map_wellness(src, date(2026, 10, 8), date(2026, 10, 8))
+    assert custom["GarminEnduranceScore"] == 6942 and custom["GarminPredicted10KSeconds"] == 3228
+    assert custom["GarminFitnessAge"] == 39.7 and "vo2max" not in nat           # the native field waits
+
+
 def test_today_not_written_incomplete_daily_totals():
     nat, custom = map_wellness(sample(), date(2026, 10, 8), date(2026, 10, 8))
     assert "steps" not in nat and "kcalConsumed" not in nat
@@ -133,7 +143,8 @@ def test_recommended_profile_drops_duplicates_goals_and_subscores():
     _, all_custom = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "all")
     nat, rec = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8), "recommended")
     assert {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} <= set(all_custom)
-    assert not {"GarminHydrationGoalLitres", "GarminStepsGoal", "GarminSleepSpO2Avg"} & set(rec)
+    assert not {"GarminHydrationGoalLitres", "GarminStepsGoal"} & set(rec)
+    assert rec["GarminSleepSpO2Avg"] == 96.7                  # the night's averages under Garmin's name too
     assert rec["GarminHillScore"] == 73 and rec["GarminHillStrength"] == 68 and nat["spO2"] == 96.7
 
 
@@ -152,7 +163,8 @@ def test_readiness_is_the_mornings_recovery_the_days_last_reading():
     assert custom["GarminRecoveryTimeMinutes"] == 5757 and custom["GarminRecoveryTimeHours"] == 96.0
     assert custom["GarminAcuteLoad"] == 795                              # the evening
     _, today = map_wellness(src, date(2026, 8, 8), date(2026, 8, 8))
-    assert today["GarminTrainingReadiness"] == 85 and "GarminRecoveryTimeMinutes" not in today   # waits for the day to end
+    assert today["GarminTrainingReadiness"] == 85
+    assert today["GarminRecoveryTimeMinutes"] == 1 and today["GarminAcuteLoad"] == 192   # the morning, provisionally
     # a mapping correction may replace the bridge's own values, never native ones
     existing = {"GarminRecoveryTimeMinutes": 1, "GarminAcuteLoad": 192, "restingHR": 44}
     patch = merge_wellness(existing, {"restingHR": 50}, custom, rewrite={"GarminRecoveryTimeMinutes", "restingHR"})

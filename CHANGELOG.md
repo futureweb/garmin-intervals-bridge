@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Changed
+
+- **More of the morning.** Recovery time, acute load, endurance and hill
+  scores, cycling VO₂max, fitness age and race predictions now arrive with the
+  morning read, as Garmin reports them at wake-up, instead of the day after;
+  the day's final read replaces them with the evening's values. Five more
+  endpoints in the morning read: about 80 Garmin requests a day instead of 75.
+- `GarminSleepSpO2Avg` and `GarminSleepRespirationAvg` are written in the
+  default profile again (an AI coach reading Garmin's names finds them).
+
+### Added
+
+- **Fluid and food per activity:** what you log in Garmin (`waterConsumed`
+  in ml, `caloriesConsumed` in kcal) goes into the activity fields
+  `GarminFluidIntake` and `GarminCaloriesConsumed`, created by the bridge.
+  The summary is read once more half a day after the activity (one request
+  per activity); `backfill --scope activities --from DATE --intake` fills
+  the past from the archive without asking Garmin.
+
 ### Documentation
 
 - README: "Use it with an AI coach (MCP)" with the sister project's install
