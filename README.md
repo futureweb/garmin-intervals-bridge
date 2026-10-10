@@ -166,17 +166,20 @@ the day has nothing yet, locked days are skipped, and running totals of the
 current day wait for tomorrow.
 
 **When Garmin is asked: on evidence, not on a clock.** Today's values come
-from four endpoints (sleep, HRV, Training Readiness, scale) and only exist
-once the watch has synced after you wake up. Every ten minutes the bridge
-looks at Intervals' own record for today, which costs no Garmin request; as
-soon as the official integration has put last night's sleep there, it reads
-those four endpoints once, typically within ten minutes of the watch sync,
-and asks twice more for Training Readiness if that lags behind. A finished
+from nine endpoints (sleep, HRV, Training Readiness, scale and Garmin's
+status metrics) and only exist once the watch has synced after you wake up.
+Every ten minutes the bridge looks at Intervals' own record for today, which
+costs no Garmin request; as soon as the official integration has put last
+night's sleep there, it reads those endpoints once, typically within ten
+minutes of the watch sync, and asks twice more for Training Readiness if that
+lags behind. Recovery time, acute load, endurance and hill scores, cycling
+VO₂max, fitness age and race predictions arrive in the morning as Garmin
+sees them then; the day's final read replaces them with the evening's. A finished
 day is read in full once the device has synced after it ended, so its
 totals are complete; a night-time phone sync is enough. Without the official
 wellness sync, Garmin itself is checked at a few fixed times in the morning,
 and a day that never sees a sync is read anyway at 20:00 the day after. A
-normal day costs about 75 Garmin requests, plus a few per new activity.
+normal day costs about 80 Garmin requests, plus a few per new activity.
 
 Native Intervals fields filled when empty: `restingHR`, `hrv`, `sleepSecs`,
 `sleepScore`, `readiness`, `vo2max`, `steps`, `floorsClimbed`,

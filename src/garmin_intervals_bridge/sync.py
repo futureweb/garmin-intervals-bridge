@@ -11,7 +11,7 @@ from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
 from .fit import sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
-from .mapping import map_wellness, merge_wellness, snapshot_corrections
+from .mapping import PROVISIONAL_CODES, map_wellness, merge_wellness, snapshot_corrections
 from .store import Store
 from .times import external_id_names, parse_utc
 
@@ -529,7 +529,9 @@ def _merge_partial(previous: dict | None, raw: dict) -> dict:
 # waits for evidence, which it gets from Intervals for free: the official integration
 # puts last night's sleep into today's record within minutes of the watch syncing.
 
-MORNING_ENDPOINTS = ("sleep", "hrv", "training_readiness", "body_composition")
+MORNING_ENDPOINTS = ("sleep", "hrv", "training_readiness", "body_composition",
+                     # Garmin's status metrics as of this morning (replaced at the final read)
+                     "endurance_score", "hill_score", "max_metrics", "fitness_age", "race_predictions")
 CHECK_MINUTES = 10              # Intervals pre-check cadence; costs no Garmin request
 SIGNAL_DAYS = 2                 # official sleep seen this recently: wait for it instead of asking Garmin
 FALLBACK_SLOTS = ((6, 30), (7, 30), (8, 30), (10, 0), (12, 0), (16, 0), (20, 0))
@@ -653,10 +655,10 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         metrics["days_checked"] += 1
         return raw
 
-    def write(day: date, raw: dict) -> None:
+    def write(day: date, raw: dict, rewrite: set[str] | frozenset[str] | None = None) -> None:
         try:
             if _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
-                                   apply=apply) and apply:
+                                   apply=apply, rewrite=set(rewrite) if rewrite else None) and apply:
                 store.mark_wellness(day, written=True)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             metrics["failed"] += 1
@@ -764,7 +766,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         metrics["final"] += 1
         log.info("Final read of %s (%s)", day, "device synced after the day" if synced else "no sync by 20:00")
         mirror(day)                                     # its Health Snapshots belong to the same write
-        write(day, raw)
+        write(day, raw, rewrite=PROVISIONAL_CODES)      # the evening's values replace this morning's
 
     for day in files_due:                               # finished earlier, files still missing
         if mirror(day) and (raw := store.load_snapshot(day)) is not None:

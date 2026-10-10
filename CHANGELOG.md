@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **More of the morning.** Recovery time, acute load, endurance and hill
+  scores, cycling VO₂max, fitness age and race predictions now arrive with the
+  morning read, as Garmin reports them at wake-up, instead of the day after;
+  the day's final read replaces them with the evening's values. Five more
+  endpoints in the morning read: about 80 Garmin requests a day instead of 75.
+- `GarminSleepSpO2Avg` and `GarminSleepRespirationAvg` are written in the
+  default profile again (an AI coach reading Garmin's names finds them).
+
 ## 0.3.1 — 2026-10-10
 
 Easier diagnosis next to a running container.

@@ -38,7 +38,11 @@ takes for the bridge to fill them.
 
 Only scalars with reviewed meaning are written, and only where the day has
 no value yet. Locked days are skipped. Running totals of the current day
-wait until tomorrow.
+wait until tomorrow. Recovery time, acute load and the status metrics
+(endurance and hill scores, cycling VO₂max, fitness age, race predictions)
+are written in the morning as Garmin reports them then and replaced by the
+day's last values at its final read; they are the bridge's own fields, so
+replacing them is allowed. Native fields are never replaced this way.
 
 ### Native Intervals fields
 
@@ -77,7 +81,7 @@ definitions with the same code are reused, never changed.
 | --- | --- | --- |
 | `BodyBatteryMax`, `BodyBatteryMin` | `stats.bodyBatteryHighestValue/LowestValue` | both |
 | `GarminBodyBatteryCharged`, `GarminBodyBatteryDrained` | `body_battery[].charged/drained` | both |
-| `GarminTrainingReadiness`, `GarminRecoveryTimeMinutes`, `GarminAcuteLoad` | morning readiness | both |
+| `GarminTrainingReadiness`, `GarminRecoveryTimeMinutes`, `GarminAcuteLoad` | readiness: the morning's score; recovery and load of the morning, replaced by the evening's | both |
 | `GarminHRV5MinHigh`, `GarminHRV7DayAvg` | `hrv.hrvSummary` | both |
 | `GarminSleepDeepMinutes`, `…REMMinutes`, `…LightMinutes`, `…AwakeMinutes` | sleep stages / 60 | both |
 | `GarminSleepStressAvg`, `GarminSkinTempDeviationC` | sleep | both |
@@ -92,7 +96,7 @@ definitions with the same code are reused, never changed.
 | `GarminSleepBodyBatteryChange` | `sleep.bodyBatteryChange` (may be negative) | both |
 | `GarminHRVBaselineLow`, `…High` | `hrv.hrvSummary.baseline.balancedLow/balancedUpper` (Garmin's "balanced" band) | both |
 | `GarminSnapshotHR`, `…RMSSD`, `…SDRR`, `…Respiration`, `…SpO2`, `…Stress` | the day's first Health Snapshot, from the device's original wellness files (session averages) | both |
-| `GarminSleepSpO2Avg`, `GarminSleepRespirationAvg` | duplicates of native `spO2` / `respiration` | `all` only |
+| `GarminSleepSpO2Avg`, `GarminSleepRespirationAvg` | the same night averages as native `spO2` / `respiration`, under Garmin's name | both |
 | `GarminStepsGoal`, `GarminHydrationGoalLitres` | targets, not measurements | `all` only |
 | `GarminAchievableFitnessAge` | derived from fitness age | `all` only |
 
