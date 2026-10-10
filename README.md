@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/assets/icon-bridge-128.png" alt="Garmin Intervals Bridge icon" width="128" height="128"></p>
+
 # Garmin → Intervals.icu Bridge
 
 **Garmin started filtering the FIT files it sends to Intervals.icu. This puts the data back — and syncs a lot more.**

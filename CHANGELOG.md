@@ -21,6 +21,12 @@
   per activity); `backfill --scope activities --from DATE --intake` fills
   the past from the archive without asking Garmin.
 
+### Documentation
+
+- A project icon in the style of the sister project's: the Futureweb Intervals
+  MCP's bars and endpoints, here as a bridge deck between two endpoints carried
+  by the bars as piers (`docs/assets/icon-bridge*`, shown above the README).
+
 ## 0.3.1 — 2026-10-10
 
 Easier diagnosis next to a running container.
