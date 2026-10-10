@@ -490,3 +490,43 @@ def test_run_loop_upload_mode_polls_garmin_and_uploads(tmp_path, monkeypatch):
     assert calls == [("upload", True, None), "wellness", ("upload", True, 2), "check", ("upload", True, 2), "check"]
     assert "watch" not in calls
     st.close()
+
+
+# ---- diagnosis next to a running bridge ----
+
+def test_version_flag_prints_the_package_version(capsys):
+    from garmin_intervals_bridge import __version__
+    with pytest.raises(SystemExit) as stop:
+        main(["--version"])
+    assert stop.value.code == 0 and capsys.readouterr().out.strip() == f"garmin-intervals-bridge {__version__}"
+
+
+def test_gap_runs_while_a_long_running_bridge_holds_every_lock(tmp_path, monkeypatch, capsys):
+    from garmin_intervals_bridge import cli
+    monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
+    monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+
+    class FakeGarmin:
+        def __init__(self, *a, **k):
+            pass
+
+        def login(self, interactive=True):
+            pass
+
+        def original_fit(self, gid):
+            return b"original"
+
+    class FakeIntervals:
+        def __init__(self, *a, **k):
+            pass
+
+        def activity_file(self, iid):
+            return b"partner"
+    monkeypatch.setattr(cli, "GarminSource", FakeGarmin)
+    monkeypatch.setattr(cli, "IntervalsClient", FakeIntervals)
+    monkeypatch.setattr(cli, "extract_original_fit", lambda data: data)
+    monkeypatch.setattr(cli, "gap_report", lambda original, partner: {"original": len(original)})
+    with single_instance(tmp_path, ("activities", "wellness")):            # e.g. `run` in a container
+        assert main(["gap", "--activity-id", "42", "--intervals-id", "i1"]) == 0
+    assert '"matched"' in capsys.readouterr().out

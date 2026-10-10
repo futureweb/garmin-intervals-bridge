@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `--version`.
+
+### Changed
+
+- `gap` takes no lock: it only reads (and caches the two files it compares),
+  so it can diagnose an activity next to a running `run` container.
+
 ## 0.3.0 — 2026-10-10
 
 The night's values within minutes of the morning watch sync, a quarter of the

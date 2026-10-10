@@ -10,6 +10,7 @@ from contextlib import ExitStack
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
+from . import __version__
 from .charts import setup_charts
 from .config import Settings
 from .enrich import enrich_activity, gap_report, match_activity
@@ -23,6 +24,7 @@ from .sync import sync_activities, sync_enrich, sync_wellness, sync_wellness_fil
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="garmin-intervals-bridge", description=__doc__)
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("--verbose", action="store_true")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("login", help="Sign into Garmin once and save refreshable tokens (interactive)")
@@ -31,7 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     cmp = sub.add_parser("compare-fit", help="Compare two local FITs by message/field inventories")
     cmp.add_argument("file_a", type=Path)
     cmp.add_argument("file_b", type=Path)
-    gap = sub.add_parser("gap", help="Compare one Garmin original with the copy Intervals received; no writes")
+    gap = sub.add_parser("gap", help="Compare one Garmin original with the copy Intervals received; no writes "
+                                     "(works next to a running bridge)")
     gap.add_argument("--activity-id", required=True, help="Garmin Connect activity ID")
     gap.add_argument("--intervals-id", help="Intervals activity ID (default: match automatically)")
     enrich = sub.add_parser("enrich", help="Fill the Intervals activity's custom fields/streams "
@@ -225,7 +228,8 @@ def main(argv: list[str] | None = None) -> int:
         lock_scopes = (("activities", "wellness") if scope in (None, "all") and args.cmd in ("sync", "run", "watch")
                        else ("wellness",) if scope == "wellness"
                        else ("health",) if args.cmd == "health"
-                       else () if args.cmd in ("status", "snapshot-account")   # no shared state
+                       # read-only diagnosis must work next to a running `run`: no shared state written
+                       else () if args.cmd in ("status", "snapshot-account", "gap")
                        else ("activities",))
         locks = ExitStack()
         held: list[str] = []
