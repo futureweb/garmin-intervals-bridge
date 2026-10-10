@@ -107,9 +107,13 @@ SpO2 into Intervals' resting HR, HRV and SpO2, replacing the night's values
 with two minutes in a chair. When a native value equals one of that day's
 snapshots and the night's value differs, the bridge puts the night's value
 back (the only case besides a filtered file in which it replaces an existing
-value); the snapshot keeps its own `GarminSnapshot…` fields. Untick SpO2 in
-Intervals' Garmin wellness settings: the official integration only ever
-delivers it from snapshots, the bridge brings the overnight average.
+value); the snapshot keeps its own `GarminSnapshot…` fields. This happens on
+the same day: after the morning read the bridge keeps an eye on today's HRV in
+Intervals (no Garmin request), and when it moves away from the night's, it
+reads today's files once to see whether a snapshot explains it. Untick SpO2
+in Intervals' Garmin wellness settings: the official integration only ever
+delivers it from snapshots, the bridge brings the overnight average. Resting
+HR and HRV can stay ticked, they bring the night's values early.
 
 ## Notes on enrich mode
 

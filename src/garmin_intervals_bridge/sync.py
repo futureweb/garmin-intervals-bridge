@@ -396,7 +396,8 @@ def wellness_due(day: date, current: date, fetched: float | None, midnight: floa
 
 
 def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
-                        metrics: dict, *, apply: bool, rewrite: set[str] | None = None) -> bool:
+                        metrics: dict, *, apply: bool, rewrite: set[str] | None = None,
+                        night: dict | None = None) -> bool:
     """Map one snapshot and add what Intervals lacks. False when the day is locked there."""
     native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
     if not native and not custom:
@@ -408,7 +409,8 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         log.info("Skipping locked wellness day %s", day)
         return False
     changes = merge_wellness(existing, native, custom, rewrite)
-    fixes = snapshot_corrections(existing, native, (raw.get("data") or {}).get("health_snapshots") or [])
+    fixes = snapshot_corrections(existing, {**native, **(night or {})},
+                                 (raw.get("data") or {}).get("health_snapshots") or [])
     if fixes:
         log.info("Wellness %s: %s put back to the night's values (a Health Snapshot had replaced them)",
                  day, ", ".join(sorted(fixes)))
@@ -623,6 +625,8 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         store.set_meta("wellness:since", now.isoformat(timespec="seconds"))
 
     morning = store.get_meta(f"wellness:morning:{current}")
+    night_key, snapshot_key = f"wellness:night:{current}", f"wellness:snapshot:{current}"
+    watching = bool(morning) and store.get_meta(night_key) is not None    # a snapshot may replace the night
     pending_past = [d for d in past if store.get_meta(f"wellness:final:{d}") is None]
     readiness_key = f"wellness:readiness:{current}"
     readiness_due = (morning == "no-readiness"
@@ -633,7 +637,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     unwritten = [d for d in past + [current]
                  if apply and (state := store.wellness_state(d))[0] and not state[1]
                  and (d == current and morning or store.get_meta(f"wellness:final:{d}"))]
-    if morning and not pending_past and not readiness_due and not unwritten and not files_due:
+    if morning and not watching and not pending_past and not readiness_due and not unwritten and not files_due:
         return metrics
     if throttle and not unwritten and not files_due and (last := store.meta_updated("wellness:check")) \
             and now_ts - last < CHECK_MINUTES * 60 - 5:
@@ -693,6 +697,10 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         if _has_sleep(raw):
             morning = "ok" if _has_morning_readiness(raw) else "no-readiness"
             store.set_meta(f"wellness:morning:{current}", morning)
+            data = raw.get("data") or {}
+            night = {"hrv": ((data.get("hrv") or {}).get("hrvSummary") or {}).get("lastNightAvg"),
+                     "restingHR": (data.get("sleep") or {}).get("restingHeartRate")}
+            store.set_meta(night_key, json.dumps({k: v for k, v in night.items() if _positive(v)}))
             store.set_meta(readiness_key, str(now_ts + READINESS_RETRY_MINUTES * 60))
             metrics["morning"] = 1
             synced = True
@@ -712,6 +720,24 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
 
     if morning:
         synced = True                    # Garmin has today's sleep: the device synced after midnight
+    night = json.loads(store.get_meta(night_key) or "{}")
+    shown = record.get("hrv")
+    if (morning and _positive(night.get("hrv")) and _positive(shown) and abs(shown - night["hrv"]) >= 0.5
+            and store.get_meta(snapshot_key) != str(shown)):
+        # Intervals' HRV moved away from the night's: the official integration has just written a Health
+        # Snapshot over it (it does so for resting HR too). Today's files say which values were the snapshot's;
+        # they are only read here, the final read keeps the complete day.
+        store.set_meta(snapshot_key, str(shown))
+        files = garmin.wellness_files(current)
+        snapshots = wellness_bundle_index(files)["health_snapshots"] if files else []
+        metrics["snapshot_checks"] = metrics.get("snapshot_checks", 0) + 1
+        if snapshots and (raw := store.load_snapshot(current)) is not None:
+            raw = {**raw, "data": {**(raw.get("data") or {}), "health_snapshots": snapshots}}
+            try:
+                _write_wellness_day(current, raw, current, settings, intervals, metrics, apply=apply, night=night)
+            except Exception as exc:
+                metrics["failed"] += 1
+                log.warning("Wellness %s not written: %s", current, type(exc).__name__)
     verify_key = f"wellness:verify:{current}"
     if pending_past and not synced and touched and now_ts >= float(store.get_meta(verify_key) or 0):
         # Something new arrived in Intervals for today; ask Garmin whether that was a device sync.

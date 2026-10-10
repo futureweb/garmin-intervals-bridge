@@ -40,9 +40,10 @@ class Garmin:
         data = {}
         for name in names:
             if name == "sleep":
+                has = self.sleep or day < TODAY
                 data["sleep"] = {"dailySleepDTO": {"sleepTimeSeconds": 28080, "averageSpO2Value": 95,
-                                                   "averageRespirationValue": 14.5} if self.sleep or day < TODAY
-                                 else {}}
+                                                   "averageRespirationValue": 14.5} if has else {},
+                                 **({"restingHeartRate": 49} if has else {})}
             elif name == "hrv":
                 data["hrv"] = {"hrvSummary": {"lastNightAvg": 38}}
             elif name == "training_readiness":
@@ -104,10 +105,36 @@ def test_official_sleep_triggers_exactly_one_morning_read(tmp_path):
     day, changes = i.writes[-1]
     assert day == TODAY and changes["spO2"] == 95 and changes["respiration"] == 14.5 and changes["readiness"] == 81
     assert "sleepSecs" not in changes and "hrv" not in changes  # what the official sync brought stays untouched
-    gets = len(i.gets)
     run(tmp_path, st, g, i, at(10, 30))
     run(tmp_path, st, g, i, at(23, 0))
-    assert len(g.reads) == 1 and len(i.gets) == gets           # done: not even Intervals is asked again
+    assert len(g.reads) == 1                                   # done with Garmin; Intervals is still watched
+    st.close()
+
+
+def test_a_snapshot_import_during_the_day_is_put_back_the_same_day(tmp_path):
+    import io
+    import zipfile
+
+    from test_wellness_files import snapshot_fit
+    st, g, i = fresh(tmp_path)
+    g.sleep = g.readiness = True
+    i.records[TODAY] = {"sleepSecs": 28080, "hrv": 38, "restingHR": 49}
+    run(tmp_path, st, g, i, at(8, 0))                          # morning: the night is HRV 38, resting HR 49
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("1_ACTIVITY.fit", snapshot_fit())           # RMSSD 37, HR 63
+    asked = []
+    g.wellness_files = lambda day: asked.append(day) or buf.getvalue()
+    run(tmp_path, st, g, i, at(10, 0))
+    assert asked == []                                         # nothing moved: Garmin not asked
+    i.records[TODAY].update({"hrv": 37, "restingHR": 63})      # the official integration imported the snapshot
+    m = run(tmp_path, st, g, i, at(10, 40))
+    assert asked == [TODAY] and m["snapshot_fixes"] == 1
+    assert i.records[TODAY]["hrv"] == 38 and i.records[TODAY]["restingHR"] == 49
+    assert i.records[TODAY]["GarminSnapshotRMSSD"] == 37 and i.records[TODAY]["GarminSnapshotHR"] == 63
+    assert st.load_wellness_index(TODAY) is None               # the running day's files are not kept yet
+    run(tmp_path, st, g, i, at(11, 0))
+    assert asked == [TODAY]                                    # back to the night's values: nothing to do
     st.close()
 
 

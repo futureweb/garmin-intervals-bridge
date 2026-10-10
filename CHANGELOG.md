@@ -37,9 +37,11 @@
   archive entries without fetching anything else again.
 - **Health Snapshots in Intervals**: the day's first snapshot (heart rate,
   RMSSD, SDRR, respiration, SpO₂, stress) in `GarminSnapshot…` fields with
-  a new chart. Where the official integration had written a snapshot into
-  resting HR, HRV or SpO₂, the night's value is put back; that is the only
-  case besides a filtered file in which the bridge replaces a value.
+  a new chart. Where the official integration writes a snapshot into
+  resting HR, HRV or SpO₂, the night's value is put back, on the same day
+  (one read of today's files when Intervals' HRV moves away from the
+  night's); that is the only case besides a filtered file in which the
+  bridge replaces a value.
 - More of the night: lowest SpO₂, lowest and highest respiration, Body
   Battery change during sleep and Garmin's HRV baseline band, all from the
   archive (the HRV and SpO₂ charts show them).
