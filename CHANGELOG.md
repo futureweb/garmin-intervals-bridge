@@ -10,6 +10,13 @@
   to the library chart does not reach it.
 - The charts' description links the forum thread instead of GitHub – where Intervals users
   find what the bridge is, its guides and answers.
+- **Web page, Garmin sign-in:** while Garmin answers (often 20–30 seconds) the page says so –
+  "Signing in to Garmin Connect…", with the seconds so far – and updates by itself (a meta
+  refresh, still no script). Wrong password, the MFA code sent, signed in: each answer shows as
+  a clear note. The Garmin page also says whether the bridge is signed in already.
+- **Web page:** labels above full-width fields, checkboxes whose text wraps beside them, the
+  settings in separated groups, a tidier status table, the open page marked in the menu, and a
+  dark mode that follows the system's.
 
 ## 0.11.2 — 2026-10-14
 
