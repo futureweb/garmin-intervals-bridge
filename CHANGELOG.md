@@ -4,6 +4,9 @@
 
 ### Changed
 
+- **Home Assistant app:** the web page's *Log* said "No log file". The app now keeps the
+  bridge's rotated log file (5 MB, three old ones kept) as `bridge.log` in its data folder, so
+  the page shows the log with date and time. The app's own *Log* tab is unchanged.
 - **Charts:** a chart the bridge puts on the Fitness page (*Actions → Charts*, `setup-charts`)
   is now a copy of the same chart in Intervals' chart library, as Intervals' own *Copy* makes
   it (`from_id`): the library shows how many use it. Each copy stays your own; a later change
