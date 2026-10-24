@@ -2,6 +2,7 @@
 import io
 import json
 import stat
+import sys
 import time
 import zipfile
 from datetime import date, datetime, timezone
@@ -92,8 +93,9 @@ def test_cache_private_atomic_and_invalidated_by_rotation(tmp_path, monkeypatch)
     cache = json.loads(g.cache_path.read_text())
     assert set(cache) == {"token", "obtained", "usable_until", "key_fingerprint", "lifetime_hours", "short_lifetime"}
     assert KEY not in g.cache_path.read_text()
-    assert stat.S_IMODE(g.cache_dir.stat().st_mode) == 0o700
-    assert stat.S_IMODE(g.cache_path.stat().st_mode) == 0o600
+    if sys.platform != "win32":                       # POSIX file modes
+        assert stat.S_IMODE(g.cache_dir.stat().st_mode) == 0o700
+        assert stat.S_IMODE(g.cache_path.stat().st_mode) == 0o600
     assert not list(g.cache_dir.glob(".partial-*"))
     assert not (tmp_path / "tokens").exists()
     again = source(tmp_path, Response(payload={}))
@@ -294,6 +296,7 @@ def test_activity_pagination_detail_and_original_validation(tmp_path):
         g.activity("../token")
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX file modes")
 def test_cache_hardens_existing_permissions(tmp_path):
     g = source(tmp_path, token(), Response(payload={}))
     g.login()

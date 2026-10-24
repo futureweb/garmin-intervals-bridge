@@ -44,7 +44,7 @@ def _schema_valid(value, schema):
 
 def test_every_home_assistant_default_validates_against_its_schema():
     config_path = Path(__file__).resolve().parents[1] / "home-assistant/config.yaml"
-    options, schema = config_path.read_text().split("\noptions:\n", 1)[1].split("\nschema:\n", 1)
+    options, schema = config_path.read_text(encoding="utf-8").split("\noptions:\n", 1)[1].split("\nschema:\n", 1)
     entries = dict(re.findall(r"^  (\w+): (.+)$", schema, re.M))
     defaults = dict(re.findall(r"^  (\w+): (.+)$", options, re.M))
     assert "garmin_personal_api_key_expires" not in defaults
@@ -420,9 +420,9 @@ def test_activity_step_isolates_personal_failures_but_propagates_intervals(setti
 def test_trigger_and_mismatch_documentation():
     root = Path(__file__).resolve().parents[1]
     for name in ("deploy/README.md", "SECURITY.md"):
-        text = (root / name).read_text()
+        text = (root / name).read_text(encoding="utf-8")
         assert "BRIDGE_UI_TRIGGER_TOKEN" in text and "Authorization: Bearer <token>" in text
         assert "POST /trigger/poll-now" in text and "Home Assistant ingress" in text
-    text = (root / "docs/PERSONAL_API.md").read_text()
+    text = (root / "docs/PERSONAL_API.md").read_text(encoding="utf-8")
     assert "Direct wellness, extras, files and account data continue" in text
     assert "Clear the saved expiry (keep the key)" in text
