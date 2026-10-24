@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import math
 import re
@@ -14,6 +13,7 @@ from typing import Any
 import requests
 
 from . import __version__
+from .config import key_fingerprint
 from .fit import extract_original_fit, sha256
 from .garmin import ACCOUNT_ENDPOINTS, DAY_ENDPOINTS, GarminBlocked, _is_transient
 from .store import InstanceBusy, Store, single_instance
@@ -237,7 +237,7 @@ class PersonalGarminSource:
         self.cache_dir = data_dir / "personal-api"
         self.cache_path = self.cache_dir / "token.json"
         self._key = api_key
-        self._fingerprint = hashlib.sha256(api_key.encode()).hexdigest()
+        self._fingerprint = key_fingerprint(api_key)
         self.delay, self.requests = delay, 0
         self.session = session or requests.Session()
         if session is None:

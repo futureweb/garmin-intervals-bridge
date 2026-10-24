@@ -177,7 +177,7 @@ def test_notices_only_most_urgent_and_no_failed_delivery_loop(settings, store, m
     calls = []
     monkeypatch.setattr(alerts, "channels", lambda s: ["mail"])
     monkeypatch.setattr(alerts, "send", lambda *a: calls.append(a) or {"mail": "failed"})
-    configured = replace(settings, garmin_personal_api_key_expires=DAY + timedelta(days=2))
+    configured = replace(settings, garmin_personal_expires=DAY + timedelta(days=2))
     for _ in range(4):
         notices.personal_expiry_reminders(configured, store, None, DAY)
         notices.personal_key_needed(configured, store, None, DAY)
@@ -359,7 +359,7 @@ def test_trigger_settings_secret_keep_replace_clear_and_validation(settings, mon
 def test_replacing_key_clears_old_date_and_same_key_validation_clears_failure(settings, monkeypatch):
     path = settings.data_dir / "settings.conf"
     path.write_text("GARMIN_SOURCE=hybrid\n")
-    configured = replace(settings, env_file=path, garmin_personal_api_key_expires=date(2020, 1, 1))
+    configured = replace(settings, env_file=path, garmin_personal_expires=date(2020, 1, 1))
     monkeypatch.setattr(webui, "PersonalGarminSource", lambda *a: SimpleNamespace(login=lambda: None))
     ui = make_ui(configured)
     p = Personal(settings.data_dir)
@@ -424,7 +424,7 @@ def test_saved_pair_rechecks_after_explicit_signin_changes_account(settings, sto
 
 
 def test_wizard_new_key_asks_for_expiry_without_old_default(settings, monkeypatch):
-    configured = replace(settings, garmin_personal_api_key_expires=date(2020, 1, 1))
+    configured = replace(settings, garmin_personal_expires=date(2020, 1, 1))
     p = Personal(settings.data_dir)
     p._save_failure("authorization")
     monkeypatch.setattr(wizard, "PersonalGarminSource", lambda *a: SimpleNamespace(login=lambda: None))

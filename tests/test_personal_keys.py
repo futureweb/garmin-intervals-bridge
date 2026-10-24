@@ -261,7 +261,7 @@ def test_expiry_format_is_validated(settings, monkeypatch, value):
 
 def test_expiry_reminders_deduplicate_by_key_date_and_apply(settings, monkeypatch):
     expiry = date(2026, 11, 1)
-    settings = replace(settings, garmin_personal_api_key_expires=expiry, intervals_notes=True)
+    settings = replace(settings, garmin_personal_expires=expiry, intervals_notes=True)
     store = Store(settings.data_dir)
     sent, notes = [], []
     monkeypatch.setattr(notices.alerts, "channels", lambda s: ["mail"])
@@ -278,7 +278,7 @@ def test_expiry_reminders_deduplicate_by_key_date_and_apply(settings, monkeypatc
         assert len(sent) == len(notes) == 2
         notices.personal_expiry_reminders(replace(settings, garmin_personal_api_key="rotated"), store, intervals,
                                          expiry - timedelta(days=14), apply=True)
-        notices.personal_expiry_reminders(replace(settings, garmin_personal_api_key_expires=expiry + timedelta(days=1)),
+        notices.personal_expiry_reminders(replace(settings, garmin_personal_expires=expiry + timedelta(days=1)),
                                          store, intervals, expiry - timedelta(days=13), apply=True)
         assert len(sent) == len(notes) == 4
         notices.personal_expiry_reminders(settings, store, intervals, expiry + timedelta(days=1), apply=True)
@@ -544,7 +544,7 @@ def test_ha_expiry_option_and_status_surfaces(settings, monkeypatch):
     path.write_text(json.dumps({"garmin_personal_api_key_expires": "2027-01-01"}))
     assert config.load_options_file(path) == ["GARMIN_PERSONAL_API_KEY_EXPIRES"]
     loaded = config.Settings.from_env()
-    assert loaded.garmin_personal_api_key_expires == date(2027, 1, 1)
+    assert loaded.garmin_personal_expires == date(2027, 1, 1)
     loaded = replace(loaded, garmin_source="auto", garmin_personal_api_key="", env_file=None)
     store = Store(settings.data_dir)
     try:

@@ -342,7 +342,7 @@ def test_hybrid_liveness_checks_timers_when_personal_waits(settings, store, monk
 def test_web_can_clear_expiry_without_revalidating_or_removing_key(settings):
     path = settings.data_dir / "settings.conf"
     path.write_text("GARMIN_PERSONAL_API_KEY=" + KEY + "\nGARMIN_PERSONAL_API_KEY_EXPIRES=2026-12-01\n")
-    configured = replace(settings, env_file=path, garmin_personal_api_key_expires=date(2026, 12, 1))
+    configured = replace(settings, env_file=path, garmin_personal_expires=date(2026, 12, 1))
     ui = make_ui(configured)
     assert 'name="clear_personal_expiry"' in ui.settings_page(webui.Session())
     ui.settings_post(webui.Session(), {}, {"timezone": "UTC", "clear_personal_expiry": "1"})

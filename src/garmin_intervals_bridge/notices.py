@@ -11,7 +11,6 @@
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import threading
@@ -22,7 +21,7 @@ from typing import Any
 import requests
 
 from . import __version__, alerts
-from .config import effective_source
+from .config import effective_source, key_fingerprint
 
 log = logging.getLogger(__name__)
 
@@ -163,10 +162,10 @@ def personal_expiry_reminders(settings: Any, store: Any, intervals: Any, today: 
                                apply: bool = False, short: bool = False) -> None:
     """Reminders once per key/date/threshold; calendar notes wait for an applying run."""
     key = getattr(settings, "garmin_personal_api_key", "")
-    expiry = getattr(settings, "garmin_personal_api_key_expires", None)
+    expiry = getattr(settings, "garmin_personal_expires", None)
     if not key or (expiry and today > expiry):
         return
-    fingerprint = hashlib.sha256(key.encode()).hexdigest()[:16]
+    fingerprint = key_fingerprint(key)[:16]
     identity = f"{fingerprint}:{expiry or 'unknown'}"
     days = (expiry - today).days if expiry else None
     thresholds = [n for n in (14, 3) if days is not None and 0 <= days <= n]

@@ -100,7 +100,7 @@ def _source_mode(settings, store):
 def source_status(settings, store) -> dict:
     """Credential health and the last actual provider of each routed dataset."""
     mode = _source_mode(settings, store)
-    expiry = getattr(settings, "garmin_personal_api_key_expires", None)
+    expiry = getattr(settings, "garmin_personal_expires", None)
     today = datetime.now(settings.timezone).date()
     return {"garmin_source": source_label(settings), "effective_source": mode,
             "trigger_warning": getattr(settings, "ui_trigger_warning", ""),
@@ -383,7 +383,7 @@ def garmin_source(settings, *, direct_factory=GarminSource, store=None, interval
                                     on_ok=(lambda: notices.personal_ok(store)) if store is not None else None,
                                     on_key_needed=key_needed, on_short_token=short_token,
                                     on_authorization=authorization,
-                                    expires=settings.garmin_personal_api_key_expires, today=today)
+                                    expires=settings.garmin_personal_expires, today=today)
     personal.pause_remaining = (lambda: max(0, float(store.get_meta(PAUSE_KEY) or 0) - time.time())
                                if store is not None else 0)
     if mode == "personal":

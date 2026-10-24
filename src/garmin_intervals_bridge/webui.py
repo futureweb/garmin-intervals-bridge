@@ -644,7 +644,7 @@ class UI:
         if settings.env_file is None:
             rows = [("Garmin source", source_label(settings)),
                     ("Personal API key", "configured" if settings.garmin_personal_api_key else "not set"),
-                    ("Personal key expiry", str(settings.garmin_personal_api_key_expires or "unknown")),
+                    ("Personal key expiry", str(settings.garmin_personal_expires or "unknown")),
                     ("Check now token", "not used with Home Assistant ingress" if self.ingress else
                      "configured" if settings.ui_trigger_token else "not set"),
                     ("Time zone", settings.timezone.key), ("ImReady4 advice", settings.imready4),
@@ -693,7 +693,7 @@ class UI:
                  + '<label>Personal key expiry (optional; empty keeps it unless replacing the key) '
                    '<input type="date" name="personal_key_expires"></label>'
                  + box("clear_personal_expiry", "Clear the saved expiry (keep the key)", False)
-                 + f'<p>Saved expiry: {esc(str(settings.garmin_personal_api_key_expires or "unknown"))}. '
+                 + f'<p>Saved expiry: {esc(str(settings.garmin_personal_expires or "unknown"))}. '
                    'When replacing the key, enter its new expiry or leave empty for unknown.</p>'
                  + ('' if self.ingress else
                     '<h2>Check now from a phone</h2><p>Use this separate secret in an Apple Shortcut or other '
@@ -814,7 +814,7 @@ class UI:
         if clear or clear_expiry:
             expiry = ""
         elif not expiry and candidate_key == settings.garmin_personal_api_key:
-            expiry = str(settings.garmin_personal_api_key_expires or "")
+            expiry = str(settings.garmin_personal_expires or "")
         try:
             personal_expiry(expiry)
         except ValueError as exc:

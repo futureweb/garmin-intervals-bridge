@@ -1,6 +1,7 @@
 """Config from environment without loading secrets into logs."""
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -182,6 +183,12 @@ def _text(name: str) -> str | None:
     return os.getenv(name, "").strip() or None
 
 
+def key_fingerprint(api_key: str) -> str:
+    """A stable identifier of the Personal API key for the local caches, never the key itself."""
+    return hashlib.pbkdf2_hmac("sha256", api_key.encode(), b"garmin-intervals-bridge personal api key",
+                               100_000).hex()
+
+
 def trigger_token(value: str) -> str:
     """Validate the optional HTTP trigger secret without including it in errors."""
     value = value.strip()
@@ -336,7 +343,7 @@ class Settings:
     backup_hours: int = 12
     garmin_source: str = "auto"
     garmin_personal_api_key: str = field(default="", repr=False)
-    garmin_personal_api_key_expires: date | None = None
+    garmin_personal_expires: date | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -361,7 +368,7 @@ class Settings:
             data_dir=data_dir,
             garmin_source=_garmin_source(),
             garmin_personal_api_key=os.getenv("GARMIN_PERSONAL_API_KEY", "").strip(),
-            garmin_personal_api_key_expires=personal_expiry(os.getenv("GARMIN_PERSONAL_API_KEY_EXPIRES", "").strip()),
+            garmin_personal_expires=personal_expiry(os.getenv("GARMIN_PERSONAL_API_KEY_EXPIRES", "").strip()),
             token_dir=token_dir,
             intervals_api_key=os.getenv("INTERVALS_API_KEY", "").strip(),
             intervals_athlete_id=athlete_id,

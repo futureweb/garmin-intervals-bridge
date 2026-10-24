@@ -263,7 +263,7 @@ def _personal_settings(p: Prompt, settings: Settings, save) -> Settings:
             p.say("Choose auto, direct, personal or hybrid.")
         while True:
             expiry = p.ask("Key expiry shown in Garmin Connect (YYYY-MM-DD, optional)",
-                           default=str(settings.garmin_personal_api_key_expires or "")
+                           default=str(settings.garmin_personal_expires or "")
                            if key == settings.garmin_personal_api_key else "")
             try:
                 personal_expiry(expiry)
