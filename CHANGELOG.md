@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.12.0 — 2026-10-24
+
+Garmin's official Personal API as a second way in, and *Check now* from a phone.
+
+### Added
+
+- **Garmin's Personal API** (thanks spmcewen in the forum): besides the sign-in with your Garmin
+  password, the bridge can use a Personal API key that you create yourself in Garmin Connect – an
+  official interface, no password, no MFA. `GARMIN_SOURCE=auto`, the new default, uses what you
+  have: only the sign-in → as before; only a key → Personal; both → hybrid. Hybrid takes
+  activities, the original files and the daily summary, HRV, Body Battery and nutrition from the
+  Personal API and everything else from the sign-in; when the sign-in expires, the Personal part
+  keeps going, and when the key needs replacing, the sign-in serves the shared data. The Personal
+  API alone has no activity extras, gear, the watch's wellness files, Training Readiness or other
+  training metrics: [docs/PERSONAL_API.md](docs/PERSONAL_API.md) says what comes from where. Keys
+  expire after 30 days to a year: with `GARMIN_PERSONAL_API_KEY_EXPIRES` the bridge reminds you
+  14 and 3 days before (e-mail/push and an Intervals note), and in any case on the last day.
+  `personal-check` tests a key; `setup`, the web page's settings and the Home Assistant options
+  (`garmin_source`, `garmin_personal_api_key`, `garmin_personal_api_key_expires`) take the key.
+- **Check now from a phone** (thanks spmcewen): with `BRIDGE_UI_TRIGGER_TOKEN` set,
+  `POST /trigger/poll-now` with the header `Authorization: Bearer <token>` does what the web
+  page's *Check now* button does – for example from an Apple Shortcuts automation when you get
+  home. It needs the web page reachable in your network (the systemd `ui` unit, Docker, a NAS);
+  not with Home Assistant. See [docs/WEB_PAGE.md](docs/WEB_PAGE.md).
+
+### Changed
+
+- The health check's daily summary ("last 24 h: …") is logged as INFO, not as a WARNING.
+- `setup` asks whether to use a Personal API key (Enter skips it). Saving the web page's settings
+  also writes the Garmin source (`auto` unless you choose another).
+- Archived days record which source supplied each part and whether the day's read was the final
+  one; `status`, `health` and `snapshot-account` show the Garmin source and what waits for the
+  sign-in.
+
+### Fixed
+
+- The web page shows **sign-in needed** whenever the bridge waits for a new Garmin sign-in, also
+  with the Intervals notes switched off.
+
 ## 0.11.7 — 2026-10-23
 
 The past from the web page (no terminal needed, e.g. in Home Assistant); a short Intervals outage is no
