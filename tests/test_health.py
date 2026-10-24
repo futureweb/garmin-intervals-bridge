@@ -42,6 +42,17 @@ def test_healthy_probe_records_success_and_exits_zero(tmp_path):
     st.close()
 
 
+def test_the_day_summary_is_logged_as_info(tmp_path, caplog):
+    st = Store(tmp_path)
+    st.record_run("sync", {"activities": {"enriched": 1}, "wellness": {"writes": 2}, "garmin_requests": 9})
+    with caplog.at_level("INFO", logger="garmin_intervals_bridge"):
+        probe(cfg(tmp_path), Garmin(), Intervals(), st)
+    summary = [r for r in caplog.records if r.getMessage().startswith("last 24 h:")]
+    assert [r.levelname for r in summary] == ["INFO"]
+    assert "1 activities enriched, 2 wellness days written, 9 Garmin requests" in summary[0].getMessage()
+    st.close()
+
+
 def test_failure_inside_the_window_is_a_warning_not_an_alert(tmp_path):
     st = Store(tmp_path)
     st.set_meta("garmin_last_ok")                       # succeeded just now

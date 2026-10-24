@@ -95,7 +95,9 @@ def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float 
     if update:
         report["findings"].append(update)
     for f in report["findings"]:
-        (log.error if f["alert"] else log.warning)("%s: %s", f["what"], f["detail"])
+        # the day summary is information, not a warning
+        level = log.error if f["alert"] else log.info if f["what"] == "last 24 h" else log.warning
+        level("%s: %s", f["what"], f["detail"])
     alerts.health(settings, store, report["findings"], _today(settings).isoformat())
     if any(f["alert"] for f in report["findings"]):
         report["exit"] = 2
