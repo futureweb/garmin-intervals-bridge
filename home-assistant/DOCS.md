@@ -53,3 +53,8 @@ The page's *Log* shows the bridge's log with date and time.
 Everything else, the backfill of the past and what each value means:
 <https://github.com/futureweb/garmin-intervals-bridge>. Questions and reports:
 <https://forum.intervals.icu/t/132863>.
+
+For a Garmin Personal API key, leave `garmin_source` at `auto` (or choose an explicit source) and
+enter `garmin_personal_api_key` in the password field. Optionally set
+`garmin_personal_api_key_expires` to its `YYYY-MM-DD` expiry for reminders. Hybrid credentials must
+belong to the same account. See [Personal API coverage](https://github.com/futureweb/garmin-intervals-bridge/blob/main/docs/PERSONAL_API.md) for what each mode reads.

@@ -90,7 +90,7 @@ def archived_ends(store: Any, tz: Any, now: float) -> list[tuple[datetime, float
     except OSError:
         return []
     for entry in entries:
-        if not entry.name.endswith(".json") or entry.name.endswith(".extras.json"):
+        if not entry.name.endswith(".json") or entry.name.endswith((".extras.json", ".personal.json")):
             continue
         try:
             with open(entry.path, encoding="utf-8") as fh:

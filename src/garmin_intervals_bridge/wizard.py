@@ -28,7 +28,16 @@ from . import __version__, alerts, autostart, hrvtrend, imready4
 from .backup import backup_once
 from .backup import describe as describe_backup
 from .charts import setup_charts
-from .config import Settings, bridge_home, env_file, env_line_key, parse_env_file
+from .config import (
+    GARMIN_SOURCES,
+    Settings,
+    bridge_home,
+    effective_source,
+    env_file,
+    env_line_key,
+    parse_env_file,
+    personal_expiry,
+)
 from .garmin import GarminBlocked, GarminLoginNeeded, GarminSource, sign_in_problem
 from .gear import RECENT_DAYS
 from .gear import apply_plan as apply_gear_plan
@@ -36,6 +45,7 @@ from .gear import build_plan as build_gear_plan
 from .gear import load_config as load_gear_config
 from .gear import save_config as save_gear_config
 from .intervals import IntervalsClient
+from .personal import PersonalGarminSource
 from .store import InstanceBusy, Store, single_instance
 
 HEADER = ("# Garmin -> Intervals.icu Bridge settings, written by `garmin-intervals-bridge setup`.\n"
@@ -240,14 +250,66 @@ def _timezone(p: Prompt, saved: str) -> str:
                   "https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).")
 
 
+def _personal_settings(p: Prompt, settings: Settings, save) -> Settings:
+    if p.yes("Use a Garmin Personal API key (optional)?", default=bool(settings.garmin_personal_api_key)):
+        p.say("Create a key in Garmin Connect: "
+              "https://developer.garmin.com/gc-developer-program/personal/personal-api/\n"
+              "Auto uses Personal with a key, hybrid with a key and saved direct session, otherwise direct.")
+        key = p.secret("Personal API key (empty keeps the saved key, or skips)") or settings.garmin_personal_api_key
+        if not key:
+            return settings
+        while (source := p.ask("Garmin source: auto, direct, personal or hybrid",
+                               default="auto")) not in GARMIN_SOURCES:
+            p.say("Choose auto, direct, personal or hybrid.")
+        while True:
+            expiry = p.ask("Key expiry shown in Garmin Connect (YYYY-MM-DD, optional)",
+                           default=str(settings.garmin_personal_api_key_expires or "")
+                           if key == settings.garmin_personal_api_key else "")
+            try:
+                personal_expiry(expiry)
+                break
+            except ValueError as exc:
+                p.say(str(exc))
+        try:
+            with tempfile.TemporaryDirectory(dir=settings.data_dir) as candidate:
+                PersonalGarminSource(Path(candidate), key, settings.garmin_request_delay).login()
+        except Exception:
+            p.say("Could not validate the Personal API key; the saved key and source were not changed.")
+            return settings
+        saved = save({"GARMIN_SOURCE": source, "GARMIN_PERSONAL_API_KEY": key,
+                      "GARMIN_PERSONAL_API_KEY_EXPIRES": expiry})
+        from .personal import validated_key
+        validated_key(settings.data_dir)
+        return saved
+    return save({"GARMIN_SOURCE": "direct"}) if effective_source(settings) != "direct" else settings
+
+
 def _garmin(p: Prompt, settings: Settings, source: Callable[..., Any]) -> Any | None:
-    garmin = source(settings.token_dir, settings.garmin_request_delay)
+    from .personal import PersonalKeyNeeded
+    from .sources import AccountMismatch, garmin_source
+    garmin = garmin_source(settings, direct_factory=source)
+    direct = garmin.direct if effective_source(settings) == "hybrid" else garmin
     try:
-        garmin.login(interactive=False)
-        p.say("Garmin Connect: signed in with the saved session.")
+        if effective_source(settings) == "hybrid":
+            garmin.personal.login(interactive=False)
+        direct.login(interactive=False)
+        if effective_source(settings) == "hybrid":
+            garmin._verify()
+        p.say("Personal API answered." if effective_source(settings) == "personal" else
+              "Garmin Connect: signed in with the saved session.")
         return garmin
     except GarminLoginNeeded:
         pass
+    except PersonalKeyNeeded:
+        p.say("Personal API key needs replacement. Run setup again with a new key, or choose direct login.")
+        return None
+    except AccountMismatch as exc:
+        p.say(f"{exc}. Use credentials from the same Garmin account, then run setup again.")
+        return None
+    except (requests.RequestException, ValueError):
+        p.say("Personal API is unavailable or returned an unexpected response. Try setup again later; "
+              "your answers so far are saved.")
+        return None
     except GarminBlocked as exc:
         p.say(f"Garmin is not answering or limits sign-ins right now ({exc}). Wait an hour, then run setup "
               "again; your answers so far are saved.")
@@ -255,7 +317,17 @@ def _garmin(p: Prompt, settings: Settings, source: Callable[..., Any]) -> Any | 
     p.say("Sign in to Garmin Connect once. Your password is used for this sign-in only and not stored; "
           "the session is saved in the bridge's folder and renews itself for about a year.")
     try:
-        garmin.login(interactive=True)
+        direct.login(interactive=True)
+        if effective_source(settings) == "hybrid":
+            garmin.direct_waiting = False
+            garmin._verify()
+    except AccountMismatch as exc:
+        p.say(f"{exc}. Use credentials from the same Garmin account, then run setup again.")
+        return None
+    except (requests.RequestException, ValueError):
+        p.say("Personal API is unavailable or returned an unexpected response. Try setup again later; "
+              "your answers so far are saved.")
+        return None
     except GarminBlocked as exc:
         p.say(f"Garmin refused the sign-in for now ({exc}). If it says 429: wait an hour, then run setup again.")
         return None
@@ -468,6 +540,7 @@ def _run(p: Prompt, client: Callable[[str], Any], garmin_source: Callable[..., A
     p.say(f"Saved in {path}")
 
     p.say(f"\n3/{STEPS} Garmin Connect")
+    settings = _personal_settings(p, settings, save)
     garmin = _garmin(p, settings, garmin_source)
     if garmin is None:
         return 1
@@ -533,6 +606,7 @@ def _run_backup(p: Prompt, path: Path, saved: dict[str, str], save: Callable[[di
     settings.ensure_data_dir()
     p.say(f"Saved in {path}")
     p.say(f"\n2/{steps} Garmin Connect")
+    settings = _personal_settings(p, settings, save)
     garmin = _garmin(p, settings, garmin_source)
     if garmin is None:
         return 1

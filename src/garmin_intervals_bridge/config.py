@@ -1,9 +1,11 @@
 """Config from environment without loading secrets into logs."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -108,6 +110,44 @@ def within_hours(when: Any, ranges: tuple[tuple[int, int], ...]) -> bool:
     return any(start <= minute < end if start < end else (minute >= start or minute < end) for start, end in ranges)
 
 
+GARMIN_SOURCES = ("auto", "direct", "personal", "hybrid")
+
+
+def personal_expiry(value: str) -> date | None:
+    """Optional calendar date printed next to the key in Garmin Connect."""
+    if not value:
+        return None
+    try:
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+            raise ValueError
+        return date.fromisoformat(value)
+    except ValueError:
+        raise ValueError("GARMIN_PERSONAL_API_KEY_EXPIRES must be YYYY-MM-DD") from None
+
+
+def effective_source(settings: Any) -> str:
+    """Auto follows the configured key and presence of a saved direct session."""
+    mode = getattr(settings, "garmin_source", "auto")
+    if mode != "auto":
+        return mode
+    if not getattr(settings, "garmin_personal_api_key", ""):
+        return "direct"
+    return "hybrid" if any(settings.token_dir.glob("*.json")) else "personal"
+
+
+def source_label(settings: Any) -> str:
+    """Display an explicit source, or auto together with the source it currently selects."""
+    mode = getattr(settings, "garmin_source", "auto")
+    return f"auto → {effective_source(settings)}" if mode == "auto" else mode
+
+
+def _garmin_source() -> str:
+    value = os.getenv("GARMIN_SOURCE", "").strip().lower() or "auto"
+    if value not in GARMIN_SOURCES:
+        raise ValueError("GARMIN_SOURCE must be auto, direct, personal or hybrid")
+    return value
+
+
 MODES = ("enrich", "upload", "backup")
 POLL_MODES = ("fixed", "adaptive")
 SWAP_METHODS = ("replace", "upload")
@@ -142,6 +182,26 @@ def _text(name: str) -> str | None:
     return os.getenv(name, "").strip() or None
 
 
+def trigger_token(value: str) -> str:
+    """Validate the optional HTTP trigger secret without including it in errors."""
+    value = value.strip()
+    if value and (len(value) < 24 or any(c.isspace() for c in value)):
+        raise ValueError("BRIDGE_UI_TRIGGER_TOKEN must have at least 24 characters and no whitespace")
+    return value
+
+
+TRIGGER_WARNING = ("Check now trigger disabled: BRIDGE_UI_TRIGGER_TOKEN must have at least 24 characters "
+                   "and no whitespace")
+
+
+def _trigger_settings() -> dict:
+    try:
+        return {"ui_trigger_token": trigger_token(os.getenv("BRIDGE_UI_TRIGGER_TOKEN", ""))}
+    except ValueError:
+        logging.getLogger(__name__).warning(TRIGGER_WARNING)
+        return {"ui_trigger_token": "", "ui_trigger_warning": TRIGGER_WARNING}
+
+
 def _port(name: str) -> int | None:
     value = os.getenv(name, "").strip()
     if not value:
@@ -152,7 +212,9 @@ def _port(name: str) -> int | None:
 
 
 # A Home Assistant add-on hands its form to the container as /data/options.json.
-OPTIONS = {"intervals_api_key": "INTERVALS_API_KEY", "timezone": "BRIDGE_TIMEZONE",
+OPTIONS = {"garmin_source": "GARMIN_SOURCE", "garmin_personal_api_key": "GARMIN_PERSONAL_API_KEY",
+           "garmin_personal_api_key_expires": "GARMIN_PERSONAL_API_KEY_EXPIRES",
+           "intervals_api_key": "INTERVALS_API_KEY", "timezone": "BRIDGE_TIMEZONE",
            "imready4": "BRIDGE_IMREADY4_ENABLED", "hrvtrend": "BRIDGE_HRVTREND_ENABLED",
            "update_check": "BRIDGE_UPDATE_CHECK", "intervals_notes": "BRIDGE_INTERVALS_NOTES",
            "ui_password": "BRIDGE_UI_PASSWORD", "alert_email": "BRIDGE_ALERT_EMAIL",
@@ -253,6 +315,8 @@ class Settings:
     intervals_notes: bool = True
     ui_port: int | None = None
     ui_host: str = "127.0.0.1"
+    ui_trigger_token: str = field(default="", repr=False)
+    ui_trigger_warning: str = ""
     alert_email: str | None = None
     smtp_host: str | None = None
     smtp_port: int | None = None
@@ -270,6 +334,9 @@ class Settings:
     poll_mode: str = "fixed"
     mode: str = "enrich"
     backup_hours: int = 12
+    garmin_source: str = "auto"
+    garmin_personal_api_key: str = field(default="", repr=False)
+    garmin_personal_api_key_expires: date | None = None
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -292,6 +359,9 @@ class Settings:
             raise ValueError("Invalid INTERVALS_ATHLETE_ID")
         return cls(
             data_dir=data_dir,
+            garmin_source=_garmin_source(),
+            garmin_personal_api_key=os.getenv("GARMIN_PERSONAL_API_KEY", "").strip(),
+            garmin_personal_api_key_expires=personal_expiry(os.getenv("GARMIN_PERSONAL_API_KEY_EXPIRES", "").strip()),
             token_dir=token_dir,
             intervals_api_key=os.getenv("INTERVALS_API_KEY", "").strip(),
             intervals_athlete_id=athlete_id,
@@ -310,6 +380,7 @@ class Settings:
             update_check=_flag("BRIDGE_UPDATE_CHECK", True),
             intervals_notes=_flag("BRIDGE_INTERVALS_NOTES", True),
             ui_port=_port("BRIDGE_UI_PORT"),
+            **_trigger_settings(),
             ui_host=os.getenv("BRIDGE_UI_HOST", "").strip() or (
                 "0.0.0.0" if os.getenv("BRIDGE_IN_CONTAINER") else "127.0.0.1"),
             alert_email=_text("BRIDGE_ALERT_EMAIL"),

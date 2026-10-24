@@ -282,6 +282,8 @@ class Script(wizard.Prompt):
 
     def _next(self, question):
         self.asked.append(question)
+        if question.startswith("Use a Garmin Personal API key"):
+            return "n"                   # existing direct-login scenarios skip the optional step
         if not self.answers:
             pytest.fail(f"unexpected question: {question}")
         answer = self.answers.pop(0)

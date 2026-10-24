@@ -17,6 +17,8 @@ timeout: 30
 map:
   - share
 options:
+  garmin_source: auto
+  garmin_personal_api_key: ""
   intervals_api_key: ""
   mode: enrich
   write_to_intervals: false
@@ -26,6 +28,9 @@ options:
   intervals_notes: true
   update_check: false
 schema:
+  garmin_source: list(auto|direct|personal|hybrid)
+  garmin_personal_api_key: password?
+  garmin_personal_api_key_expires: match(^\d{4}-\d{2}-\d{2}$)?
   intervals_api_key: password?
   mode: list(enrich|upload|backup)
   write_to_intervals: bool

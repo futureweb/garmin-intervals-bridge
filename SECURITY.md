@@ -1,6 +1,6 @@
 # Security and privacy
 
-This project handles GPS tracks, detailed medical/fitness/health metrics (including logged nutrition and sleep data), Garmin session tokens and the Intervals API key.
+This project handles GPS tracks, detailed medical/fitness/health metrics (including logged nutrition and sleep data), Garmin session tokens, Personal API keys/access tokens and the Intervals API key.
 
 **Must**
 
@@ -21,9 +21,16 @@ This project handles GPS tracks, detailed medical/fitness/health metrics (includ
 - Alerts: the mailbox password (`BRIDGE_SMTP_PASSWORD`, ideally an app password that can only send) lives in the settings file like the API key; mail is sent with TLS. An ntfy topic name is a secret (anyone who knows it can read its messages): use a long random one, as `setup` does; push messages carry the headline only, never details.
 - The bridge connects to Garmin Connect, Intervals.icu and, once a day for the update hint, pypi.org (`BRIDGE_UPDATE_CHECK=false` turns that off); when alerts are set up, your mail server and/or the ntfy server. No telemetry.
 
+Personal keys are sent only to Garmin's Personal token endpoint. Access tokens are kept in a
+separate private cache; diagnostic output omits credential and JWT claim values. JWT decoding
+is used only to schedule renewal, never to verify account identity. Proxy and custom CA settings
+are honored, .netrc authentication and redirects are disabled. Treat the private failure cache,
+settings and health archives as sensitive too. See [Personal API](docs/PERSONAL_API.md).
+
 **Limitations**
 
 - Garmin endpoints are unofficial/private, may change and may have access restrictions and anti-automation protection; honor their rules.
+- The optional `BRIDGE_UI_TRIGGER_TOKEN` is a separate secret of at least 24 characters. It authorizes only `POST /trigger/poll-now`, using `Authorization: Bearer <token>` without a web session. Keep it out of URLs and logs, and use the UI's private network or HTTPS access. Empty disables it; invalid configuration disables only the trigger and shows a warning. The endpoint is rate limited, still checks Host, and is unavailable through Home Assistant ingress. Normal forms still require their session and CSRF token.
 - FIT header validation is structural, not a cryptographic signature or complete FIT semantic/CRC validation. For deeper checks use `compare-fit` with `fitparse` and a verified Garmin web download.
 - Existing wellness values are preserved, but concurrently changing server-side custom fields between GET and PUT can theoretically race; this is not a transactional multiwriter merge.
 - Automatic retry is limited to GET requests; a failed write might still have taken effect, and the app avoids replaying activity uploads automatically.

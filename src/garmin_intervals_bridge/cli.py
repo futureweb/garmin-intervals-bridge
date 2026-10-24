@@ -15,7 +15,7 @@ from . import __version__, alerts, autostart, hrvtrend, imready4, notices, polli
 from .backup import backup_once, backup_range
 from .backup import describe as describe_backup
 from .charts import setup_charts
-from .config import Settings, _flag, configured_log_file, load_env_file
+from .config import Settings, _flag, configured_log_file, effective_source, load_env_file
 from .enrich import enrich_activity, exact_match, gap_report, intervals_id_from, match_activity, resolve_one
 from .fit import compare_fit, extract_original_fit, sha256
 from .garmin import DAY_ENDPOINTS, GarminBlocked, GarminLoginNeeded, GarminSource, parse_endpoints
@@ -29,6 +29,9 @@ from .gear import save_config as save_gear_config
 from .gear import sync_recent as sync_gear_recent
 from .health import liveness, probe
 from .intervals import IntervalsClient, rate_limited, request_error, transient
+from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
+from .personal import PersonalGarminSource, PersonalKeyNeeded, validated_key
+from .sources import activity_step, garmin_source, remember_direct_profile, source_status
 from .store import InstanceBusy, Store, single_instance
 from .sync import (
     backfill_intake,
@@ -40,6 +43,10 @@ from .sync import (
     watch_once,
     wellness_check,
 )
+
+
+def _source(settings, store=None, intervals=None, *, apply=False):
+    return garmin_source(settings, direct_factory=GarminSource, store=store, intervals=intervals, apply=apply)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -235,6 +242,7 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--check", action="store_true",
                         help="Exit 1 when the bridge has stopped working (no run for twice the expected time) – "
                              "a container's healthcheck; no request to anyone")
+    sub.add_parser("personal-check", help="Check Personal API token contract and HTTP statuses (no values)")
     account = sub.add_parser("snapshot-account", help="Archive what is not a time series: profile, settings, "
                                                       "devices, zones, gear, personal records, badges, workouts, "
                                                       "training plans, goals, the calendar, FTP and running "
@@ -312,7 +320,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
     """
     log = logging.getLogger("bridge")
     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
-    garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+    garmin = _source(settings, store, intervals, apply=apply)
     next_sync, next_health, count, failures = 0.0, time.time() + 300, 0, 0
     tick = min(TICK_SECONDS, poll_seconds)
     # only a web page in this process can wake the loop ("Check now"); one elsewhere waits for the tick
@@ -337,7 +345,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
             elif now >= next_sync and not free:
                 next_sync = now + PART_BUSY_RETRY       # a backfill on both parts: look again soon
             elif now >= next_sync:
-                garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                garmin = _source(settings, store, intervals, apply=apply)
                 if hasattr(intervals, "forget_custom_items"):
                     intervals.forget_custom_items()      # fields added since: seen by this full run
                 results: dict = {"apply": apply, "scope": "all" if len(free) == 2 else next(iter(free)),
@@ -345,14 +353,16 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                 if "activities" not in free:
                     pass                                # a backfill works on it: it comes back with the next one
                 elif mode == "upload":
-                    results["activities"] = sync_activities(settings, garmin, intervals, store, apply=apply,
-                                                            allow_upload=True, catch_up=True)
+                    results["activities"] = activity_step(
+                        settings, store, sync_activities, settings, garmin, intervals, store,
+                        apply=apply, allow_upload=True, catch_up=True)
                     gear_result = _gear_recent(settings, store, intervals, apply=apply)
                     if gear_result:
                         results["gear"] = gear_result
                 else:
-                    results["activities"] = sync_enrich(settings, garmin, intervals, store, apply=apply,
-                                                        scan_interval_minutes=ACTIVITY_SCAN_MINUTES, catch_up=True)
+                    results["activities"] = activity_step(
+                        settings, store, sync_enrich, settings, garmin, intervals, store,
+                        apply=apply, scan_interval_minutes=ACTIVITY_SCAN_MINUTES, catch_up=True)
                     if not results["activities"].get("scan_skipped"):
                         gear_result = _gear_recent(settings, store, intervals, apply=apply)
                         if gear_result:
@@ -381,9 +391,9 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                 pass                                    # quiet hours, or not yet: the full runs go on
             elif mode == "upload":
                 polling.note_look(store, now)
-                garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
-                result = (sync_activities(settings, garmin, intervals, store, apply=apply, allow_upload=True,
-                                          activity_days=2) if "activities" in free else {})
+                garmin = _source(settings, store, intervals, apply=apply)
+                result = (activity_step(settings, store, sync_activities, settings, garmin, intervals, store,
+                                       apply=apply, allow_upload=True, activity_days=2) if "activities" in free else {})
                 if result.get("uploaded"):
                     result["gear"] = _gear_recent(settings, store, intervals, apply=apply)
                 if "wellness" in free:
@@ -397,14 +407,14 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                 # the poll shares the full run's Garmin session: count only its own requests
                 polling.note_look(store, now)
                 before = garmin.requests
-                result = (watch_once(settings, garmin, intervals, store, apply=apply) if "activities" in free
-                          else {"new": 0})
+                result = (activity_step(settings, store, watch_once, settings, garmin, intervals, store,
+                                        apply=apply) if "activities" in free else {"new": 0})
                 wellness = wellness_check(settings, garmin, intervals, store, apply=apply) if "wellness" in free else {}
                 if wellness.get("intervals_checks"):
                     result["wellness"] = wellness
                 store.record_run("watch", {"apply": apply, "garmin_requests": garmin.requests - before, **result},
                                  started=now)
-                if result["new"]:
+                if result.get("new"):
                     log.info("Poll: %d new, %d enriched, %d planned", result["new"], result["enriched"],
                              result["planned"])
             if now >= next_health and not intervals_paused(store):
@@ -418,11 +428,13 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
             return 0
         except GarminBlocked as exc:
             on_page = isinstance(exc, GarminLoginNeeded) and getattr(settings, "ui_port", None)
-            log.warning("%s%s; pausing for 15 minutes", exc, ", or sign in on the web page" if on_page else "")
+            if not isinstance(exc, PersonalKeyNeeded):
+                log.warning("%s%s; pausing for 15 minutes", exc, ", or sign in on the web page" if on_page else "")
             if isinstance(exc, GarminLoginNeeded):
                 notices.login_needed(settings, store, intervals, datetime.now(settings.timezone).date(), apply=apply)
-            next_sync = max(next_sync, time.time() + 900)
-            if iterations is None and wait_after_block(exc):
+            pause = pause_on_rate_limit(store, exc) or 900
+            next_sync = max(next_sync, time.time() + pause)
+            if iterations is None and wait_after_block(exc, seconds=pause):
                 next_sync = 0                               # signed in on the web page: go on now
             continue
         except Exception as exc:
@@ -458,8 +470,12 @@ def run_backup_loop(settings: Settings, store: Store, *, every_minutes: int, ite
     next_health, count = time.time() + 300, 0
     while iterations is None or count < iterations:
         count += 1
-        garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+        garmin = _source(settings, store)
         try:
+            if effective_source(settings) == "personal" and personal_paused(store):
+                if iterations is None:
+                    time.sleep(min(personal_paused(store), 60))
+                continue
             out = backup_once(settings, garmin, store)
             out["garmin_requests"] = garmin.requests
             store.record_run("backup", out)
@@ -477,13 +493,17 @@ def run_backup_loop(settings: Settings, store: Store, *, every_minutes: int, ite
             return 0
         except GarminBlocked as exc:
             on_page = isinstance(exc, GarminLoginNeeded) and getattr(settings, "ui_port", None)
-            log.warning("%s%s; pausing for 15 minutes", exc, ", or sign in on the web page" if on_page else "")
+            if not isinstance(exc, PersonalKeyNeeded):
+                log.warning("%s%s; pausing for 15 minutes", exc, ", or sign in on the web page" if on_page else "")
             if isinstance(exc, GarminLoginNeeded):
                 notices.login_needed(settings, store, None, datetime.now(settings.timezone).date(), apply=False)
+            pause = (pause_on_rate_limit(store, exc) if type(exc).__name__.startswith("Personal") else None) or 900
             if iterations is None:
-                wait_after_block(exc)
+                wait_after_block(exc, seconds=pause)
             continue
         except Exception as exc:
+            if type(exc).__name__.startswith("Personal"):
+                pause_on_rate_limit(store, exc)
             log.error("%s: %s", type(exc).__name__, exc)
         if iterations is None or count < iterations:
             time.sleep(every_minutes * 60)
@@ -494,6 +514,11 @@ PAUSE_KEY = polling.PAUSE_KEY
 RATE_LIMIT_PAUSE_SECONDS = 900
 
 
+def personal_paused(store: Store) -> float:
+    """Seconds left of the Personal provider pause."""
+    return max(0.0, float(store.get_meta(PERSONAL_PAUSE_KEY) or 0) - time.time())
+
+
 def intervals_paused(store: Store) -> float:
     """Seconds left of a pause Intervals asked for (HTTP 429); 0 when there is none."""
     return max(0.0, float(store.get_meta(PAUSE_KEY) or 0) - time.time())
@@ -501,13 +526,17 @@ def intervals_paused(store: Store) -> float:
 
 def pause_on_rate_limit(store: Store, exc: BaseException) -> float | None:
     """Intervals answered 429: no polls, no full runs for its Retry-After, at least 15 minutes."""
+    if getattr(exc, "resume_at", None) is not None:
+        return max(0, exc.resume_at - time.time())      # observing an existing pause never extends it
     asked = rate_limited(exc)
     if asked is None:
         return None
     pause = max(asked, RATE_LIMIT_PAUSE_SECONDS)
-    store.set_meta(PAUSE_KEY, f"{time.time() + pause:.0f}")
-    logging.getLogger("bridge").warning("Intervals.icu asks to slow down (HTTP 429): pausing for %d minutes",
-                                        round(pause / 60))
+    store.set_meta(PERSONAL_PAUSE_KEY if type(exc).__name__.startswith("Personal") else PAUSE_KEY,
+                   f"{time.time() + pause:.0f}")
+    provider = "Personal API" if type(exc).__name__.startswith("Personal") else "Intervals.icu"
+    logging.getLogger("bridge").warning("%s asks to slow down (HTTP 429): pausing for %d minutes",
+                                        provider, round(pause / 60))
     return pause
 
 
@@ -639,15 +668,28 @@ def main(argv: list[str] | None = None) -> int:
             for channel, outcome in result.items():
                 print(f"{channel}: {outcome}")
             return 0 if all(v == "sent" for v in result.values()) else 1
+        if args.cmd == "personal-check":
+            source = PersonalGarminSource(settings.data_dir, settings.garmin_personal_api_key,
+                                            settings.garmin_request_delay)
+            result = source.check()
+            print(json.dumps(result, indent=2))
+            if result["settings_statuses"] and result["settings_statuses"][-1] == 200:
+                validated_key(settings.data_dir)
+                return 0
+            return 1
         if args.cmd == "login":
-            garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+            garmin = (_source(settings) if settings.garmin_source == "personal" else
+                      GarminSource(settings.token_dir, settings.garmin_request_delay))
             garmin.login(interactive=True)
             store = Store(settings.data_dir)
             try:
-                notices.garmin_ok(store)
+                if settings.garmin_source != "personal":
+                    remember_direct_profile(store, garmin)
+                (notices.personal_ok if settings.garmin_source == "personal" else notices.garmin_ok)(store)
             finally:
                 store.close()
-            print("Garmin authenticated; session tokens saved locally.")
+            print("Personal API answered; access token cached locally." if settings.garmin_source == "personal"
+                  else "Garmin authenticated; session tokens saved locally.")
             return 0
         scope = getattr(args, "scope", None)
         lock_scopes = (("backup",) if args.cmd == "backup"         # the past, next to a running bridge
@@ -694,7 +736,8 @@ def main(argv: list[str] | None = None) -> int:
                     print(("healthy: " if ok else "unhealthy: ") + why)
                     return 0 if ok else 1
                 if args.cmd == "status":
-                    print(json.dumps({"pending_garmin_activity_ids": store.pending_activities(),
+                    print(json.dumps({**source_status(settings, store),
+                                      "pending_garmin_activity_ids": store.pending_activities(),
                                       "failed_activities": store.failed_activities()}, indent=2))
                     return 0
                 if args.cmd == "reset-pending":
@@ -706,7 +749,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.cmd == "health":
                     intervals = (IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                                  if settings.intervals_api_key and settings.mode != "backup" else None)
-                    garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                    garmin = _source(settings, store, intervals)
                     report = probe(settings, garmin, intervals, store)
                     print(json.dumps(report, indent=2))
                     return report["exit"]
@@ -761,7 +804,9 @@ def main(argv: list[str] | None = None) -> int:
                             apply=args.apply) if x["gear"] not in corrected]
                     print(json.dumps(out, indent=2, ensure_ascii=False, default=str))
                     return 0
-                garmin = GarminSource(settings.token_dir, settings.garmin_request_delay)
+                notice_intervals = (IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                                    if getattr(args, "apply", False) and settings.intervals_api_key else None)
+                garmin = _source(settings, store, notice_intervals, apply=getattr(args, "apply", False))
                 if args.cmd not in ("watch", "sync", "run") and not (
                         args.cmd == "backfill" and (args.from_archive or args.intake)):
                     garmin.login(interactive=False)      # fail early for one-off commands
@@ -771,7 +816,8 @@ def main(argv: list[str] | None = None) -> int:
                         history_start=date.fromisoformat(args.history_from) if args.history_from else None,
                         today=datetime.now(settings.timezone).date())
                     path = store.save_account_snapshot(raw)
-                    print(json.dumps({"file": str(path), "sections": sorted(raw["data"]), "errors": raw["errors"],
+                    print(json.dumps({"file": str(path) if path else None, "sections": sorted(raw["data"]),
+                                      "errors": raw["errors"], "deferred": raw.get("deferred", []),
                                       "garmin_requests": garmin.requests}, indent=2))
                     return 0
                 if args.cmd == "gap":
@@ -880,6 +926,11 @@ def main(argv: list[str] | None = None) -> int:
                     log.info("Backup: %s", describe_backup(out))
                     print(json.dumps(out, indent=2))
                     return 0
+                if (args.cmd in ("watch", "sync") and effective_source(settings) == "personal"
+                        and personal_paused(store)):
+                    print(json.dumps({"apply": getattr(args, "apply", False),
+                                      "skipped": "Personal API asked for a pause (HTTP 429)"}))
+                    return 0
                 if args.cmd in ("watch", "sync") and intervals_paused(store):
                     print(json.dumps({"apply": getattr(args, "apply", False),
                                       "skipped": "Intervals asked for a pause (HTTP 429)"}))
@@ -896,7 +947,8 @@ def main(argv: list[str] | None = None) -> int:
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
                     result: dict = {}
                     if "activities" in held:
-                        result = watch_once(settings, garmin, intervals, store, apply=args.apply)
+                        result = activity_step(settings, store, watch_once, settings, garmin, intervals, store,
+                                               apply=args.apply)
                     wellness = (wellness_check(settings, garmin, intervals, store, apply=args.apply)
                                 if "wellness" in held else {})
                     record = {"apply": args.apply, "garmin_requests": garmin.requests, **result}
@@ -965,7 +1017,8 @@ def main(argv: list[str] | None = None) -> int:
                     results: dict = {"apply": args.apply, "scope": args.scope}
                     results["mode"] = args.mode
                     if args.scope in ("all", "activities") and args.mode == "enrich":
-                        results["activities"] = sync_enrich(settings, garmin, intervals, store,
+                        results["activities"] = activity_step(
+                            settings, store, sync_enrich, settings, garmin, intervals, store,
                             apply=args.apply, activity_days=args.activity_days,
                             scan_interval_minutes=max(args.activity_interval, 0), catch_up=True)
                         if not results["activities"].get("scan_skipped"):
@@ -976,7 +1029,8 @@ def main(argv: list[str] | None = None) -> int:
                         if args.apply and not args.allow_activity_upload:
                             log.warning("Activity uploads disabled; add --allow-activity-upload ONLY AFTER "
                                         "disabling Garmin auto-activity sync")
-                        results["activities"] = sync_activities(settings, garmin, intervals, store,
+                        results["activities"] = activity_step(
+                            settings, store, sync_activities, settings, garmin, intervals, store,
                             apply=args.apply, allow_upload=args.allow_activity_upload,
                             activity_days=args.activity_days, catch_up=True)
                         # gear as in enrich mode, for the uploaded originals

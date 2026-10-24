@@ -181,6 +181,14 @@ env file). Plain http: keep it in your home network or put it behind a reverse p
 HTTPS. For this computer only, change `0.0.0.0` in the unit to `127.0.0.1` and use an SSH
 tunnel (`ssh -L 8765:127.0.0.1:8765 <this computer>`).
 
+For a phone shortcut, set `BRIDGE_UI_TRIGGER_TOKEN` to a separate random secret
+of at least 24 characters and restart the UI unit. Send `POST /trigger/poll-now`
+with `Authorization: Bearer <token>` to request the same check as the web button.
+Do not put the token in a URL. An empty value disables the endpoint; surrounding
+whitespace is stripped, and an invalid value disables only the trigger with a
+warning in status and settings. The trigger uses the same private network or HTTPS
+access as the UI; it is unavailable through Home Assistant ingress.
+
 ## ImReady4 training advice (optional)
 
 To have the morning runs write ImReady4's training advice into the existing

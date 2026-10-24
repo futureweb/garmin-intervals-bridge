@@ -1,4 +1,13 @@
 configuration:
+  garmin_source:
+    name: Garmin source
+    description: Auto (default) selects direct without a key, Personal with a key, hybrid with both key and saved session.
+  garmin_personal_api_key:
+    name: Garmin Personal API key
+    description: Required for personal and hybrid. Create it in Garmin Connect; replace it before it expires.
+  garmin_personal_api_key_expires:
+    name: Personal key expiry date
+    description: Optional YYYY-MM-DD from Garmin Connect. Reminders at 14 and 3 days before expiry.
   intervals_api_key:
     name: Intervals.icu API key
     description: Intervals.icu → Settings → Developer Settings → API key. Not needed in backup mode.

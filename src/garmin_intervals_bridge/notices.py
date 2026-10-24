@@ -11,15 +11,18 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 import threading
+import time
 from datetime import date
 from typing import Any
 
 import requests
 
 from . import __version__, alerts
+from .config import effective_source
 
 log = logging.getLogger(__name__)
 
@@ -78,7 +81,9 @@ def login_needed(settings: Any, store: Any, intervals: Any, today: date, *, appl
     if store.get_meta(LOGIN_NOTE_KEY):
         return False                                      # this episode is in the calendar already
     try:
-        intervals.create_note(today, LOGIN_NOTE_NAME, LOGIN_NOTE_TEXT)
+        intervals.create_note(today, LOGIN_NOTE_NAME, LOGIN_NOTE_TEXT if effective_source(settings)
+                              != "hybrid" else LOGIN_NOTE_TEXT.replace("Nothing is synced until you sign in again:",
+                              "Personal API work continues. Direct-only data waits until you sign in again:"))
     except Exception as exc:
         log.warning("Could not put the 'Garmin login needed' note in the Intervals calendar: %s",
                     type(exc).__name__)
@@ -90,7 +95,103 @@ def login_needed(settings: Any, store: Any, intervals: Any, today: date, *, appl
 
 def garmin_ok(store: Any) -> None:
     """Garmin answered: the episode is over, the next expiry gets its own note."""
-    store.set_meta("garmin_last_ok")
+    if time.time() - (store.meta_updated("garmin_last_ok") or 0) >= 60:
+        store.set_meta("garmin_last_ok")
     for key in (LOGIN_NOTE_KEY, alerts.LOGIN_KEY, WAITING_KEY):
         if store.get_meta(key):
             store.set_meta(key, "")
+
+
+PERSONAL_WAITING_KEY = "notice:personal_key_due"
+PERSONAL_NOTE_KEY = "notice:personal_key"
+PERSONAL_ALERT_KEY = "alert:personal_key"
+PERSONAL_TEXT = ("Personal API key needs replacement. Set a new GARMIN_PERSONAL_API_KEY in the bridge settings, "
+                 "or select direct mode. Garmin may have expired or revoked the key.")
+
+
+def personal_key_needed(settings: Any, store: Any, intervals: Any, today: date, *, apply: bool = False,
+                        malformed: bool = False) -> None:
+    """Report a rejected or missing key once per episode, separately from direct login."""
+    text = ("Personal API key is malformed or empty. Check GARMIN_PERSONAL_API_KEY in the bridge settings."
+            if malformed else PERSONAL_TEXT)
+    if effective_source(settings) == "hybrid":
+        text += (" Direct login also needs attention; sign in to resume shared data."
+                 if store.get_meta(WAITING_KEY) else " Direct login serves shared data when available.")
+    if not store.get_meta(PERSONAL_WAITING_KEY):
+        store.set_meta(PERSONAL_WAITING_KEY, today.isoformat())
+        log.warning(text)
+    if alerts.channels(settings) and not store.get_meta(PERSONAL_ALERT_KEY):
+        store.set_meta(PERSONAL_ALERT_KEY, "attempted")
+        result = alerts.send(settings, "Garmin bridge: Personal API key needs replacement", text)
+        if "sent" in result.values():
+            store.set_meta(PERSONAL_ALERT_KEY, "sent")
+    if apply and getattr(settings, "intervals_notes", False) and intervals is not None and not store.get_meta(
+            PERSONAL_NOTE_KEY):
+        try:
+            store.set_meta(PERSONAL_NOTE_KEY, "attempted")
+            intervals.create_note(today, "Garmin bridge: Personal API key needs replacement", text)
+            store.set_meta(PERSONAL_NOTE_KEY, today.isoformat())
+        except Exception:
+            log.warning("Could not put the Personal API key notice in the calendar")
+
+
+def personal_ok(store: Any) -> None:
+    """A successful Personal data request clears only Personal credential notices."""
+    from .personal import AUTH_WAIT_KEY
+    if time.time() - (store.meta_updated("personal_last_ok") or 0) >= 60:
+        store.set_meta("personal_last_ok")
+    for key in (PERSONAL_WAITING_KEY, PERSONAL_NOTE_KEY, PERSONAL_ALERT_KEY, AUTH_WAIT_KEY):
+        if store.get_meta(key):
+            store.set_meta(key, "")
+
+
+def personal_authorization_needed(settings: Any, store: Any) -> None:
+    """A fresh token still gets 401: one visible incident, no repeated token issuance."""
+    from .personal import AUTH_WAIT_KEY
+    if not store.get_meta(AUTH_WAIT_KEY):
+        text = ("Personal API authorization failed after token renewal (HTTP 401). "
+                "The affected endpoint waits six hours; a second endpoint or settings failure pauses all Personal "
+                "requests. Validate the key in settings, "
+                "run personal-check or replace it to retry sooner.")
+        log.warning(text)
+        if alerts.channels(settings):
+            alerts.send(settings, "Garmin bridge: Personal API authorization failed", text)
+        store.set_meta(AUTH_WAIT_KEY, "waiting")
+
+
+def personal_expiry_reminders(settings: Any, store: Any, intervals: Any, today: date, *,
+                               apply: bool = False, short: bool = False) -> None:
+    """Reminders once per key/date/threshold; calendar notes wait for an applying run."""
+    key = getattr(settings, "garmin_personal_api_key", "")
+    expiry = getattr(settings, "garmin_personal_api_key_expires", None)
+    if not key or (expiry and today > expiry):
+        return
+    fingerprint = hashlib.sha256(key.encode()).hexdigest()[:16]
+    identity = f"{fingerprint}:{expiry or 'unknown'}"
+    days = (expiry - today).days if expiry else None
+    thresholds = [n for n in (14, 3) if days is not None and 0 <= days <= n]
+    if short and not store.get_meta(f"personal:short:{identity}"):
+        store.set_meta(f"personal:short:{identity}", "yes")
+    if store.get_meta(f"personal:short:{identity}"):
+        thresholds.append(1)
+    for threshold in ([min(thresholds)] if thresholds else []):
+        prefix = f"notice:personal_expiry:{identity}:{threshold}"
+        text = ("Personal API key expires within a day (the freshly issued token has a short lifetime)."
+                if threshold == 1 else f"Personal API key expires on {expiry} ({days} days left).")
+        text += " Replace it in Garmin Connect and update the bridge settings."
+        title = "Garmin bridge: Personal API key expiry reminder"
+        if not store.get_meta(prefix + ":logged"):
+            log.warning(text)
+            store.set_meta(prefix + ":logged", "yes")
+        if alerts.channels(settings) and not store.get_meta(prefix + ":alert"):
+            store.set_meta(prefix + ":alert", "attempted")
+            result = alerts.send(settings, title, text)
+            if "sent" in result.values():
+                store.set_meta(prefix + ":alert", "sent")
+        if (apply and getattr(settings, "intervals_notes", False) and intervals is not None
+                and not store.get_meta(prefix + ":note")):
+            try:
+                intervals.create_note(today, title, text)
+                store.set_meta(prefix + ":note", "sent")
+            except Exception:
+                log.warning("Could not put the Personal API expiry reminder in the calendar")

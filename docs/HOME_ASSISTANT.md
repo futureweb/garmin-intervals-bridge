@@ -29,3 +29,8 @@ Home Assistant shows a new version of the app like any other update.
 This app is new: if something reads differently on your Home Assistant, say so in the
 [forum thread](https://forum.intervals.icu/t/132863) or an
 [issue](https://github.com/futureweb/garmin-intervals-bridge/issues).
+
+For a Garmin Personal API key, leave `garmin_source` at `auto` (or choose an explicit source) and
+enter `garmin_personal_api_key` in the password field. Optionally set
+`garmin_personal_api_key_expires` to its `YYYY-MM-DD` expiry for reminders. Hybrid credentials must
+belong to the same account. See [Personal API coverage](PERSONAL_API.md) for what each mode reads.

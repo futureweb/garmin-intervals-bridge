@@ -33,8 +33,10 @@ from typing import Any
 
 from . import alerts, notices
 from .autostart import platform
-from .config import within_hours
+from .config import effective_source, within_hours
 from .mapping import map_wellness
+from .personal import AUTH_WAIT_KEY, COVERAGE, DAY_KEYS, HYBRID_KEYS, PAUSE_KEY, PersonalKeyNeeded
+from .sources import remember_direct_profile, source_status
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +59,11 @@ def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float 
     now = now or time.time()
     stale_after = settings.stale_hours * 3600
     report: dict[str, Any] = {"stale_hours": settings.stale_hours, "services": {}, "findings": [], "exit": 0}
-    checks = [("garmin", lambda: garmin.login(interactive=False))]
+    source = effective_source(settings)
+    report.update(source_status(settings, store))
+    checks = ([("garmin", lambda: garmin.direct.login(interactive=False)),
+               ("personal", lambda: garmin.personal.login(interactive=False))] if source == "hybrid" else
+              [("personal" if source == "personal" else "garmin", lambda: garmin.login(interactive=False))])
     if intervals is not None:                          # backup mode has no Intervals to ask
         checks.append(("intervals", lambda: intervals.activities(_today(settings) - timedelta(days=1),
                                                                  _today(settings), fields=["id"], limit=1)))
@@ -66,26 +72,45 @@ def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float 
         try:
             call()
             if name == "garmin":
+                if source == "hybrid":
+                    garmin.direct_waiting = False
+                remember_direct_profile(store, garmin.direct if source == "hybrid" else garmin)
                 notices.garmin_ok(store)
+            elif name == "personal":
+                provider = garmin.personal if source == "hybrid" else garmin
+                if not getattr(provider, "_failure", lambda: {})():
+                    notices.personal_ok(store)
             else:
                 store.set_meta(f"{name}_last_ok")
             entry.update(ok=True, last_ok_age_hours=0.0)
         except Exception as exc:                       # every failure counts here
             if name == "garmin" and type(exc).__name__ == "GarminLoginNeeded":
+                if source == "hybrid":
+                    garmin.direct_waiting = True
                 notices.login_needed(settings, store, None, _today(settings), apply=False)
+            if type(exc).__name__ == "PersonalRateLimited":
+                from .cli import pause_on_rate_limit
+                pause_on_rate_limit(store, exc)
+            if isinstance(exc, PersonalKeyNeeded):
+                notices.personal_key_needed(settings, store, None, _today(settings), apply=False,
+                                            malformed=exc.malformed)
             last_ok = store.meta_updated(f"{name}_last_ok")
             age = (now - last_ok) if last_ok else None
-            entry.update(ok=False, error=f"{type(exc).__name__}: {exc}"[:200],
+            entry.update(ok=False, error=(type(exc).__name__ if name == "personal" else
+                                          f"{type(exc).__name__}: {exc}"[:200]),
                          last_ok_age_hours=round(age / 3600, 1) if age is not None else None)
             if age is None or age > stale_after:
                 entry["stale"] = True
-                report["findings"].append({"alert": True, "what": f"{name} unreachable",
+                report["findings"].append({"alert": not isinstance(exc, PersonalKeyNeeded),
+                                           "what": ("Personal API key needs replacement"
+                                                    if isinstance(exc, PersonalKeyNeeded) else f"{name} unreachable"),
                                            "detail": f"no success for {entry['last_ok_age_hours'] or 'ever'} h "
                                                      f"(limit {settings.stale_hours} h): {entry['error']}"})
             else:
                 log.warning("%s probe failed (%s); last success %.1f h ago, inside the %d h window",
                             name, type(exc).__name__, age / 3600, settings.stale_hours)
         report["services"][name] = entry
+    report.update(source_status(settings, store))
     report["findings"] += silent_error_checks(settings, store, now=now)
     if str(getattr(settings, "timezone_source", "")).startswith("fallback"):
         report["findings"].append({"alert": False, "what": "day boundary in UTC",
@@ -96,7 +121,8 @@ def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float 
         report["findings"].append(update)
     for f in report["findings"]:
         # the day summary is information, not a warning
-        level = log.error if f["alert"] else log.info if f["what"] == "last 24 h" else log.warning
+        level = (log.error if f["alert"] else log.info if f["what"] in ("last 24 h", "Personal API coverage")
+                 else log.warning)
         level("%s: %s", f["what"], f["detail"])
     alerts.health(settings, store, report["findings"], _today(settings).isoformat())
     if any(f["alert"] for f in report["findings"]):
@@ -133,7 +159,13 @@ def liveness(settings: Any, store: Any, *, now: float | None = None) -> tuple[bo
     now = now or time.time()
     if float(store.get_meta("intervals:paused_until") or 0) > now:
         return True, "paused at Intervals.icu's request"
-    if store.get_meta(notices.WAITING_KEY) or not any(Path(settings.token_dir).glob("*.json")):
+    source = effective_source(settings)
+    if source == "personal" and float(store.get_meta(PAUSE_KEY) or 0) > now:
+        return True, "Personal API paused at Garmin's request"
+    if source == "personal" and store.get_meta(notices.PERSONAL_WAITING_KEY):
+        return True, "waiting for a Personal API key replacement"
+    if source == "direct" and (store.get_meta(notices.WAITING_KEY)
+                               or not any(Path(settings.token_dir).glob("*.json"))):
         return True, "waiting for a Garmin sign-in (the web page, `login`)"
     runs = {c: store.last_run(c) for c in ("sync", "watch", "backup")}
     backup_mode = getattr(settings, "mode", "enrich") == "backup"
@@ -150,6 +182,14 @@ def liveness(settings: Any, store: Any, *, now: float | None = None) -> tuple[bo
 def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) -> list[dict]:
     now = now or time.time()
     findings: list[dict] = []
+    source = effective_source(settings)
+    supported = (DAY_KEYS if source == "personal" else HYBRID_KEYS
+                 if source == "hybrid" and store.get_meta(notices.WAITING_KEY) else None)
+    if source != "direct" and store.get_meta(AUTH_WAIT_KEY):
+        findings.append({"alert": True, "what": "Personal API authorization failed (HTTP 401)",
+                         "detail": "renewal suspended; replace the key or run personal-check to retry"})
+    if source == "personal":
+        findings.append({"alert": False, "what": "Personal API coverage", "detail": COVERAGE})
 
     # 1) Are the timers alive at all? (backup mode: its runs every BRIDGE_BACKUP_HOURS instead)
     every = getattr(settings, "backup_hours", 12)
@@ -188,7 +228,9 @@ def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) 
     if len(snapshots) >= ENDPOINT_ERROR_DAYS:
         recent = snapshots[-ENDPOINT_ERROR_DAYS:]
         for key in sorted({k for s in recent for k in (s.get("errors") or {})}):
-            if all(key in (s.get("errors") or {}) for s in recent):
+            if (supported is None or key in supported) and all(
+                    key in (s.get("errors") or {}) and key not in s.get("unsupported", [])
+                    and key not in s.get("deferred", []) for s in recent):
                 findings.append({"alert": True, "what": f"Garmin endpoint '{key}' failing",
                                  "detail": f"error on each of the last {ENDPOINT_ERROR_DAYS} archived days: "
                                            f"{recent[-1]['errors'][key]}"})
@@ -200,7 +242,10 @@ def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) 
 
         def fields_of(snapshot: dict) -> set[str]:
             day = date.fromisoformat(snapshot["date"])
-            data = {k: v for k, v in (snapshot.get("data") or {}).items() if k not in USER_LOGGED}
+            data = {k: v for k, v in (snapshot.get("data") or {}).items()
+                    if k not in USER_LOGGED and (supported is None or k in supported)}
+            if source == "personal" and isinstance(data.get("sleep"), dict):
+                data["sleep"] = {"dailySleepDTO": data["sleep"].get("dailySleepDTO")}
             native, custom = map_wellness({**snapshot, "data": data}, day, today, profile)
             return set(native) | set(custom)
 

@@ -28,6 +28,7 @@ import re
 import secrets
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import webbrowser
@@ -44,7 +45,7 @@ import requests
 
 from . import __version__, alerts, autostart, hrvtrend, imready4, notices, polling
 from .charts import setup_charts
-from .config import Settings, poll_hours
+from .config import GARMIN_SOURCES, Settings, effective_source, personal_expiry, poll_hours, source_label, trigger_token
 from .enrich import enrich_activity, resolve_one
 from .garmin import GarminBlocked, GarminSource, sign_in_problem
 from .gear import apply_plan as apply_gear_plan
@@ -54,6 +55,9 @@ from .gear import report as gear_report
 from .gear import save_config as save_gear_config
 from .health import silent_error_checks
 from .intervals import IntervalsClient
+from .personal import AUTH_WAIT_KEY, PersonalGarminSource
+from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
+from .sources import garmin_source, remember_direct_profile, source_status
 from .store import InstanceBusy, Store, single_instance
 from .sync import restore_intake
 from .wizard import command_name
@@ -242,6 +246,7 @@ class UI:
         self.lock = threading.Lock()
         self.failures = 0
         self.login_gate = threading.Lock()          # one password check at a time: guessing stays slow
+        self._last_trigger: float | None = None
         self._update: tuple[float, str | None] = (0.0, None)
         self.backfill: dict | None = None            # the past, started from the page: its process and what it does
 
@@ -349,7 +354,7 @@ class UI:
             tokens = any(settings.token_dir.glob("*.json")) if settings.token_dir.is_dir() else False
             line = (f'<b class="ok">Running</b> &middot; last check {esc(_ago(last, now))}' if alive else
                     f'<b class="bad">Not running</b> &middot; last check {esc(_ago(last, now))}')
-            if alive and not tokens:
+            if alive and not tokens and effective_source(settings) == "direct":
                 line = '<b class="warn">Waiting for the Garmin sign-in</b> &middot; <a href="/garmin">sign in</a>'
 
             ran = str((runs[-1]["metrics"] or {}).get("version") or "") if runs else ""
@@ -363,13 +368,30 @@ class UI:
                              '<span class="ok">yes</span>' if state["installed"] else
                              '<span class="warn">no</span> &middot; set it up with <code>autostart</code>'))
             garmin_ok = store.meta_updated("garmin_last_ok")
-            if store.get_meta(notices.LOGIN_NOTE_KEY):
+            if store.get_meta(notices.LOGIN_NOTE_KEY) or store.get_meta(notices.WAITING_KEY):
                 garmin = '<b class="bad">sign-in needed</b> &middot; <a href="/garmin">sign in again</a>'
             elif tokens:
                 garmin = f'<span class="ok">signed in</span> &middot; last confirmed {esc(_ago(garmin_ok, now))}'
             else:
                 garmin = '<b class="warn">not signed in</b> &middot; <a href="/garmin">sign in</a>'
-            rows.append(("Garmin Connect", garmin))
+            rows.append(("Garmin source", esc(source_label(settings))))
+            if effective_source(settings) != "personal":
+                rows.append(("Garmin Connect (direct)", garmin))
+            if effective_source(settings) != "direct":
+                state = ("authorization failed; run personal-check" if store.get_meta(AUTH_WAIT_KEY) else
+                         "key needs replacement" if store.get_meta(notices.PERSONAL_WAITING_KEY) else
+                         "key configured" if settings.garmin_personal_api_key else "key missing")
+                rows.append(("Garmin Personal API", esc(state) + "; last confirmed "
+                             + esc(_ago(store.meta_updated("personal_last_ok"), now))))
+            status = source_status(settings, store)
+            if status["trigger_warning"] and not self.ingress:
+                rows.append(("Check now trigger", esc(status["trigger_warning"])))
+            if status["key_expires"]:
+                expiry_text = f'{status["key_expires"]} ({status["key_days_left"]} days left)'
+                rows.append(("Personal key expiry", esc(expiry_text)))
+            if status["served_by"]:
+                rows.append(("Last data sources", esc(", ".join(f"{key}: {value}" for key, value in
+                                                               status["served_by"].items()))))
             syncs = [r for r in runs if r["command"] == "sync"]
             if syncs:
                 m = syncs[-1]["metrics"]
@@ -414,8 +436,12 @@ class UI:
         mode = polling.ACTIVE.get("mode", settings.mode) if self.in_run else settings.mode
         fast = polling.ACTIVE.get("fast") if self.in_run and polling.ACTIVE else polling.fast_seconds(settings, mode)
         plan = esc(polling.schedule_text(settings, store, now, fast))
+        personal_pause = float(store.get_meta(PERSONAL_PAUSE_KEY) or 0)
         paused = float(store.get_meta(polling.PAUSE_KEY) or 0)
-        if paused > now:
+        if personal_pause > now:
+            state = (f'<b class="warn">Personal API paused until '
+                     f'{datetime.fromtimestamp(personal_pause, settings.timezone):%H:%M}</b> (HTTP 429)')
+        elif paused > now:
             state = (f'<b class="warn">paused until {datetime.fromtimestamp(paused, settings.timezone):%H:%M}</b> '
                      '(Intervals.icu asked for a break, HTTP 429)')
         else:
@@ -430,9 +456,8 @@ class UI:
         button = self.form(session, "/poll-now", "", "Check now", light=True, inline=True)
         return f'{plan}<br><span class="muted">{state}</span> {button}'
 
-    def poll_now(self, session: Session, query: dict, form: dict) -> str:
-        """Look for new activities now, and at the fast pace for the next hour."""
-        settings = self.settings()
+    def _request_poll(self, settings: Settings) -> bool:
+        """The button and HTTP trigger share the same wake-up and one-hour fast schedule."""
         store = Store(settings.data_dir)
         try:
             store.set_meta(polling.NOW_KEY, f"{time.time():.3f}")
@@ -441,6 +466,33 @@ class UI:
         finally:
             store.close()
         polling.POLL_NOW.set()                          # a `run` in this process: at once
+        return keeps
+
+    def trigger_poll_now(self, authorization: str) -> None:
+        """Authenticate independently of web sessions and coalesce repeated phone automations."""
+        headers = {"Content-Type": "text/plain; charset=utf-8", "Connection": "close"}
+        if self.ingress:
+            raise Reply(404, "Not found\n", headers)
+        settings = self.settings()
+        token = settings.ui_trigger_token
+        if not token:
+            raise Reply(404, "Not found\n", headers)
+        scheme, _, supplied = authorization.partition(" ")
+        matches = hmac.compare_digest(supplied.encode(), token.encode())
+        if scheme.lower() != "bearer" or not matches:
+            raise Reply(401, "Unauthorized\n", {**headers, "WWW-Authenticate": "Bearer"})
+        with self.lock:
+            now = time.monotonic()
+            if self._last_trigger is not None and now - self._last_trigger < 30:
+                raise Reply(202, "already looking\n", headers)
+            self._request_poll(settings)
+            self._last_trigger = now
+        when = "now" if self.in_run else "within a minute"
+        raise Reply(202, f"looking for new activities {when}\n", headers)
+
+    def poll_now(self, session: Session, query: dict, form: dict) -> str:
+        """Look for new activities now, and at the fast pace for the next hour."""
+        keeps = self._request_poll(self.settings())
         when = "now" if self.in_run else "within a minute"
         then = (" and keeps looking at its fastest pace for the next hour" if keeps else
                 " (once: outside BRIDGE_POLL_HOURS it does not keep looking)")
@@ -477,7 +529,7 @@ class UI:
             return ""
         store = Store(settings.data_dir)
         try:
-            if store.get_meta(notices.LOGIN_NOTE_KEY):
+            if store.get_meta(notices.LOGIN_NOTE_KEY) or store.get_meta(notices.WAITING_KEY):
                 return '<p class="bad"><b>Garmin wants a new sign-in.</b> The saved session no longer works.</p>'
             ok = store.meta_updated("garmin_last_ok")
         finally:
@@ -486,6 +538,8 @@ class UI:
                 'replace this session.</p>')
 
     def garmin_get(self, session: Session, query: dict, form: dict) -> str:
+        if self.settings().garmin_source == "personal":
+            return self.settings_page(session, '<p>Personal mode uses the API key below.</p>')
         job = session.garmin_job
         if job is not None:
             return self._garmin_result(session, job)
@@ -497,6 +551,8 @@ class UI:
         if session.garmin_job is not None and not session.garmin_job.done.is_set():
             raise Reply(303, "", {"Location": "/garmin"})              # one sign-in at a time: show that one
         settings = self.settings()
+        if settings.garmin_source == "personal":
+            return self.settings_page(session, '<p>Personal mode uses the API key in Settings.</p>')
         garmin = self.garmin_source(settings.token_dir, settings.garmin_request_delay)
         email, password = form.get("email", "").strip(), form.get("password", "")
         job = self._garmin_start(session, "password", lambda: (garmin, garmin.start_login(email, password)))
@@ -504,6 +560,8 @@ class UI:
         return self._garmin_result(session, job, wait=True)
 
     def garmin_mfa(self, session: Session, query: dict, form: dict) -> str:
+        if self.settings().garmin_source == "personal":
+            return self.settings_page(session, '<p>Personal mode uses the API key in Settings.</p>')
         if session.garmin_job is not None and not session.garmin_job.done.is_set():
             raise Reply(303, "", {"Location": "/garmin"})
         garmin = session.garmin
@@ -552,7 +610,7 @@ class UI:
                 return self.garmin_page(session, f'<p class="bad">Garmin did not accept the code '
                                                  f'({esc(type(exc).__name__)}); try again.</p>', mfa=True)
             session.garmin = None
-            return self._signed_in(session, self.settings())
+            return self._signed_in(session, self.settings(), job.outcome[0])
         if isinstance(exc, GarminBlocked):
             return self.garmin_page(session, '<p class="bad">Garmin limits sign-ins right now (429). Wait an hour, '
                                              'then try again.</p>')
@@ -563,11 +621,12 @@ class UI:
             session.garmin, session.garmin_since = garmin, time.time()
             return self.garmin_page(session, '<p class="ok">Garmin accepted the e-mail and password and sent you a '
                                              'code (by e-mail or in its app).</p>', mfa=True)
-        return self._signed_in(session, self.settings())
+        return self._signed_in(session, self.settings(), job.outcome[0])
 
-    def _signed_in(self, session: Session, settings: Settings) -> str:
+    def _signed_in(self, session: Session, settings: Settings, garmin=None) -> str:
         store = Store(settings.data_dir)
         try:
+            remember_direct_profile(store, garmin)
             notices.garmin_ok(store)
         finally:
             store.close()
@@ -580,8 +639,15 @@ class UI:
 
     def settings_page(self, session: Session, message: str = "") -> str:
         settings = self.settings()
+        if settings.ui_trigger_warning and not self.ingress:
+            message += f'<p class="bad">{esc(settings.ui_trigger_warning)}</p>'
         if settings.env_file is None:
-            rows = [("Time zone", settings.timezone.key), ("ImReady4 advice", settings.imready4),
+            rows = [("Garmin source", source_label(settings)),
+                    ("Personal API key", "configured" if settings.garmin_personal_api_key else "not set"),
+                    ("Personal key expiry", str(settings.garmin_personal_api_key_expires or "unknown")),
+                    ("Check now token", "not used with Home Assistant ingress" if self.ingress else
+                     "configured" if settings.ui_trigger_token else "not set"),
+                    ("Time zone", settings.timezone.key), ("ImReady4 advice", settings.imready4),
                     ("HRV trend advice", settings.hrvtrend), ("Update hint", settings.update_check),
                     ("Calendar note when Garmin needs a sign-in", settings.intervals_notes),
                     ("Swap Garmin's copy for the original", f"{settings.swap} ({settings.swap_method})"
@@ -615,6 +681,26 @@ class UI:
                  + '</select></label>'
                  + '<label>Replace the Intervals API key (leave empty to keep it) <input type="password" '
                    'name="api_key" autocomplete="off"></label>'
+                 + '<label>Garmin source <select name="garmin_source">'
+                 + "".join(f'<option value="{v}"{" selected" if settings.garmin_source == v else ""}>{v}</option>'
+                           for v in GARMIN_SOURCES)
+                 + '</select></label><p>Auto selects from your key and saved direct session. '
+                   'Personal covers activities and part of wellness. Hybrid also uses direct '
+                   'login for the remaining data. Both credentials must belong to the same Garmin account.</p>'
+                 + '<label>Personal API key (empty keeps it) <input type="password" '
+                   'name="garmin_personal_api_key" autocomplete="off"></label>'
+                 + box("clear_personal_key", "Remove the saved Personal API key", False)
+                 + '<label>Personal key expiry (optional; empty keeps it unless replacing the key) '
+                   '<input type="date" name="personal_key_expires"></label>'
+                 + box("clear_personal_expiry", "Clear the saved expiry (keep the key)", False)
+                 + f'<p>Saved expiry: {esc(str(settings.garmin_personal_api_key_expires or "unknown"))}. '
+                   'When replacing the key, enter its new expiry or leave empty for unknown.</p>'
+                 + ('' if self.ingress else
+                    '<h2>Check now from a phone</h2><p>Use this separate secret in an Apple Shortcut or other '
+                    'HTTP client. At least 24 characters; keep it private.</p>'
+                    '<label>Trigger token (empty keeps it) <input type="password" name="ui_trigger_token" '
+                    'autocomplete="new-password" minlength="24"></label>'
+                    + box("clear_trigger_token", "Remove the Check now trigger token", False))
                  + self._poll_fields(settings)
                  + '<h2>When the bridge needs you</h2><p class="muted">Garmin wants a new sign-in, or the bridge '
                    'has been failing for a day: besides the calendar note, an e-mail and/or a push message.</p>'
@@ -690,6 +776,18 @@ class UI:
             return self.settings_page(session, f'<p class="bad">"{esc(zone)}" is not a time zone name '
                                                '(Region/City, e.g. Europe/London).</p>')
         values = {"BRIDGE_TIMEZONE": zone}
+        if not self.ingress:
+            secret = form.get("ui_trigger_token", "").strip()
+            clear_trigger = form.get("clear_trigger_token") == "1"
+            if secret and clear_trigger:
+                return self.settings_page(session, '<p class="bad">Choose either replacement or removal '
+                                                   'of the trigger token.</p>')
+            try:
+                trigger_token(secret)
+            except ValueError as exc:
+                return self.settings_page(session, f'<p class="bad">{esc(exc)}; nothing was changed.</p>')
+            if secret or clear_trigger:
+                values["BRIDGE_UI_TRIGGER_TOKEN"] = "" if clear_trigger else secret
         for key, name in (("imready4", "BRIDGE_IMREADY4_ENABLED"), ("hrvtrend", "BRIDGE_HRVTREND_ENABLED"),
                           ("update_check", "BRIDGE_UPDATE_CHECK"), ("intervals_notes", "BRIDGE_INTERVALS_NOTES"),
                           ("swap", "BRIDGE_SWAP")):
@@ -698,6 +796,40 @@ class UI:
         problem = self._poll_values(settings, form, values)
         if problem:
             return self.settings_page(session, f'<p class="bad">{esc(problem)}; nothing was changed.</p>')
+        source = form.get("garmin_source", settings.garmin_source)
+        if source not in GARMIN_SOURCES:
+            return self.settings_page(session, '<p class="bad">Choose auto, direct, personal or hybrid.</p>')
+        values["GARMIN_SOURCE"] = source
+        personal_key = form.get("garmin_personal_api_key", "").strip()
+        clear = form.get("clear_personal_key") == "1"
+        if clear and personal_key:
+            return self.settings_page(session, '<p class="bad">Choose either replacement or removal of the key.</p>')
+        candidate_key = "" if clear else personal_key or settings.garmin_personal_api_key
+        if source in ("personal", "hybrid") and not candidate_key:
+            return self.settings_page(session, '<p class="bad">A Personal API key is required for this source.</p>')
+        expiry = form.get("personal_key_expires", "").strip()
+        clear_expiry = form.get("clear_personal_expiry") == "1"
+        if clear_expiry and expiry:
+            return self.settings_page(session, '<p class="bad">Choose either replacement or removal of the expiry.</p>')
+        if clear or clear_expiry:
+            expiry = ""
+        elif not expiry and candidate_key == settings.garmin_personal_api_key:
+            expiry = str(settings.garmin_personal_api_key_expires or "")
+        try:
+            personal_expiry(expiry)
+        except ValueError as exc:
+            return self.settings_page(session, f'<p class="bad">{esc(exc)}; nothing was changed.</p>')
+        values["GARMIN_PERSONAL_API_KEY_EXPIRES"] = expiry
+        if clear:
+            values["GARMIN_PERSONAL_API_KEY"] = ""
+        elif personal_key:
+            try:
+                with tempfile.TemporaryDirectory(dir=settings.data_dir) as candidate:
+                    PersonalGarminSource(Path(candidate), personal_key, settings.garmin_request_delay).login()
+            except Exception:
+                return self.settings_page(session, '<p class="bad">Could not validate the Personal API key; '
+                                                   'nothing was changed. Try personal-check for HTTP statuses.</p>')
+            values["GARMIN_PERSONAL_API_KEY"] = personal_key
         key = form.get("api_key", "").strip()
         if key:
             try:
@@ -738,6 +870,9 @@ class UI:
                 write_private(settings.env_file, before)
             return self.settings_page(session, f'<p class="bad">{esc(exc)}; nothing was changed.</p>')
         restart = ""
+        if personal_key:
+            from .personal import validated_key
+            validated_key(settings.data_dir)
         if not self.in_run and autostart.platform() != "container" and \
                 autostart.status(settings.env_file)["installed"]:
             restart = self.form(session, "/restart", "", "Restart the background bridge now", light=True)
@@ -976,8 +1111,9 @@ class UI:
         store = Store(settings.data_dir)
         try:
             with single_instance(settings.data_dir, ("enrich",)):
-                garmin = self.garmin_source(settings.token_dir, settings.garmin_request_delay)
                 intervals = self._intervals(settings)
+                garmin = garmin_source(settings, direct_factory=self.garmin_source, store=store,
+                                       intervals=intervals, apply=apply)
                 plan = enrich_activity(gid, garmin, intervals, store, apply=apply, intervals_id=iid,
                                        refresh_own=True, recheck=True)
                 intake = restore_intake(gid, iid, intervals, store, apply=apply)
@@ -1143,6 +1279,8 @@ def handler_for(ui: UI) -> type[BaseHTTPRequestHandler]:
         def _route(self, method: str) -> str:
             url = urlsplit(self.path)
             path, query = url.path, {k: v[0] for k, v in parse_qs(url.query).items()}
+            if path == "/trigger/poll-now" and (ui.ingress or method != "POST"):
+                raise Reply(404, "Not found\n", {"Content-Type": "text/plain; charset=utf-8"})
             if ui.ingress:
                 if self.client_address[0] != INGRESS_IP:
                     raise Reply(403, "Only through Home Assistant")
@@ -1152,6 +1290,9 @@ def handler_for(ui: UI) -> type[BaseHTTPRequestHandler]:
                 allowed = {f"{h}:{ui.port}" for h in ("127.0.0.1", "localhost", "[::1]")}
                 if self.headers.get("Host", "") not in allowed:
                     raise Reply(403, "Wrong host")
+            if path == "/trigger/poll-now":
+                self.close_connection = True       # ignore the body; never reuse its unread bytes
+                ui.trigger_poll_now(self.headers.get("Authorization", ""))
             form: dict = {}
             if method == "POST":
                 try:

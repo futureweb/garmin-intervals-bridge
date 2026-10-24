@@ -26,6 +26,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from .garmin import GarminBlocked
+from .sources import activity_step
 
 log = logging.getLogger(__name__)
 
@@ -77,8 +78,13 @@ def _wellness_day(day: date, garmin: Any, store: Any, metrics: dict, endpoints: 
     endpoints that failed for a passing reason."""
     from .sync import _merge_partial, transient_errors
     fresh = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))
+    fresh["final"] = True
     store.save_snapshot(day, _merge_partial(store.load_snapshot(day), fresh))
     store.mark_wellness(day)
+    if fresh.get("deferred"):
+        store.set_meta(f"backup:direct:{day}", "pending")
+    else:
+        store.delete_meta(f"backup:direct:{day}", time.time() + 1)
     metrics["wellness_days"] += 1
     if files:
         _files(day, garmin, store, metrics)
@@ -104,7 +110,10 @@ def _account(garmin: Any, store: Any, today: date, metrics: dict, *, history_sta
     taken = store.meta_updated(ACCOUNT_KEY)
     if not force and taken is not None and time.time() - taken < ACCOUNT_EVERY_DAYS * 86400:
         return
-    store.save_account_snapshot(garmin.account_snapshot(history_start=history_start, today=today))
+    raw = garmin.account_snapshot(history_start=history_start, today=today)
+    if raw.get("deferred"):
+        return
+    store.save_account_snapshot(raw)
     store.set_meta(ACCOUNT_KEY)
     metrics["account"] = 1
     log.info("Backed up the account (profile, devices, zones, records, workouts …)")
@@ -119,16 +128,29 @@ def backup_once(settings: Any, garmin: Any, store: Any, *, now: datetime | None 
     now = now or datetime.now(settings.timezone)
     today = now.date()
     metrics = new_metrics()
-    _activities(garmin, store, today - timedelta(days=RECENT_ACTIVITY_DAYS), today, metrics)
-    for offset in range(RECENT_WELLNESS_DAYS, 0, -1):
-        day = today - timedelta(days=offset)
+    from .sync import deferred_days, resume_direct_archives
+    resume_direct_archives(garmin, store)
+    if activity_step(settings, store, _activities, garmin, store,
+                     today - timedelta(days=RECENT_ACTIVITY_DAYS), today, metrics):
+        metrics["failed"] += 1
+    days = set(today - timedelta(days=offset) for offset in range(1, RECENT_WELLNESS_DAYS + 1))
+    resumed = set(deferred_days(garmin, store, "backup:direct:", today))
+    days.update(resumed)
+    for day in sorted(days):
         key = READS_KEY + day.isoformat()
         count, _, when = (store.get_meta(key) or "0").partition("@")
         reads, last_read = int(count or 0), (float(when) if when else None)
-        if not _due(day, now, reads, last_read):
+        deferred = bool(store.get_meta(f"backup:direct:{day}"))
+        if deferred and day not in resumed:
+            continue
+        if not _due(day, now, reads, last_read) and day not in resumed:
             if reads:                                   # read already: only files that are still missing
                 _files(day, garmin, store, metrics)
             continue
+        if day in resumed:
+            if getattr(garmin, "direct_unavailable", False):
+                continue
+            time.sleep(2)
         try:
             passing = _wellness_day(day, garmin, store, metrics, None, files=True)
         except GarminBlocked:
@@ -156,7 +178,8 @@ def backup_range(settings: Any, garmin: Any, store: Any, *, start: date, end: da
     metrics = new_metrics()
     today = datetime.now(settings.timezone).date()
     if "activities" in scopes:
-        _activities(garmin, store, start, min(end, today), metrics, pause=pause)
+        if activity_step(settings, store, _activities, garmin, store, start, min(end, today), metrics, pause=pause):
+            metrics["failed"] += 1
     if "wellness" in scopes:
         day, last = start, min(end, today - timedelta(days=1))      # wellness: only finished days
         while day <= last:

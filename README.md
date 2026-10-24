@@ -168,6 +168,7 @@ run is exactly what `--apply` would send.
 | `swap <id or link> [--method replace\|upload] [--apply]` | The original into Garmin's filtered copy of one activity, also an older one (see [Modes](#modes), *swap*). |
 | `notify-test` | Send a test e-mail / push message to the alert channels that are set up. |
 | `login` | Interactive Garmin sign-in (email, password, MFA). Only session tokens are stored. |
+| `personal-check` | Check the configured Personal API key and report HTTP statuses and token metadata without secrets. See [Personal API](docs/PERSONAL_API.md). |
 | `probe [--activity-id]` | Download and archive one original FIT. |
 | `gap --activity-id` | Original vs. the copy Intervals holds; lists everything only the original carries. |
 | `compare-fit A B` | Same comparison for two local files (e.g. against a manual browser export). |
@@ -517,6 +518,9 @@ NAS's HTTPS reverse proxy. Every form carries a per-session token, a page on 127
 answers only to its own host name, and nothing is written to Intervals or Garmin without
 a button that says so. Standard library only, no JavaScript.
 
+To use *Check now* from a phone or an arrival automation, see
+[HTTP trigger and Apple Shortcuts](docs/WEB_PAGE.md#check-now-from-a-phone).
+
 ### How often it looks
 
 Each look for new activities is one small request to Intervals.icu (in upload mode three to
@@ -567,6 +571,9 @@ daily health check finds that needs a person.
 
 ## Configuration
 
+Garmin sources default to `auto`: direct without a key, Personal with a key, hybrid with both a key
+and saved direct session. See [Personal API setup, recovery and coverage](docs/PERSONAL_API.md).
+
 Variables can also come from a settings file: the one named by `--env-file` or
 `BRIDGE_ENV_FILE`, else `.env` in the working directory, else `~/GarminBridge/.env`
 (what `setup` writes; on Windows in your user folder). Variables already set always
@@ -577,6 +584,9 @@ win. Relative paths in a settings file count from its folder.
 | `INTERVALS_API_KEY` | | Intervals API key (HTTP Basic, user `API_KEY`) |
 | `INTERVALS_ATHLETE_ID` | `0` | `0` addresses the key's owner |
 | `BRIDGE_DATA_DIR` | `./data` | Originals, partner copies, raw wellness JSON, SQLite state, lock files |
+| `GARMIN_SOURCE` | `auto` | Auto selection, or explicit `direct`, `personal`, `hybrid` |
+| `GARMIN_PERSONAL_API_KEY` | empty | Secret Personal key; [coverage and setup](docs/PERSONAL_API.md) |
+| `GARMIN_PERSONAL_API_KEY_EXPIRES` | empty | Optional `YYYY-MM-DD`; reminders at 14 and 3 days |
 | `GARMIN_TOKEN_DIR` | `$BRIDGE_DATA_DIR/tokens` | Garmin session tokens (mode 0700) |
 | `BRIDGE_TIMEZONE` | this computer's time zone | Your local day boundary (which date last night's sleep belongs to), e.g. `Europe/London`. A container has none of its own: set it there (otherwise UTC) |
 | `BRIDGE_ACTIVITY_LOOKBACK_DAYS` | `4` | `sync` window for activities (1–30); after a pause back to the last run, up to 14 days |
@@ -591,6 +601,7 @@ win. Relative paths in a settings file count from its folder.
 | `BRIDGE_ALLOW_ADMIN` | `false` | Windows: `true` lets the bridge run in a window opened *as administrator* (refused otherwise: folders created there are closed to the background bridge; see [docs/WINDOWS.md](docs/WINDOWS.md)) |
 | `BRIDGE_UPDATE_CHECK` | `true` | Once a day, ask pypi.org for the newest version and log a hint with the update command; `false` turns it off |
 | `BRIDGE_UI_PORT` | | `run` also serves the web page on this port (needs `BRIDGE_UI_PASSWORD`) |
+| `BRIDGE_UI_TRIGGER_TOKEN` | | Optional secret (24+ characters) for [Check now over HTTP](docs/WEB_PAGE.md#check-now-from-a-phone); not used with Home Assistant ingress |
 | `BRIDGE_UI_PASSWORD` | | Password for the web page next to `run`, or for `ui --host` other than 127.0.0.1; 8+ characters |
 | `BRIDGE_UI_HOST` | `127.0.0.1` (container: `0.0.0.0`) | Where the page next to `run` listens |
 | `BRIDGE_ALERT_EMAIL` | | Alerts by e-mail to this address, sent from its own mailbox (see [When the bridge needs you](#when-the-bridge-needs-you)) |

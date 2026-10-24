@@ -8,6 +8,7 @@ SHARE=${HA_SHARE:-/share}
 # share/garmin-bridge (Samba share), is taken over – as long as this app has no Garmin session
 # and no archive of its own yet (an earlier start may have left an empty database), and once.
 if [ ! -e "$DATA/.taken-over" ] && [ -e "$SHARE/garmin-bridge/bridge.db" ] \
+        && [ ! -e "$DATA/personal-api/token.json" ] \
         && ! ls "$DATA"/tokens/*.json >/dev/null 2>&1 && [ -z "$(ls -A "$DATA/fits" 2>/dev/null)" ]; then
     echo "Taking over the data folder from $SHARE/garmin-bridge (Garmin session, archive)"
     for f in bridge.db bridge.db-wal bridge.db-shm; do     # the empty one of an earlier start: kept aside

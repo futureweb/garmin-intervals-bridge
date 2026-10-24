@@ -161,7 +161,12 @@ def login_needed(settings: Any, store: Any) -> bool:
     """Once per episode; `notices.garmin_ok` ends the episode."""
     if not channels(settings) or store.get_meta(LOGIN_KEY):
         return False
-    result = send(settings, LOGIN_SUBJECT, LOGIN_TEXT)
+    text = LOGIN_TEXT
+    from .config import effective_source
+    if effective_source(settings) == "hybrid":
+        text = ("Direct Garmin login needs attention. Personal API work continues; direct-only data waits. "
+                "Sign in on the bridge's Garmin page or run 'garmin-intervals-bridge login'.")
+    result = send(settings, LOGIN_SUBJECT, text)
     if "sent" in result.values():
         store.set_meta(LOGIN_KEY, "sent")
         return True

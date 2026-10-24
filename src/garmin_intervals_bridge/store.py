@@ -296,6 +296,13 @@ class Store:
 
     def save_activity_json(self, garmin_id: str, obj: dict) -> Path:
         path = self.activity_json_path(garmin_id)
+        if (obj.get("_bridge") or {}).get("source") == "personal" and path.is_file():
+            try:
+                old = json.loads(path.read_text())
+            except (OSError, ValueError):
+                old = {}
+            if old and (old.get("_bridge") or {}).get("source", "direct") == "direct":
+                path = path.with_suffix(".personal.json")     # retain the richer direct summary
         self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
                                 + "\n").encode())
         return path
@@ -333,8 +340,12 @@ class Store:
             return None
         return obj if isinstance(obj, dict) else None
 
-    def save_account_snapshot(self, obj: dict) -> Path:
-        path = self.base / "raw" / "account" / f"{date.today().isoformat()}.json"
+    def save_account_snapshot(self, obj: dict) -> Path | None:
+        if obj.get("deferred"):
+            return None
+        # Personal has no gear: keep it outside the direct account catalogue used by gear sync.
+        folder = "account-personal" if obj.get("source") == "personal" else "account"
+        path = self.base / "raw" / folder / f"{date.today().isoformat()}.json"
         self.atomic_save(path, (json.dumps(obj, indent=2, ensure_ascii=False, default=str, allow_nan=False)
                                 + "\n").encode())
         return path
@@ -350,7 +361,7 @@ class Store:
 
 
 @contextmanager
-def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "wellness")):
+def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "wellness"), *, timeout: float = 0):
     """Avoid overlapping runs per scope: a long wellness backfill must not block the
     activity watcher. SQLite (WAL) is safe for both to share."""
     try:
@@ -379,10 +390,15 @@ def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "we
         for scope in scopes:
             lock = (data_dir / f".bridge-{scope}.lock").open("a+")
             handles.append(lock)
-            try:
-                take(lock)
-            except busy as exc:
-                raise InstanceBusy(f"Another bridge instance is running ({scope})") from exc
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    take(lock)
+                    break
+                except busy as exc:
+                    if time.monotonic() >= deadline:
+                        raise InstanceBusy(f"Another bridge instance is running ({scope})") from exc
+                    time.sleep(min(0.05, max(0, deadline - time.monotonic())))
         yield
     finally:
         for lock in handles:

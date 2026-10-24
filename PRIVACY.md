@@ -5,8 +5,8 @@ NAS or server. There is no central service behind it, and its authors receive no
 your data.
 
 **What it handles:** your Intervals.icu API key (or, where set up, an OAuth token), your
-Garmin Connect session tokens (your Garmin password is used once to sign in and never
-stored), and your training and health data: activity files, wellness values, gear.
+optional Garmin Personal API key and access token, Garmin Connect session tokens (your
+Garmin password is used once to sign in and never stored), an optional HTTP trigger token, and your training and health data: activity files, wellness values, gear.
 
 **Where it keeps it:** only in its own folder on your machine (settings file, data
 folder, log), readable by you – or by the bridge's own service user – only.
@@ -25,6 +25,10 @@ a new activity (never one with comments; nothing on Garmin Connect). Swap's defa
 
 **Removing it:** stop the bridge and delete its folder; revoke its access in
 Intervals.icu (*Settings → Developer Settings*, or the connected app) and, if you like,
-sign out its Garmin session in Garmin Connect.
+sign out its Garmin session and revoke the Personal API key in Garmin Connect.
+
+Personal mode sends your key to Garmin's Personal token service and uses its access token
+for reads. Optional expiry reminders go through your configured alerts and, on applying
+runs, Intervals calendar notes; they never contain the key or token.
 
 Questions: <https://github.com/futureweb/garmin-intervals-bridge/issues>.
