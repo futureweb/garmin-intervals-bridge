@@ -416,6 +416,83 @@ def test_personal_final_read_uses_time_fallback_without_stats_probe(settings):
         store.close()
 
 
+def test_hybrid_final_read_asks_direct_for_the_device_sync(settings):
+    store = Store(settings.data_dir)
+    today = at(10).date()
+
+    class Synced(Direct):
+        def snapshot(self, day, endpoints=None):
+            out = super().snapshot(day, endpoints=endpoints)
+            if endpoints == ("stats",):
+                out["data"]["stats"] = {"lastSyncTimestampGMT": f"{today}T06:00:00.0"}   # 08:00 local
+            return out
+
+    d, p = Synced(), Personal(settings.data_dir)
+    intervals = Intervals()
+    intervals.records[today] = {"steps": 50}               # the official import brought something today
+    store.set_meta("wellness:since", "test")
+    store.set_meta(f"wellness:next:{today}", str(at(21).timestamp()))
+    try:
+        result = sync.wellness_check(settings, HybridGarminSource(d, p, store=store), intervals, store,
+                                     apply=False, now=at(10))
+        assert result["sync_checks"] == 1 and ("stats",) in d.calls
+        assert store.get_meta(f"wellness:final:{today - timedelta(days=1)}") == "synced"
+        fresh = Store(settings.data_dir / "probe-only")
+        try:
+            HybridGarminSource(Synced(), Personal(settings.data_dir / "probe-only"), store=fresh).device_sync_stats(today)
+            assert fresh.meta_items("source:served:*") == []       # only asked for the sync time
+        finally:
+            fresh.close()
+    finally:
+        store.close()
+
+
+def test_hybrid_device_sync_probe_ignores_another_accounts_watch(settings):
+    store = Store(settings.data_dir)
+    today = at(10).date()
+
+    class Other(Direct):
+        def _call(self, name):
+            super()._call(name)
+            self.client = SimpleNamespace(profile_id=99)              # signed in to a different account
+
+        def snapshot(self, day, endpoints=None):
+            out = super().snapshot(day, endpoints=endpoints)
+            if endpoints == ("stats",):
+                out["data"]["stats"] = {"lastSyncTimestampGMT": f"{today}T06:00:00.0"}
+            return out
+
+    d, p = Other(), Personal(settings.data_dir)
+    store.set_meta("source:pair:" + p._fingerprint[:16], "42")         # the key belongs to 42
+    try:
+        assert HybridGarminSource(d, p, store=store).device_sync_stats(today) is None
+        assert ("stats",) not in d.calls
+    finally:
+        store.close()
+
+
+def test_hybrid_device_sync_probe_waits_while_direct_needs_a_sign_in(settings):
+    store = Store(settings.data_dir)
+    today = at(10).date()
+    d, p = Direct(blocked=True), Personal(settings.data_dir)
+    store.set_meta(HybridGarminSource.PROFILE_KEY, "42")                # paired before the sign-in expired
+    store.set_meta("source:pair:" + p._fingerprint[:16], "42")
+    store.set_meta(notices.WAITING_KEY, "yes")                         # known: the sign-in has to be renewed
+    store.set_meta(HybridGarminSource.RETRY_KEY, str(at(12).timestamp()))
+    intervals = Intervals()
+    intervals.records[today] = {"steps": 50}
+    store.set_meta("wellness:since", "test")
+    store.set_meta(f"wellness:next:{today}", str(at(21).timestamp()))
+    try:
+        result = sync.wellness_check(settings, HybridGarminSource(d, p, store=store), intervals, store,
+                                     apply=False, now=at(10))
+        assert result["sync_checks"] == 0                        # nothing to ask while the sign-in waits
+        assert store.get_meta(f"wellness:final:{today - timedelta(days=1)}") is None   # 20:00 fallback later
+        assert not store.get_meta(f"wellness:verify:{today}")                         # and no growing backoff
+    finally:
+        store.close()
+
+
 def test_broken_extras_queue_entries_do_not_starve_valid_archives(settings):
     store = Store(settings.data_dir)
     try:
@@ -559,6 +636,21 @@ def test_ha_expiry_option_and_status_surfaces(settings, monkeypatch):
         assert "2027-01-01" in ui.settings_page(webui.Session())
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("chosen, link", [("auto", True), ("personal", False)])
+def test_key_alone_says_what_stays_empty(settings, monkeypatch, chosen, link):
+    loaded = replace(settings, garmin_source=chosen, env_file=None)        # a key, no Garmin Connect session
+    assert config.effective_source(loaded) == "personal"
+    ui = webui.UI(host="127.0.0.1", port=0, settings=lambda: loaded, in_run=True, newer_release=lambda: None)
+    page = ui.status(webui.Session(), {}, {})
+    assert "With the key alone" in page and "Training Readiness" in page
+    assert ('<a href="/garmin">sign in to Garmin Connect as well</a>' in page) is link
+    assert ("choose the Garmin source auto or hybrid" in page) is not link     # explicit personal: settings first
+    hybrid = replace(settings, garmin_source="hybrid", env_file=None)
+    assert "With the key alone" not in webui.UI(host="127.0.0.1", port=0, settings=lambda: hybrid, in_run=True,
+                                                newer_release=lambda: None).status(webui.Session(), {}, {})
+    assert "sign in to Garmin Connect as well, with the Garmin source auto or hybrid" in personal.KEY_ALONE
 
 
 def test_existing_personal_pause_is_honored_without_extending_it(settings, monkeypatch):

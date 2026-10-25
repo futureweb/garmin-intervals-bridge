@@ -15,7 +15,15 @@ from .fit import sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .intake import intake_values, write_intake
 from .intervals import rate_limited, refused
-from .mapping import PROVISIONAL_CODES, map_wellness, merge_wellness, snapshot_corrections
+from .mapping import (
+    PROVISIONAL_CODES,
+    PROVISIONAL_NATIVE,
+    get,
+    map_wellness,
+    merge_wellness,
+    number,
+    snapshot_corrections,
+)
 from .sources import merge_snapshot, supports
 from .store import InstanceBusy, Store
 from .times import external_id_names, parse_utc
@@ -745,8 +753,11 @@ def wellness_due(day: date, current: date, fetched: float | None, midnight: floa
 
 def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
                         metrics: dict, *, apply: bool, rewrite: set[str] | None = None,
-                        night: dict | None = None) -> bool:
-    """Map one snapshot and add what Intervals lacks. False when the day is locked there."""
+                        night: dict | None = None, store: Store | None = None) -> bool:
+    """Map one snapshot and add what Intervals lacks. False when the day is locked there.
+
+    With `store`, the running day's provisional natives the bridge writes are remembered, and a
+    finished day's are replaced by the day's values while Intervals still holds the bridge's."""
     native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
     if not native and not custom:
         log.info("No supported Garmin scalar wellness data for %s", day)
@@ -764,6 +775,20 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
                  day, ", ".join(sorted(fixes)))
         changes.update(fixes)
         metrics["snapshot_fixes"] = metrics.get("snapshot_fixes", 0) + 1
+    provisional_key = f"wellness:provisional:{day}"
+    ours = json.loads(store.get_meta(provisional_key) or "{}") if store is not None else {}
+    kept = _still_ours(ours, existing)
+    if apply and store is not None and kept != ours:     # kept even if a write below fails
+        _save_provisional(store, provisional_key, kept)
+        ours = dict(kept)
+    settled = {field for field in kept if day < current and store.get_meta(f"wellness:final:{day}")
+               and _final_dataset(raw, PROVISIONAL_NATIVE[field][0])
+               and number(get(raw.get("data") or {}, *PROVISIONAL_NATIVE[field])) is not None}
+    replaced = sorted(field for field in settled
+                      if native.get(field) is not None and native[field] != kept[field] and field not in fixes)
+    if replaced:
+        log.info("Wellness %s: %s of the morning replaced by the day's value", day, ", ".join(replaced))
+        changes.update({field: native[field] for field in replaced})
     if changes:
         metrics["days_with_changes"] += 1
         log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
@@ -776,7 +801,39 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         if apply:
             intervals.write_wellness(day, changes)
             metrics["writes"] += 1
+            if day >= current:          # ours only what went into an empty field (no snapshot correction)
+                kept.update({k: changes[k] for k in PROVISIONAL_NATIVE if k in changes and existing.get(k) is None})
+    if apply and store is not None:
+        left = {field: value for field, value in kept.items() if field not in settled}
+        if left != ours:
+            _save_provisional(store, provisional_key, left)
     return True
+
+
+def _still_ours(ours: dict, record: dict) -> dict:
+    """The provisional values Intervals does not hold differently; an empty field proves nothing."""
+    return {field: value for field, value in ours.items() if record.get(field) in (None, value)}
+
+
+def _save_provisional(store: Store, key: str, values: dict) -> None:
+    if values:
+        store.set_meta(key, json.dumps(values))
+    else:
+        store.delete_meta(key, time.time() + 1)
+
+
+def _final_dataset(raw: dict, name: str) -> bool:
+    """`name` came in with the day's final read: not kept from an earlier read after a failure."""
+    return (raw.get("final") is True and name not in (raw.get("errors") or {})
+            and ((raw.get("provenance") or {}).get(name) or {}).get("final") is True)
+
+
+def forget_foreign_provisional(store: Store, day: date, record: dict) -> None:
+    """Intervals holds another value than the bridge's provisional one: it is not the bridge's any more."""
+    key = f"wellness:provisional:{day}"
+    ours = json.loads(store.get_meta(key) or "{}")
+    if (kept := _still_ours(ours, record)) != ours:
+        _save_provisional(store, key, kept)
 
 
 def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
@@ -843,7 +900,7 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             store.mark_wellness(day)                     # the throttle counts the read, not the write
         try:
             unlocked = _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
-                                           apply=apply, rewrite=rewrite)
+                                           store=store, apply=apply, rewrite=rewrite)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
@@ -1042,7 +1099,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             store.set_meta(f"wellness:rewrite:{day}", "1")     # kept until written: a retry rewrites too
         try:
             unlocked = _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
-                                           apply=apply, rewrite=set(rewrite) if rewrite else None)
+                                           store=store, apply=apply, rewrite=set(rewrite) if rewrite else None)
             if apply:
                 store.mark_wellness(day, written=True)   # a locked day too: asked again after its next fetch
                 if rewrite and unlocked:
@@ -1072,6 +1129,8 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             write(day, raw, rewrite=PROVISIONAL_CODES if store.get_meta(f"wellness:rewrite:{day}") else None)
 
     record = intervals.wellness(current)
+    if apply:
+        forget_foreign_provisional(store, current, record)
     metrics["intervals_checks"] += 1
     official_sleep = _positive(record.get("sleepSecs"))
     touched = official_sleep or any(_positive(record.get(k)) for k in ("steps", "restingHR", "hrv", "weight"))
@@ -1084,7 +1143,9 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     morning_key = f"wellness:next:{current}"
     if not morning and now_ts >= float(store.get_meta(morning_key) or 0) and (
             official_sleep or _slot_due(store, current, now, LATE_SLOTS if signal else FALLBACK_SLOTS)):
-        raw = read(current, MORNING_ENDPOINTS)
+        # Personal sleep has no resting HR of the night: the daily summary brings today's so far
+        raw = read(current, MORNING_ENDPOINTS + (("stats",) if getattr(garmin, "source", "direct") != "direct"
+                                                 else ()))
         if _has_sleep(raw):
             morning = ("direct-pending" if raw.get("deferred") else "ok"
                        if _has_morning_readiness(raw) or not supports(garmin, "training_readiness")
@@ -1132,7 +1193,8 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             snapshots = wellness_bundle_index(files)["health_snapshots"] if files else []
             if snapshots and (raw := store.load_snapshot(current)) is not None:
                 raw = {**raw, "data": {**(raw.get("data") or {}), "health_snapshots": snapshots}}
-                _write_wellness_day(current, raw, current, settings, intervals, metrics, apply=apply, night=night)
+                _write_wellness_day(current, raw, current, settings, intervals, metrics, apply=apply, night=night,
+                                    store=store)
             store.set_meta(snapshot_key, str(shown))     # done: only now not asked again
         except GarminBlocked:
             raise
@@ -1143,11 +1205,16 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             log.warning("Health Snapshot check of %s not done: %s; again at the next check", current,
                         _error_name(exc))
     verify_key = f"wellness:verify:{current}"
-    if (getattr(garmin, "source", "direct") == "direct" and pending_past and not synced and touched
-            and now_ts >= float(store.get_meta(verify_key) or 0)):
+    source = getattr(garmin, "source", "direct")
+    if (source in ("direct", "hybrid") and pending_past and not synced and touched
+            and now_ts >= float(store.get_meta(verify_key) or 0)
+            and not (source == "hybrid" and garmin.direct_unavailable)):      # nothing to ask, no backoff
         # Something new arrived in Intervals for today; ask Garmin whether that was a device sync.
-        raw = garmin.snapshot(current, endpoints=("stats",))
-        store.save_snapshot(current, _merge_partial(store.load_snapshot(current), raw))
+        if source == "direct":
+            raw = garmin.snapshot(current, endpoints=("stats",))
+            store.save_snapshot(current, _merge_partial(store.load_snapshot(current), raw))
+        else:                   # Personal stats have no sync time; the direct login knows it
+            raw = garmin.device_sync_stats(current)
         metrics["sync_checks"] += 1
         last_sync = _last_device_sync(raw)
         if last_sync is not None and last_sync >= midnight:

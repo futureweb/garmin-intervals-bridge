@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import time
+from datetime import date
 from urllib.parse import urlencode
 
 import pytest
@@ -556,6 +557,46 @@ def test_the_past_shows_the_plan_first_and_starts_one_backfill_in_the_background
     assert "Done" in call(page, "GET", "/actions", cookie=cookie)[2]
 
 
+def test_the_past_fills_in_a_training_advice_after_showing_the_comparison(page, monkeypatch):
+    FakeProcess.started = []
+    monkeypatch.setattr(webui.subprocess, "Popen", FakeProcess)
+    calls = []
+
+    def run_days(intervals, start, end, *, apply, compare=False, today=None, **kwargs):
+        calls.append((start, end, apply, compare))
+        return {"apply": apply, "actions": {"would write": 40, "none": 3, "keep": 2},
+                "fields": {"would create": ["HRVTrendAdvice", "HRVTrendCV"]},
+                "comparison": {"days_with_both": 42, "same_advice": 30, "trend": {"3 Planned": 35, "2 LIT": 7},
+                               "imready4": {"3 Planned": 31, "2 LIT": 11}, "changes_day_to_day": {"trend": 4,
+                               "imready4": 15}, "pairs": {"2 LIT/3 Planned": 6}, "pairs_note": "ImReady4/trend"}}
+    monkeypatch.setattr(webui.hrvtrend, "run_days", run_days)
+    cookie = signed_in(page)
+    text = call(page, "GET", "/actions", cookie=cookie)[2]
+    assert 'value="hrvtrend"' in text and 'value="imready4"' in text
+    token = csrf(text)
+    form = {"csrf": token, "scope": "hrvtrend", "start": "2026-09-01", "end": "2026-10-15"}
+    plan = call(page, "POST", "/actions/backfill", form, cookie=cookie)[2]
+    assert calls == [(date(2026, 9, 1), date(2026, 10, 15), False, True)]          # a dry run, compared
+    assert "<b>40</b> empty days" in plan and "3 without enough nights" in plan and "2 keep" in plan
+    assert "HRVTrendAdvice" in plan and "Compared with ImReady4" in plan and "the same advice on 30" in plan
+    assert "Start it" in plan and FakeProcess.started == []
+    text = call(page, "POST", "/actions/backfill-start", form, cookie=cookie)[2]
+    assert "Started" in text and "HRV trend advice 2026-09-01 to 2026-10-15" in text
+    cmd = FakeProcess.started[0].cmd
+    assert cmd[1:4] == ["-m", "garmin_intervals_bridge", "hrvtrend"] and "--apply" in cmd
+    assert cmd[cmd.index("--from") + 1] == "2026-09-01" and cmd[cmd.index("--to") + 1] == "2026-10-15"
+
+
+def test_a_training_advice_with_nothing_to_write_offers_no_start(page, monkeypatch):
+    monkeypatch.setattr(webui.imready4, "run_days",
+                        lambda *a, **k: {"actions": {"keep": 5}, "field": "TrainingAdvice does not exist"})
+    cookie = signed_in(page)
+    token = csrf(call(page, "GET", "/actions", cookie=cookie)[2])
+    plan = call(page, "POST", "/actions/backfill", {"csrf": token, "scope": "imready4", "start": "2026-10-01",
+                                                   "end": "2026-10-05"}, cookie=cookie)[2]
+    assert "TrainingAdvice does not exist" in plan and "Nothing to write" in plan and "Start it" not in plan
+
+
 def test_the_past_refuses_what_makes_no_sense(page, monkeypatch):
     FakeProcess.started = []
     monkeypatch.setattr(webui.subprocess, "Popen", FakeProcess)
@@ -563,7 +604,7 @@ def test_the_past_refuses_what_makes_no_sense(page, monkeypatch):
     token = csrf(call(page, "GET", "/actions", cookie=cookie)[2])
     for form, why in (({"scope": "wellness", "start": "2026-10-10", "end": "2026-10-01"}, "must not be after"),
                       ({"scope": "wellness", "start": "2099-01-01", "end": "2099-01-02"}, "future"),
-                      ({"scope": "everything", "start": "2026-01-01"}, "Choose activities or wellness"),
+                      ({"scope": "everything", "start": "2026-01-01"}, "Choose activities, wellness or a training"),
                       ({"scope": "wellness", "start": "yesterday"}, "YYYY-MM-DD")):
         text = call(page, "POST", "/actions/backfill-start", {"csrf": token, **form}, cookie=cookie)[2]
         assert why in text

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.12.1 — 2026-10-25
+
+Without the official wellness import, today's resting HR in the morning; sleep quality; the
+training advice of earlier days from the web page; and which data comes from where.
+
+### Added
+
+- **Sleep quality:** Intervals' `sleepQuality` (1–4) from Garmin's sleep score rating –
+  Excellent 1, Good 2, Fair 3, Poor 4, as the official import maps it (thanks Michael.0000).
+- **The training advice of earlier days from the web page** (thanks Lagarto): *Actions → The
+  past* now also offers *Training advice: HRV trend* and *ImReady4*. It shows what it would do
+  first – for the trend with the comparison to ImReady4, as `hrvtrend --compare` does – and then
+  fills in the empty days in the background. Mainly for Home Assistant, which has no terminal.
+- **With a Personal API key alone,** `personal-check`, `setup` and the web page say which data
+  stay empty, and that the Garmin Connect sign-in as well gets them.
+- **Which data comes from where:** a table in the README (sign-in, key, both), and a column *Key
+  alone* in [docs/FIELD_MAPPING.md](docs/FIELD_MAPPING.md).
+
+### Changed
+
+- **Today's resting HR comes in the morning** (thanks Michael.0000): the bridge used to write
+  it only at the day's final read, because Garmin revises it until the day ends – with the
+  official wellness import off, ImReady4 waited all day. Now the morning writes the night's
+  resting HR into an empty field, and the final read replaces it with the day's – only while
+  Intervals still holds what the bridge wrote. A value from the official import or one you
+  typed in stays.
+- **Hybrid reads a finished day right after the watch's first sync after midnight,** as the
+  sign-in alone does: it asks the sign-in for the time of the last sync, which the Personal
+  API does not report. Before, the final read waited for the night's sleep or 20:00 next day.
+- The README names Garmin's Personal API next to the sign-in, and its legal note says which of
+  the two is the official interface.
+
+### Security
+
+- The local caches identify a Personal API key by a PBKDF2 fingerprint instead of a plain hash
+  (CodeQL); the setting for its expiry date is no longer named like a secret. The cached token and
+  the account pairing are renewed once after the update.
+
 ## 0.12.0 — 2026-10-24
 
 Garmin's official Personal API as a second way in, and *Check now* from a phone.

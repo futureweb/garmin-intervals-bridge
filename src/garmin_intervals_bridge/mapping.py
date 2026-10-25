@@ -78,14 +78,22 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminSnapshotStress": CustomField("Garmin Health Snapshot Stress", None, 100),
 }
 
+# Garmin's sleep score rating on Intervals' 1-4 sleepQuality scale, as the official import maps it
+SLEEP_QUALITY = {"EXCELLENT": 1, "GOOD": 2, "FAIR": 3, "POOR": 4}
+
 # Values written for the running day from the morning's readings and replaced by the day's last
-# at its final read: the bridge's own fields, so replacing them is allowed (natives never are).
+# at its final read: the bridge's own fields, so replacing them is allowed (natives only as below).
 PROVISIONAL_CODES = frozenset({
     "GarminRecoveryTimeMinutes", "GarminRecoveryTimeHours", "GarminAcuteLoad", "GarminVO2MaxCycling",
     "GarminEnduranceScore", "GarminHillScore", "GarminHillStrength", "GarminHillEndurance",
     "GarminFitnessAge", "GarminAchievableFitnessAge", "GarminPredicted5KSeconds", "GarminPredicted10KSeconds",
     "GarminPredictedHalfSeconds", "GarminPredictedMarathonSeconds",
 })
+
+# Native fields written for the running day from the morning's values, and the dataset and key that
+# carry the day's value. Only what the bridge wrote into an empty field is replaced, at a final read
+# that has that value, and only while Intervals still holds exactly the bridge's (sync remembers it).
+PROVISIONAL_NATIVE = {"restingHR": ("stats", "restingHeartRate")}
 
 # Index key of a Health Snapshot -> custom code, and native fields a snapshot import overwrites
 SNAPSHOT_CODES = {"hr_avg": "GarminSnapshotHR", "hrv_rmssd": "GarminSnapshotRMSSD", "hrv_sdrr": "GarminSnapshotSDRR",
@@ -147,7 +155,8 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     """Return (native, custom) value dicts; absent/invalid values are omitted.
 
     Today's accumulating totals are excluded; their final values can be
-    imported tomorrow. Sleep/HRV/Readiness may be imported today.
+    imported tomorrow. Sleep/HRV/Readiness may be imported today, and today's
+    resting HR as the night's (PROVISIONAL_NATIVE).
     `profile` "recommended" drops the custom codes in RECOMMENDED_EXCLUDES.
     """
     data = snapshot.get("data", {})
@@ -182,15 +191,21 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         if scalar is not None:
             target_map[key] = scalar
 
-    if target < today:   # Garmin revises today's resting HR until the day ends
+    if target < today:
         put(native, "restingHR", choose(stats, ("restingHeartRate",), high=220)
             or choose(data.get("sleep"), ("restingHeartRate",), high=220), high=220)
+    else:                # Garmin revises today's until the day ends: the night's now (PROVISIONAL_NATIVE)
+        put(native, "restingHR", choose(data.get("sleep"), ("restingHeartRate",), high=220)
+            or choose(stats, ("restingHeartRate",), high=220), high=220)
     put(native, "hrv", choose(hrv, ("lastNightAvg",), high=400), high=400)
     put(native, "avgSleepingHR", choose(sleep, ("avgHeartRate",), low=20, high=220), low=20, high=220)
     put(native, "sleepSecs", choose(sleep, ("sleepTimeSeconds",), high=86400), high=86400)
     sleep_score = choose(sleep, ("sleepScores", "overall", "value"),
                          ("sleepScores", "overall", "score"), high=100)
     put(native, "sleepScore", sleep_score, high=100)
+    quality = SLEEP_QUALITY.get(str(get(sleep, "sleepScores", "overall", "qualifierKey") or "").upper())
+    if quality is not None:
+        native["sleepQuality"] = quality
     put(custom, "GarminHRV5MinHigh", choose(hrv, ("lastNight5MinHigh",), high=500), high=500)
     put(custom, "GarminHRV7DayAvg", choose(hrv, ("weeklyAvg",), high=400), high=400)
 

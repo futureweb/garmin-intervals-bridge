@@ -29,8 +29,8 @@ from .gear import save_config as save_gear_config
 from .gear import sync_recent as sync_gear_recent
 from .health import liveness, probe
 from .intervals import IntervalsClient, rate_limited, request_error, transient
+from .personal import KEY_ALONE, PersonalGarminSource, PersonalKeyNeeded, validated_key
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
-from .personal import PersonalGarminSource, PersonalKeyNeeded, validated_key
 from .sources import activity_step, garmin_source, remember_direct_profile, source_status
 from .store import InstanceBusy, Store, single_instance
 from .sync import (
@@ -672,6 +672,8 @@ def main(argv: list[str] | None = None) -> int:
             source = PersonalGarminSource(settings.data_dir, settings.garmin_personal_api_key,
                                             settings.garmin_request_delay)
             result = source.check()
+            if effective_source(settings) == "personal":
+                result["key_alone"] = KEY_ALONE
             print(json.dumps(result, indent=2))
             if result["settings_statuses"] and result["settings_statuses"][-1] == 200:
                 validated_key(settings.data_dir)
@@ -704,8 +706,9 @@ def main(argv: list[str] | None = None) -> int:
                        else ("gear",) if args.cmd == "gear"
                        # one activity on request: next to a running `run`, writes are idempotent
                        else ("enrich",) if args.cmd in ("enrich", "swap")
-                       else ("imready4",) if args.cmd == "imready4"
-                       else ("hrvtrend",) if args.cmd == "hrvtrend"
+                       # the advice fields are the scheduled wellness run's too: never both at once
+                       else ("wellness",) if args.cmd in ("imready4", "hrvtrend") and args.apply
+                       else () if args.cmd in ("imready4", "hrvtrend")      # a preview writes nothing
                        # read-only diagnosis must work next to a running `run`: no shared state written
                        else () if args.cmd in ("status", "snapshot-account", "gap")
                        else ("activities",))
@@ -714,7 +717,7 @@ def main(argv: list[str] | None = None) -> int:
         for lock_scope in lock_scopes:
             try:
                 _take_part(settings.data_dir, lock_scope, locks, log,
-                           wait=BUSY_WAIT_SECONDS if args.cmd == "backfill" else 0)
+                           wait=BUSY_WAIT_SECONDS if args.cmd in ("backfill", "imready4", "hrvtrend") else 0)
                 held.append(lock_scope)
             except InstanceBusy as exc:
                 if args.cmd not in ("watch", "sync"):
@@ -772,8 +775,13 @@ def main(argv: list[str] | None = None) -> int:
                     if start > end:
                         raise ValueError("--from must not be after --to")
                     feature = imready4 if args.cmd == "imready4" else hrvtrend
+                    if args.apply:
+                        log.info("%s %s to %s: started", args.cmd, start, end)
                     out = feature.run_days(intervals, start, end, apply=args.apply, overwrite=args.overwrite,
                                             compare=args.compare, details=args.details, today=today)
+                    if args.apply:
+                        log.info("%s %s to %s: %s", args.cmd, start, end,
+                                 ", ".join(f"{n} {action}" for action, n in (out.get("actions") or {}).items()))
                     print(json.dumps(out, indent=2, ensure_ascii=False))
                     return 0
                 if args.cmd == "gear":

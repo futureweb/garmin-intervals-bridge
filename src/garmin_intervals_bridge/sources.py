@@ -265,7 +265,7 @@ class HybridGarminSource:
         if self.store:
             self.store.set_meta(self._pair_key, self._paired)
 
-    def _direct(self, method, *args, **kwargs):
+    def _direct(self, method, *args, _record=True, **kwargs):
         """Use direct without contacting Personal; missing sessions defer only direct work."""
         self._prepare()
         if self.direct_unavailable:
@@ -282,7 +282,8 @@ class HybridGarminSource:
             return None
         if self.on_direct_ok:
             self.on_direct_ok()
-        self._record(method, "direct", result)
+        if _record:
+            self._record(method, "direct", result)
         return result
 
     def _shared(self, method, *args, **kwargs):
@@ -318,6 +319,22 @@ class HybridGarminSource:
 
     def wellness_files(self, day):
         return self._direct("wellness_files", day)
+
+    def device_sync_stats(self, day):
+        """The direct daily summary, only for the device's last sync: Personal stats carry none.
+
+        Not archived and not recorded as the source of the day's stats. None while direct waits, and
+        unless the direct account is the key's: another watch's sync is no evidence for this account."""
+        try:
+            self._prepare()
+            if self.direct_unavailable:
+                return None
+            self._verify()
+            return self._direct("snapshot", day, endpoints=("stats",), _record=False)
+        except PersonalRateLimited:
+            raise                                           # the caller pauses Personal for it
+        except (PersonalError, GarminBlocked, requests.RequestException):
+            return None
 
     def snapshot(self, day, endpoints=None):
         wanted = set(DAY_ENDPOINTS if endpoints is None else endpoints)

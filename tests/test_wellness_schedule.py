@@ -397,3 +397,213 @@ def test_a_health_snapshot_check_that_failed_is_done_again(tmp_path):
     run(tmp_path, st, g, i, at(10, 30))
     assert len(asked) == 2 and st.get_meta(f"wellness:snapshot:{TODAY}") == "55"
     st.close()
+
+
+# ---- today's resting HR: the night's in the morning, the day's at the final read ----
+
+def _days_resting_hr(g, value):
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if "stats" in raw["data"] and day == TODAY:
+            raw["data"]["stats"]["restingHeartRate"] = value
+        return raw
+    g.snapshot = snapshot
+
+
+def test_the_mornings_resting_hr_gives_way_to_the_days_at_the_final_read(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    assert i.records[TODAY]["restingHR"] == 49                 # the night's, so ImReady4 need not wait
+    _days_resting_hr(g, 47)
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert i.records[TODAY]["restingHR"] == 47
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    st.close()
+
+
+def test_a_resting_hr_someone_else_set_stays(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    i.records[TODAY]["restingHR"] = 52                         # typed in, or the official import's
+    _days_resting_hr(g, 47)
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert i.records[TODAY]["restingHR"] == 52
+    st.close()
+
+
+def test_the_official_imports_resting_hr_is_neither_written_nor_replaced(tmp_path):
+    st, g, i = fresh(tmp_path)
+    g.sleep = g.readiness = True
+    i.records[TODAY] = {"sleepSecs": 28080, "restingHR": 51}
+    run(tmp_path, st, g, i, at(8, 0))
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    _days_resting_hr(g, 47)
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert i.records[TODAY]["restingHR"] == 51
+    st.close()
+
+
+def _final_read(tmp_path, st, g, i):
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+
+
+def test_only_exactly_the_bridges_value_is_replaced(tmp_path):
+    for typed in (49.25, 52):
+        st, g, i = _morning_written(tmp_path / str(typed))
+        i.records[TODAY]["restingHR"] = typed                  # someone else's value, however close
+        from garmin_intervals_bridge.sync import _write_wellness_day
+        metrics = {"days_locked": 0, "days_with_changes": 0, "writes": 0, "new_fields": []}
+        _write_wellness_day(TODAY, st.load_snapshot(TODAY), TODAY, settings(tmp_path), i, metrics, apply=True,
+                            store=st)                          # seen at a later write: no longer the bridge's
+        i.records[TODAY]["restingHR"] = 49 if typed == 52 else typed      # and changed back
+        _days_resting_hr(g, 47)
+        _final_read(tmp_path / str(typed), st, g, i)
+        assert i.records[TODAY]["restingHR"] == (49 if typed == 52 else typed)
+        st.close()
+
+
+def test_a_snapshot_correction_does_not_make_the_value_the_bridges(tmp_path):
+    st, g, i = fresh(tmp_path)
+    g.sleep = g.readiness = True
+    i.records[TODAY] = {"sleepSecs": 28080, "restingHR": 63}
+    raw = {"date": TODAY.isoformat(), "data": {"sleep": {"restingHeartRate": 49, "dailySleepDTO": {}},
+                                               "health_snapshots": [{"hr_avg": 63}]}, "errors": {}}
+    from garmin_intervals_bridge.sync import _write_wellness_day
+    metrics = {"days_locked": 0, "days_with_changes": 0, "writes": 0, "new_fields": []}
+    _write_wellness_day(TODAY, raw, TODAY, settings(tmp_path), i, metrics, apply=True,
+                        night={"restingHR": 49}, store=st)
+    assert i.records[TODAY]["restingHR"] == 49                 # the night's, put back over the snapshot
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    st.close()
+
+
+def test_a_morning_archive_written_after_midnight_keeps_the_mark_for_the_final_read(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    from garmin_intervals_bridge.sync import _write_wellness_day
+    metrics = {"days_locked": 0, "days_with_changes": 0, "writes": 0, "new_fields": []}
+    morning = st.load_snapshot(TODAY)
+    _write_wellness_day(TODAY, morning, TOMORROW, settings(tmp_path), i, metrics, apply=True, store=st)
+    assert st.get_meta(f"wellness:provisional:{TODAY}")      # not final: nothing settled, nothing dropped
+    _days_resting_hr(g, 47)
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 47
+    st.close()
+
+
+def test_personal_alone_brings_todays_resting_hr_from_the_daily_summary(tmp_path):
+    st, g, i = fresh(tmp_path)
+    g.source = "personal"
+    g.sleep = g.readiness = True
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        raw["data"].get("sleep", {}).pop("restingHeartRate", None)     # the Personal sleep has none
+        if "stats" in raw["data"]:
+            raw["data"]["stats"]["restingHeartRate"] = 51
+        return raw
+    g.snapshot = snapshot
+    i.records[TODAY] = {"sleepSecs": 28080}
+    run(tmp_path, st, g, i, at(8, 0))
+    assert "stats" in g.reads[0][1] and i.records[TODAY]["restingHR"] == 51
+    st.close()
+
+
+def test_an_explicit_read_before_the_final_read_does_not_settle_the_mornings_value(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    _days_resting_hr(g, 47)
+    from garmin_intervals_bridge.sync import sync_wellness
+    explicit = settings(tmp_path)
+    explicit.wellness_refresh_hours = 6
+    sync_wellness(explicit, g, i, st, apply=True, force=True, today=TOMORROW,
+                  now=at(0, 30, day=TOMORROW))                    # sync --force of yesterday, just after midnight
+    assert i.records[TODAY]["restingHR"] == 49 and st.get_meta(f"wellness:provisional:{TODAY}")
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 47
+    st.close()
+
+
+def test_the_scheduled_check_forgets_a_value_someone_else_set(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    i.records[TODAY]["restingHR"] = 52                         # the official import, or typed in
+    run(tmp_path, st, g, i, at(12, 0))                         # the check reads today's record anyway
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    i.records[TODAY]["restingHR"] = 49                         # and back to the bridge's number
+    _days_resting_hr(g, 47)
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 49
+    st.close()
+
+
+def test_a_failed_write_keeps_what_the_bridge_saw(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    i.records[TODAY]["restingHR"] = 52
+    from garmin_intervals_bridge.sync import _write_wellness_day
+
+    def broken(day, changes):
+        raise RuntimeError("Intervals is down")
+    i.write_wellness = broken
+    raw = {**st.load_snapshot(TODAY), "data": {**st.load_snapshot(TODAY)["data"],
+                                               "hrv": {"hrvSummary": {"lastNightAvg": 38, "weeklyAvg": 40}}}}
+    i.records[TODAY].pop("GarminHRV7DayAvg", None)             # something to write
+    metrics = {"days_locked": 0, "days_with_changes": 0, "writes": 0, "new_fields": []}
+    with __import__("pytest").raises(RuntimeError):
+        _write_wellness_day(TODAY, raw, TODAY, settings(tmp_path), i, metrics, apply=True, store=st)
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    st.close()
+
+
+def test_a_final_read_whose_daily_summary_failed_settles_nothing(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if day == TODAY and endpoints is None:                  # the final read: the summary refused
+            raw["data"].pop("stats", None)
+            raw["errors"]["stats"] = "HTTPError 403"
+        return raw
+    g.snapshot = snapshot
+    st.save_snapshot(TODAY, {**st.load_snapshot(TODAY), "data": {**st.load_snapshot(TODAY)["data"],
+                                                                 "stats": {"restingHeartRate": 49}}})
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 49 and st.get_meta(f"wellness:provisional:{TODAY}")
+    g.snapshot = original
+    _days_resting_hr(g, 47)
+    from garmin_intervals_bridge.sync import sync_wellness
+    explicit = settings(tmp_path)
+    explicit.wellness_refresh_hours = 6
+    sync_wellness(explicit, g, i, st, apply=True, force=True, today=TOMORROW, now=at(9, 0, day=TOMORROW))
+    assert i.records[TODAY]["restingHR"] == 47
+    st.close()
+
+
+def test_an_empty_field_in_a_check_does_not_end_the_bridges_claim(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    from garmin_intervals_bridge.sync import forget_foreign_provisional
+    forget_foreign_provisional(st, TODAY, {"id": TODAY.isoformat()})    # Intervals answered without the value
+    assert st.get_meta(f"wellness:provisional:{TODAY}")
+    _days_resting_hr(g, 47)
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 47
+    st.close()
+
+
+def test_a_value_written_again_into_a_cleared_field_is_the_bridges(tmp_path):
+    st, g, i = _morning_written(tmp_path)
+    i.records[TODAY]["restingHR"] = 52                         # someone else's
+    from garmin_intervals_bridge.sync import _write_wellness_day
+    metrics = {"days_locked": 0, "days_with_changes": 0, "writes": 0, "new_fields": []}
+    _write_wellness_day(TODAY, st.load_snapshot(TODAY), TODAY, settings(tmp_path), i, metrics, apply=True, store=st)
+    assert st.get_meta(f"wellness:provisional:{TODAY}") is None
+    del i.records[TODAY]["restingHR"]                          # cleared: the next write fills it again
+    _write_wellness_day(TODAY, st.load_snapshot(TODAY), TODAY, settings(tmp_path), i, metrics, apply=True, store=st)
+    assert i.records[TODAY]["restingHR"] == 49 and st.get_meta(f"wellness:provisional:{TODAY}")
+    _days_resting_hr(g, 47)
+    _final_read(tmp_path, st, g, i)
+    assert i.records[TODAY]["restingHR"] == 47
+    st.close()

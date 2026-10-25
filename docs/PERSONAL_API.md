@@ -116,9 +116,21 @@ Garmin documents the weight in kilograms, but the live API answers in grams,
 like the direct login; only positive values below 1000 are converted from
 kilograms. The bridge writes kilograms to Intervals. Range averages and
 adjacent-day entries are not measurements for the requested day. The broken `weight/all` route is
-not used. Personal stats have a null `lastSyncTimestampGMT`; personal/hybrid
-skip that probe and use sleep evidence or the existing 20:00-next-day fallback
-for final reads. Direct scheduling is unchanged.
+not used. Personal stats have a null `lastSyncTimestampGMT`: hybrid asks the
+direct login for the device's last sync instead (that answer is neither archived
+nor counted as the day's stats source), while Personal alone uses sleep evidence
+or the 20:00-next-day fallback for final reads. Direct scheduling is unchanged.
+
+The Personal sleep has no resting HR of the night, so with Personal (alone or in
+hybrid) the morning read also asks for the daily summary. Its resting HR so far goes
+into today's empty `restingHR` when the night's is missing – with Personal alone
+always, in hybrid only while the direct sleep is not there – until the final read
+brings the day's.
+
+The Personal sleep DTO takes the night's lowest and highest respiration from the
+hourly averages; Garmin Connect takes them from the two-minute readings, so with
+the key alone they are usually 1–2 breaths/min further apart. Hybrid reads sleep
+through the direct login.
 
 Unsupported capabilities do not create retry loops or field-dropout alarms.
 Health still monitors unexpected loss of supported fields.

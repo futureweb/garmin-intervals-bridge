@@ -55,7 +55,7 @@ from .gear import report as gear_report
 from .gear import save_config as save_gear_config
 from .health import silent_error_checks
 from .intervals import IntervalsClient
-from .personal import AUTH_WAIT_KEY, PersonalGarminSource
+from .personal import AUTH_WAIT_KEY, KEY_ALONE_MISSING, PersonalGarminSource
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import garmin_source, remember_direct_profile, source_status
 from .store import InstanceBusy, Store, single_instance
@@ -383,6 +383,12 @@ class UI:
                          "key configured" if settings.garmin_personal_api_key else "key missing")
                 rows.append(("Garmin Personal API", esc(state) + "; last confirmed "
                              + esc(_ago(store.meta_updated("personal_last_ok"), now))))
+            if effective_source(settings) == "personal":
+                rows.append(("With the key alone", f"these stay empty: {esc(KEY_ALONE_MISSING)} &middot; "
+                             + ('to get them, choose the Garmin source auto or hybrid in the '
+                                '<a href="/settings">settings</a> and sign in to Garmin Connect as well'
+                                if settings.garmin_source == "personal" else
+                                '<a href="/garmin">sign in to Garmin Connect as well</a> to get them')))
             status = source_status(settings, store)
             if status["trigger_warning"] and not self.ingress:
                 rows.append(("Check now trigger", esc(status["trigger_warning"])))
@@ -963,9 +969,9 @@ class UI:
     def _backfill_section(self, session: Session) -> str:
         job = self._backfill_running()
         what = ("Fills in what Garmin's own sync left out on earlier days – Garmin's values on the activities (or, "
-                "with swap, the original file into each of them) or the wellness days. It runs in the background, "
-                "paced for Garmin, next to the running bridge; the <a href=\"/log\">Log</a> shows how far it got. "
-                "You see what it will do first.")
+                "with swap, the original file into each of them) or the wellness days – or the training advice of "
+                "earlier days. It runs in the background, paced, next to the running bridge; the "
+                "<a href=\"/log\">Log</a> shows how far it got. You see what it will do first.")
         if job is not None and job["exit"] is None:
             return (f'<section><h2>The past</h2><p class="warn"><b>Running:</b> {esc(job["label"])}, started '
                     f'{esc(_ago(job["started"]))}. The <a href="/log">Log</a> shows how far it got.</p></section>')
@@ -978,7 +984,9 @@ class UI:
         today = date.today().isoformat()
         form = self.form(session, "/actions/backfill", (
             '<label>What <select name="scope"><option value="activities">Activities</option>'
-            '<option value="wellness">Wellness</option></select></label>'
+            '<option value="wellness">Wellness</option>'
+            '<option value="hrvtrend">Training advice: HRV trend (with the comparison to ImReady4)</option>'
+            '<option value="imready4">Training advice: ImReady4</option></select></label>'
             f'<label>From <input type="date" name="start" required max="{today}"></label>'
             f'<label>To <input type="date" name="end" value="{today}" max="{today}"></label>'
             '<label><input type="checkbox" name="swap" value="1"> Activities: swap – the original file into Garmin\'s '
@@ -989,8 +997,8 @@ class UI:
     def _backfill_request(self, form: dict) -> tuple[dict | None, str]:
         """The request from the form, checked; (None, why) when it does not make sense."""
         scope = form.get("scope", "")
-        if scope not in ("activities", "wellness"):
-            return None, "Choose activities or wellness."
+        if scope not in ("activities", "wellness", *ADVICE_SCOPES):
+            return None, "Choose activities, wellness or a training advice."
         try:
             start = date.fromisoformat(form.get("start", ""))
             end = date.fromisoformat(form.get("end") or date.today().isoformat())
@@ -1010,6 +1018,8 @@ class UI:
         if request is None:
             return self.actions_page(session, f'<p class="warn">{esc(why)}</p>')
         days = (request["end"] - request["start"]).days + 1
+        if request["scope"] in ADVICE_SCOPES:
+            return self._advice_plan(session, request, days)
         if request["scope"] == "wellness":
             plan = (f"Wellness for {days} days ({request['start']} to {request['end']}): about 15 Garmin requests "
                     f"per day, two seconds apart – roughly {max(1, round(days * 10 / 60))} minutes. Days the bridge "
@@ -1020,11 +1030,43 @@ class UI:
                     + ("Each original goes into Garmin's copy in Intervals (swap, in place): same activity, nothing "
                        "deleted; edited intervals stay." if request["swap"] else
                        "Garmin's values go into the empty fields of Garmin's copies; nothing else is changed."))
+        return self.page(session, "The past", f'<section><p>{esc(plan)}</p><p class="muted">It runs in the '
+                         'background, next to the running bridge; you can close this page.</p>'
+                         f'{self._backfill_start_form(session, request)}</section>')
+
+    def _backfill_start_form(self, session: Session, request: dict) -> str:
         hidden = "".join(f'<input type="hidden" name="{k}" value="{esc(v)}">' for k, v in
                          (("scope", request["scope"]), ("start", request["start"]), ("end", request["end"]),
                           ("swap", "1" if request["swap"] else "")))
-        start = self.form(session, "/actions/backfill-start", hidden, "Start it – writes to Intervals")
-        return self.page(session, "The past", f'<section><p>{esc(plan)}</p><p class="muted">It runs in the '
+        return self.form(session, "/actions/backfill-start", hidden, "Start it – writes to Intervals")
+
+    def _advice_plan(self, session: Session, request: dict, days: int) -> str:
+        """What filling in a training advice would do, from one dry run: Intervals requests only."""
+        name, feature = ADVICE_SCOPES[request["scope"]]
+        settings = self.settings()
+        try:
+            out = feature.run_days(self._intervals(settings), request["start"], request["end"], apply=False,
+                                   compare=request["scope"] == "hrvtrend",
+                                   today=datetime.now(settings.timezone).date())
+        except Exception as exc:
+            log.warning("Training advice plan not shown: %s", exc)
+            return self.actions_page(session, f'<p class="bad">The plan could not be made: {esc(type(exc).__name__)} '
+                                     '(the <a href="/log">Log</a> has more).</p>')
+        actions = out.get("actions") or {}
+        writes = actions.get("would write", 0)
+        others = ", ".join(f"{n} {esc(ADVICE_ACTIONS.get(action, action))}" for action, n in actions.items()
+                           if action != "would write")
+        parts = [f"<p>{esc(name)} for {days} days ({request['start']} to {request['end']}): <b>{writes}</b> "
+                 "empty days get one" + (f"; {others}" if others else "") + ". Values already there stay.</p>"]
+        if out.get("fields"):
+            parts.append(f"<p>Creates the fields {esc(', '.join(next(iter(out['fields'].values()))))}.</p>")
+        if out.get("field"):
+            parts.append(f'<p class="warn">{esc(out["field"])}</p>')
+        if out.get("comparison"):
+            parts.append(_comparison_table(out["comparison"]))
+        start = (self._backfill_start_form(session, request) if writes and not out.get("field") else
+                 '<p class="muted">Nothing to write.</p>')
+        return self.page(session, "The past", f'<section>{"".join(parts)}<p class="muted">It runs in the '
                          f'background, next to the running bridge; you can close this page.</p>{start}</section>')
 
     def backfill_start(self, session: Session, query: dict, form: dict) -> str:
@@ -1035,14 +1077,18 @@ class UI:
             job = self._backfill_running()
             if job is not None and job["exit"] is None:
                 return self.actions_page(session, '<p class="warn">A backfill from this page is still running.</p>')
-            cmd = [sys.executable, "-m", "garmin_intervals_bridge", "backfill", "--scope", request["scope"],
-                   "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
+            if request["scope"] in ADVICE_SCOPES:
+                cmd = [sys.executable, "-m", "garmin_intervals_bridge", request["scope"],
+                       "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
+            else:
+                cmd = [sys.executable, "-m", "garmin_intervals_bridge", "backfill", "--scope", request["scope"],
+                       "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
             if request["scope"] == "activities" and self.settings().mode == "upload":
                 cmd += ["--mode", "upload"]
             if request["swap"]:
                 cmd.append("--swap")
-            label = (f"{request['scope']} {request['start']} to {request['end']}"
-                     + (" with swap" if request["swap"] else ""))
+            label = (f"{ADVICE_SCOPES[request['scope']][0] if request['scope'] in ADVICE_SCOPES else request['scope']}"
+                     f" {request['start']} to {request['end']}" + (" with swap" if request["swap"] else ""))
             try:
                 proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                                         **({} if os.name == "nt" else {"start_new_session": True}))
@@ -1219,6 +1265,24 @@ class UI:
                          '<label>Password (BRIDGE_UI_PASSWORD) <input type="password" name="password" '
                          'autocomplete="current-password" required autofocus></label><button>Sign in</button>'
                          '</form></section>')
+
+
+ADVICE_SCOPES = {"hrvtrend": ("HRV trend advice", hrvtrend), "imready4": ("ImReady4 advice", imready4)}
+ADVICE_ACTIONS = {"same": "already have it", "keep": "keep the advice they have", "none": "without enough nights",
+                  "wait": "wait for their night", "locked": "locked", "no field": "no field"}
+
+
+def _comparison_table(c: dict) -> str:
+    """The HRV trend next to ImReady4's TrainingAdvice, as `hrvtrend --compare` prints it."""
+    def counts(d: dict) -> str:
+        return ", ".join(f"{esc(k)} {v}" for k, v in d.items()) or "–"
+    rows = [("Days with both", f"{c.get('days_with_both', 0)}, the same advice on {c.get('same_advice', 0)}"),
+            ("HRV trend", counts(c.get("trend") or {})), ("ImReady4", counts(c.get("imready4") or {})),
+            ("Changes from day to day", f"HRV trend {c.get('changes_day_to_day', {}).get('trend', 0)}, "
+                                        f"ImReady4 {c.get('changes_day_to_day', {}).get('imready4', 0)}"),
+            ("Pairs (ImReady4/trend)", counts(c.get("pairs") or {}))]
+    return ("<h3>Compared with ImReady4</h3><table>"
+            + "".join(f"<tr><th>{esc(k)}</th><td>{v}</td></tr>" for k, v in rows) + "</table>")
 
 
 GET_PAGES = {"/": "status", "/garmin": "garmin_get", "/settings": "settings", "/actions": "actions", "/log": "log_page"}

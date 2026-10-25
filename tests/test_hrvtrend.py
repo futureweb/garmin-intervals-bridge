@@ -199,3 +199,9 @@ def test_the_morning_wellness_run_writes_both_advices_side_by_side(tmp_path):
     fields = {k for _, changes in i.writes for k in changes}
     assert {"TrainingAdvice", "HRVTrendAdvice", "HRVTrendCV"} <= fields
     st.close()
+
+
+def test_the_comparison_names_an_unknown_training_advice_as_it_is():
+    from garmin_intervals_bridge.hrvtrend import comparison
+    out = comparison([{"value": 3, "imready4": 5}, {"value": 2, "imready4": 2}])
+    assert out["imready4"] == {"LIT": 1, "5": 1} and out["pairs"] == {"LIT/LIT": 1, "5/Planned": 1}

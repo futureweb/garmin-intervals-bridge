@@ -12,6 +12,9 @@
 - **The wellness the official sync misses** — night SpO₂, respiration, HRV details, sleep
   stages, Body Battery, stress, readiness, logged nutrition, endurance & hill scores, race
   predictions … and the past, backfilled.
+- **Garmin's official Personal API** — with a key you create in Garmin Connect: no password, no
+  MFA. Together with the sign-in the bridge uses both, and nothing is missing –
+  [which data comes from where](https://github.com/futureweb/garmin-intervals-bridge#which-data-comes-from-where).
 - **And more** — your Garmin gear (bikes, shoes, skis) on the activities, ImReady4's daily
   training advice, 20 ready-made charts, a web page, a note or push message when it needs
   you. It runs quietly in the background on your own computer, NAS or server.
@@ -19,8 +22,8 @@
   – original activity files, every day's wellness, the watch's own files – in a folder of yours.
 
 > **Why:** since late September 2026 Garmin strips its own metrics from the FIT files it
-> hands to partners. The bridge fetches the original from Garmin Connect, with your own
-> login, and completes the activity the official sync created — or, in
+> hands to partners. The bridge fetches the original from Garmin Connect – through Garmin's
+> official Personal API or with your own login – and completes the activity the official sync created — or, in
 > [swap mode](https://github.com/futureweb/garmin-intervals-bridge#modes), puts the original file into it.
 
 <p align="center">
@@ -47,7 +50,7 @@ The original file you can download from Garmin Connect still has them.
 
 This bridge is a small self-hosted service that:
 
-- fetches the **original FIT** through Garmin Connect's private API, byte-identical to the browser export;
+- fetches the **original FIT** through Garmin's official Personal API or with your Garmin Connect sign-in, byte-identical to the browser export;
 - finds the activity the **official sync already created** in Intervals.icu — the sync stays on, nothing is duplicated, deleted or recomputed;
 - adds exactly **what Garmin stripped**, into the custom fields and streams *you* have configured (Stamina curve, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Training Effect …);
 - fills the **daily wellness values the official sync does not deliver**: night SpO₂, respiration, sleeping heart rate, Body Battery, HRV details, sleep stages, stress, readiness, floors, scale data — and your **logged nutrition** (kcal, carbs, protein, fat);
@@ -69,13 +72,41 @@ from Docker Hub or as a Claude Desktop bundle; [more below](#use-it-with-an-ai-c
 | --- | --- | --- |
 | **Source** | Original FIT from Garmin Connect | Garmin's daily endpoints (up to 30 of them) |
 | **Target** | Your Intervals custom activity fields and custom streams, defined by you, read from your own definitions | Native Intervals wellness fields first, private `Garmin…` custom fields for the rest |
-| **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute load, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
-| **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow |
+| **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/quality/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute load, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
+| **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.0. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.1. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
+
+### Which data comes from where
+
+The bridge reads Garmin in two ways: with a **Personal API key** – Garmin's official interface for your
+own data, a key you create in Garmin Connect ([how](https://github.com/futureweb/garmin-intervals-bridge/blob/main/docs/PERSONAL_API.md)) – and with your **Garmin
+Connect sign-in**, the way the Garmin Connect web page reads it. `GARMIN_SOURCE=auto` (the default) uses
+what you have; with both, each takes its part:
+
+| Data | Sign-in | Key | Both: from |
+| --- | :---: | :---: | --- |
+| New activities and their original FIT – all of Garmin's metrics | ✓ | ✓ | key |
+| Activity extras: weather, splits, exercise sets | ✓ | – | sign-in |
+| Gear (bike, shoes) on the activities | ✓ | – | sign-in |
+| Daily summary: resting HR, steps, floors, calories, stress, intensity minutes, Body Battery | ✓ | ✓ | key |
+| HRV: night average, 5-minute high, 7-day average, baseline | ✓ | ✓ | key |
+| Sleep: duration, score and quality, stages, sleeping HR, SpO₂, respiration, stress | ✓ | ✓ | sign-in |
+| Sleep: skin temperature deviation, overnight Body Battery change | ✓ | – | sign-in |
+| Nutrition | ✓ | ✓ | key |
+| Hydration (the sweat loss: sign-in only) | ✓ | ✓ | sign-in |
+| Weight and body fat; fitness age | ✓ | ✓ | sign-in |
+| Training Readiness, recovery time, acute load | ✓ | – | sign-in |
+| VO₂max (running, cycling), endurance and hill scores, race predictions | ✓ | – | sign-in |
+| Health Snapshots and the watch's own wellness files | ✓ | – | sign-in |
+| Account backup: devices, records, workouts, training plans | ✓ | – | sign-in |
+
+With both, an expired sign-in doesn't stop what comes through the key, and while the key needs replacing,
+the sign-in brings the shared data.
+Field by field: [docs/FIELD_MAPPING.md](https://github.com/futureweb/garmin-intervals-bridge/blob/main/docs/FIELD_MAPPING.md) (column *Key alone*).
 
 ## How it works
 
@@ -352,7 +383,8 @@ empty `TrainingAdvice` (never one you or the script set, never a locked day),
 and writes nothing when the night's values or enough history are missing.
 `garmin-intervals-bridge imready4` shows today's advice with its reasoning,
 compares past days with what the field already holds, and fills days that have
-none. It is off by default. On the reference account it agrees with ImReady4's
+none – also from the web page (*Actions → The past*), for Home Assistant. It is
+off by default. On the reference account it agrees with ImReady4's
 own results on 97.6 % of 1,225 days; the details, the differences and how to
 set it up are in [docs/IMREADY4.md](docs/IMREADY4.md).
 
@@ -505,8 +537,9 @@ what it did last, the Garmin sign-in (MFA included – the way to renew an expir
 without a terminal), the settings (the API key can be replaced, never shown), when it looks
 for new activities with a *Check now* button, the gear and chart plans with a button to carry
 them out, the past (*Actions → The past*: a backfill of activities or wellness for a date range, optionally
-with swap, started in the background – no terminal needed, which matters in Home Assistant), today's training
-advice, the log. It
+with swap, or the training advice of earlier days, started in the background – no terminal needed, which
+matters in Home Assistant), today's training advice, the log. With a Personal API key alone it also says
+which data stay empty. It
 listens on 127.0.0.1 only, and the link it opens carries a random key, so neither other
 users of the computer nor web pages in your browser can use it.
 
@@ -672,12 +705,15 @@ the update hint, and the mail or ntfy server you set up for alerts – nothing e
 
 ## Legal note
 
-- The bridge signs in to Garmin Connect with **your** credentials and reads **your** data
-  through the same private endpoints the Garmin Connect web app uses. Garmin offers no
-  official API for personal use, and Garmin's [Terms of Use](https://www.garmin.com/en-US/legal/terms-of-use/)
-  prohibit automated access to the site. Using this tool is your decision and your risk; the
-  consequence Garmin's terms provide for is suspension of your Garmin account. No such case is
-  known for any of the long-standing open-source Garmin clients, but there is no guarantee.
+- With a **Personal API key**, the bridge reads **your** data through Garmin's official
+  [Personal API](https://developer.garmin.com/gc-developer-program/personal/personal-api/),
+  the interface Garmin offers for exactly that.
+- With the **sign-in**, the bridge signs in to Garmin Connect with **your** credentials and reads
+  **your** data through the same private endpoints the Garmin Connect web app uses. Garmin's
+  [Terms of Use](https://www.garmin.com/en-US/legal/terms-of-use/) prohibit automated access to the
+  site. Using the sign-in is your decision and your risk; the consequence Garmin's terms provide
+  for is suspension of your Garmin account. No such case is known for any of the long-standing
+  open-source Garmin clients, but there is no guarantee.
 - Keep the load modest. The defaults – one download per new activity, a few wellness reads a
   day, paced backfills – make the bridge behave like a person using the site. Don't shorten the
   pauses to hammer the API; it would hurt everyone using tools like this one.

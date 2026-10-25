@@ -4,7 +4,8 @@ Garmin filters the FIT files it sends to Intervals.icu. This app puts the data b
 Recovery Time, VO₂max, Training Effect … on every activity – syncs the wellness data the
 official integration misses, puts your Garmin gear on the activities, and can write
 ImReady4's training advice. Or, in backup mode, it simply keeps all your Garmin data here in
-Home Assistant, no Intervals needed.
+Home Assistant, no Intervals needed. It reads Garmin through Garmin's official Personal API with
+a key, with your Garmin Connect sign-in, or both – see below.
 
 ## First start
 

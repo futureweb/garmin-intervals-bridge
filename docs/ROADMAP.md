@@ -16,6 +16,10 @@ Where the bridge stands and where it goes. Ideas and reports:
 - **More:** gear from Garmin onto the activities, ImReady4's training advice and an
   experimental HRV-trend advice, 20 charts, a complete local archive – or *backup* mode
   without Intervals at all.
+- **Garmin, two ways in:** Garmin's official Personal API with a key, the Garmin Connect
+  sign-in, or both (hybrid: each takes its part; an expired sign-in doesn't stop the key's part,
+  and while the key needs replacing, the sign-in brings the shared data); reminders before a key
+  expires.
 - **Running it:** `setup` and autostart on Windows, Mac and Linux; containers for Synology,
   Unraid and Docker; a Home Assistant app; systemd units; a web page with the Garmin sign-in;
   alerts by calendar note, e-mail or push message.
@@ -35,6 +39,11 @@ Asked for in the [feature request](https://forum.intervals.icu/t/api-upload-a-fi
   should then stop saying Garmin's import, keeping the link to the Garmin activity.
 - **Being told about a new activity** (a webhook per API key, or an event stream) instead of
   asking every few minutes.
+
+Open between Garmin and Intervals.icu: what Intervals may still pass on through its API for
+data that came in through Garmin's – activities and, perhaps, wellness
+([forum](https://forum.intervals.icu/t/api-access-to-intervals-icu/609/883)). Files and values
+you upload yourself, as the upload mode and the wellness sync do, are not data from Garmin's API.
 
 ## Deliberately not
 

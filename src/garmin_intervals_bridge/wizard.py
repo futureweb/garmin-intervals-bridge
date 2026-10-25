@@ -45,7 +45,7 @@ from .gear import build_plan as build_gear_plan
 from .gear import load_config as load_gear_config
 from .gear import save_config as save_gear_config
 from .intervals import IntervalsClient
-from .personal import PersonalGarminSource
+from .personal import KEY_ALONE, PersonalGarminSource
 from .store import InstanceBusy, Store, single_instance
 
 HEADER = ("# Garmin -> Intervals.icu Bridge settings, written by `garmin-intervals-bridge setup`.\n"
@@ -295,7 +295,7 @@ def _garmin(p: Prompt, settings: Settings, source: Callable[..., Any]) -> Any | 
         direct.login(interactive=False)
         if effective_source(settings) == "hybrid":
             garmin._verify()
-        p.say("Personal API answered." if effective_source(settings) == "personal" else
+        p.say(f"Personal API answered. {KEY_ALONE}" if effective_source(settings) == "personal" else
               "Garmin Connect: signed in with the saved session.")
         return garmin
     except GarminLoginNeeded:

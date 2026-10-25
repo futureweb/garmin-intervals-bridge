@@ -250,6 +250,8 @@ def run_days(intervals: Any, start: date, end: date, *, apply: bool, overwrite: 
         results.append(apply_day(intervals, day, advice, record, apply=apply, overwrite=overwrite))
         if results[-1]["action"] == "written":
             time.sleep(advice_rules.WRITE_PAUSE)
+            if (written := sum(r["action"] == "written" for r in results)) % advice_rules.PROGRESS_EVERY == 0:
+                log.info("ImReady4 advice: %d days written so far, up to %s", written, day)
     out: dict = {"apply": apply, "from": start.isoformat(), "to": end.isoformat()}
     if problem:
         out["field"] = problem

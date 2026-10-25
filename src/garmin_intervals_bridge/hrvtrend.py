@@ -217,6 +217,8 @@ def run_days(intervals: Any, start: date, end: date, *, apply: bool, overwrite: 
                                  overwrite=overwrite))
         if results[-1]["action"] == "written":
             time.sleep(advice_rules.WRITE_PAUSE)
+            if (written := sum(r["action"] == "written" for r in results)) % advice_rules.PROGRESS_EVERY == 0:
+                log.info("HRV trend advice: %d days written so far, up to %s", written, day)
         day += timedelta(days=1)
     out: dict = {"apply": apply, "from": start.isoformat(), "to": end.isoformat()}
     if created:
@@ -227,6 +229,11 @@ def run_days(intervals: Any, start: date, end: date, *, apply: bool, overwrite: 
     if details or not compare:
         out["days"] = results
     return out
+
+
+def _label(value: int) -> str:
+    """An advice's name; a TrainingAdvice value outside 1-4 (typed in, another script) as it is."""
+    return VALUES.get(value, str(value))
 
 
 def comparison(results: list[dict]) -> dict:
@@ -241,10 +248,10 @@ def comparison(results: list[dict]) -> dict:
     imready = [r.get("imready4") for r in results]
     return {"days_with_both": len(both),
             "same_advice": sum(1 for r in both if r["value"] == r["imready4"]),
-            "trend": {VALUES[k]: v for k, v in sorted(Counter(v for v in trend if v).items())},
-            "imready4": {VALUES[k]: v for k, v in sorted(Counter(v for v in imready if v).items())},
+            "trend": {_label(k): v for k, v in sorted(Counter(v for v in trend if v).items())},
+            "imready4": {_label(k): v for k, v in sorted(Counter(v for v in imready if v).items())},
             "changes_day_to_day": {"trend": changes(trend), "imready4": changes(imready)},
-            "pairs": {f"{VALUES[a]}/{VALUES[b]}": n for (a, b), n in sorted(
+            "pairs": {f"{_label(a)}/{_label(b)}": n for (a, b), n in sorted(
                 Counter((r["imready4"], r["value"]) for r in both).items())},
             "pairs_note": "ImReady4/trend"}
 

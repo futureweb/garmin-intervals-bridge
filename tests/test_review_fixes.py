@@ -117,6 +117,21 @@ def test_watch_skips_the_poll_when_the_lock_is_held(tmp_path, monkeypatch):
                 pass
 
 
+def test_advice_commands_wait_for_the_scheduled_wellness_run(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRIDGE_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("GARMIN_TOKEN_DIR", str(tmp_path / "tokens"))
+    monkeypatch.setenv("INTERVALS_API_KEY", "not-a-real-key")
+    from garmin_intervals_bridge import cli, hrvtrend
+    ran = []
+    monkeypatch.setattr(hrvtrend, "run_days", lambda *a, **k: ran.append(1) or {})
+    monkeypatch.setattr(cli, "BUSY_WAIT_SECONDS", 0)
+    with single_instance(tmp_path, ("wellness",)):                     # the scheduled run writes the advice
+        assert main(["hrvtrend", "--from", "2026-10-01", "--apply"]) == 1 and ran == []
+        assert main(["hrvtrend", "--from", "2026-10-01", "--compare"]) == 0 and ran == [1]   # a preview reads only
+    ran.clear()
+    assert main(["hrvtrend", "--from", "2026-10-01", "--apply"]) == 0 and ran == [1]
+
+
 # ---- a later success ends the failure bookkeeping ----
 
 def test_successful_enrich_clears_an_earlier_failure(tmp_path, monkeypatch):
@@ -329,15 +344,16 @@ def test_short_activity_window_costs_one_request(tmp_path):
     assert src.client.calls[-1][0] == "by_date"
 
 
-def test_todays_resting_hr_waits_for_tomorrow():
+def test_todays_resting_hr_is_the_nights_and_a_finished_days_the_days():
     from test_mapping import sample
-    stats = sample()["data"]["stats"]
-    if "restingHeartRate" not in stats:
-        pytest.skip("sample has no resting HR")
+    src = sample()
+    src["data"]["sleep"]["restingHeartRate"] = 46
     today = date(2026, 10, 8)
-    nat_today, _ = map_wellness(sample(), today, today)
-    nat_past, _ = map_wellness(sample(), date(2026, 10, 7), today)
-    assert "restingHR" not in nat_today and nat_past["restingHR"] == stats["restingHeartRate"]
+    nat_today, _ = map_wellness(src, today, today)
+    nat_past, _ = map_wellness(src, date(2026, 10, 7), today)
+    assert nat_today["restingHR"] == 46 and nat_past["restingHR"] == src["data"]["stats"]["restingHeartRate"]
+    del src["data"]["sleep"]["restingHeartRate"]                  # the Personal API's sleep has none
+    assert map_wellness(src, today, today)[0]["restingHR"] == src["data"]["stats"]["restingHeartRate"]
 
 
 def test_garmin_requests_are_counted(tmp_path):

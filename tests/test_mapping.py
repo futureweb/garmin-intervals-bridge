@@ -40,6 +40,15 @@ def test_wellness_maps_scales_without_conflation():
     assert custom["GarminCarbsKcal"] == 1122 and custom["GarminProteinKcal"] == 472 and custom["GarminFatKcal"] == 812
 
 
+def test_sleep_quality_follows_the_official_imports_scale():
+    for key, quality in (("EXCELLENT", 1), ("GOOD", 2), ("FAIR", 3), ("POOR", 4)):
+        src = sample()
+        src["data"]["sleep"]["dailySleepDTO"]["sleepScores"]["overall"]["qualifierKey"] = key
+        nat, _ = map_wellness(src, date(2026, 10, 8), date(2026, 10, 8))     # the night counts today
+        assert nat["sleepQuality"] == quality
+    assert "sleepQuality" not in map_wellness(sample(), date(2026, 10, 7), date(2026, 10, 8))[0]
+
+
 def test_status_metrics_of_the_running_day_come_from_this_mornings_records():
     src = sample()
     src["data"].update({"endurance_score": {"calendarDate": "2026-10-08", "overallScore": 6942},
