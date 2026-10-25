@@ -11,7 +11,7 @@ from typing import Any
 from . import hrvtrend, imready4
 from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
-from .fit import sha256, validate_fit, wellness_bundle_index
+from .fit import InvalidFIT, sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .intake import intake_values, write_intake
 from .intervals import rate_limited, refused
@@ -32,7 +32,10 @@ log = logging.getLogger(__name__)
 
 
 def _error_name(exc: BaseException) -> str:
-    """The error's type and, when it has one, the HTTP status: a log line that says what happened."""
+    """The error's type and, when it has one, the HTTP status: a log line that says what happened.
+    A refused FIT file names its reason (fixed texts, no data from the file)."""
+    if isinstance(exc, InvalidFIT):
+        return f"InvalidFIT ({exc})"
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status is None:
         found = re.search(r"\b(?:API Error|HTTP) (\d{3})\b", str(exc))

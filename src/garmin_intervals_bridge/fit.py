@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from garmin_fit_sdk import Decoder, Stream
+from garmin_fit_sdk.crc_calculator import CrcCalculator
 
 
 class InvalidFIT(ValueError):
@@ -60,7 +61,7 @@ def fit_segments(data: bytes) -> list[bytes]:
 
 
 def validate_fit(data: bytes) -> None:
-    """Structural check followed by the SDK's CRC check of header and data, per segment."""
+    """Structural check followed by the CRC check of header and data, per segment."""
     segments = fit_segments(data)
     if not segments:
         raise InvalidFIT("Empty download: no FIT file in it")
@@ -68,8 +69,19 @@ def validate_fit(data: bytes) -> None:
         decoder = Decoder(Stream.from_byte_array(bytearray(segment)))
         if not decoder.is_fit():
             raise InvalidFIT("Not a FIT file according to the SDK")
-        if not decoder.check_integrity():
-            raise InvalidFIT("FIT CRC check failed")
+        _check_crcs(segment)
+
+
+def _check_crcs(segment: bytes) -> None:
+    """The SDK's integrity check, except for a header CRC of 0: the FIT protocol lets a device leave
+    it out (older ones such as the Edge 510 do), and the SDK counts it as a failed check."""
+    size = segment[0]
+    header_crc = struct.unpack_from("<H", segment, 12)[0] if size == 14 else 0
+    if header_crc and header_crc != CrcCalculator.calculate_crc(segment, 0, 12):
+        raise InvalidFIT("FIT header CRC check failed")
+    end = len(segment) - 2                       # fit_segments cut the segment at header + data + CRC
+    if struct.unpack_from("<H", segment, end)[0] != CrcCalculator.calculate_crc(segment, 0, end):
+        raise InvalidFIT("FIT CRC check failed")
 
 
 def extract_original_fit(download: bytes) -> bytes:

@@ -1,8 +1,10 @@
 import io
+import struct
 import zipfile
 
 import pytest
-from garmin_fit_sdk import Encoder, Profile
+from garmin_fit_sdk import Decoder, Encoder, Profile, Stream
+from garmin_fit_sdk.crc_calculator import CrcCalculator
 
 from garmin_intervals_bridge.fit import (
     InvalidFIT,
@@ -65,6 +67,32 @@ def test_fit_rejects_corrupted_data_via_crc():
     data[20] ^= 0xFF  # flip a byte inside the data section; length stays right
     with pytest.raises(InvalidFIT, match="CRC"):
         validate_fit(bytes(data))
+
+
+def test_a_header_crc_of_zero_means_not_computed():
+    data = bytearray(build_fit())
+    assert data[0] == 14
+    data[12:14] = b"\x00\x00"                  # as older devices such as the Edge 510 write it,
+    end = len(data) - 2                          # with the file CRC over that header
+    data[end:] = struct.pack("<H", CrcCalculator.calculate_crc(data, 0, end))
+    assert not Decoder(Stream.from_byte_array(bytearray(data))).check_integrity()    # the SDK refuses it
+    validate_fit(bytes(data))                    # the FIT protocol allows it
+    decode_fit(bytes(data))
+    data[20] ^= 0xFF
+    with pytest.raises(InvalidFIT, match="^FIT CRC check failed"):
+        validate_fit(bytes(data))                # the data is still checked
+
+
+def test_a_wrong_header_crc_is_still_refused():
+    data = bytearray(build_fit())
+    data[12] ^= 0xFF
+    with pytest.raises(InvalidFIT, match="header CRC"):
+        validate_fit(bytes(data))
+
+
+def test_the_log_names_why_a_fit_was_refused():
+    from garmin_intervals_bridge.sync import _error_name
+    assert _error_name(InvalidFIT("FIT CRC check failed")) == "InvalidFIT (FIT CRC check failed)"
 
 
 def test_fit_rejects_multiple_entries():
