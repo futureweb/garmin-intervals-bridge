@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.2 — 2026-10-26
+
+Originals of older devices such as the Edge 510 go through.
+
+### Fixed
+
+- **Originals of older devices such as the Edge 510** were refused as `InvalidFIT`: their FIT
+  header leaves its own checksum at 0, which the FIT protocol allows ("not computed"), but
+  Garmin's Python SDK counts as a failed check. The bridge now accepts it; a header checksum
+  other than 0 and the checksum over the whole file are still checked. Such activities go
+  through with the next run or backfill (thanks JEFFREY_OHARA).
+- A refused file's log line names the reason – "InvalidFIT (FIT CRC check failed)" – instead
+  of the type alone.
+
 ## 0.12.1 — 2026-10-25
 
 Without the official wellness import, today's resting HR in the morning; sleep quality; the
