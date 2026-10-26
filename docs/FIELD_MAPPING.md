@@ -53,7 +53,8 @@ sodium and no grams of carbohydrate, and no time of each intake.
 ## Wellness: an explicit, unit-checked table
 
 Only scalars with reviewed meaning are written, and only where the day has
-no value yet. Locked days are skipped. Running totals of the current day
+no value yet – except `GarminKcalBalance`, the bridge's own derived field, which
+follows the intake in Intervals (see its row). Locked days are skipped. Running totals of the current day
 wait until tomorrow. Recovery time, acute load and the status metrics
 (endurance and hill scores, cycling VO₂max, fitness age, race predictions)
 are written in the morning as Garmin reports them then and replaced by the
@@ -93,7 +94,7 @@ sign-in, and with both (hybrid) nothing is missing.
 | `carbohydrates`, `protein`, `fatTotal` | nutrition `dailyNutritionContent.carbs/protein/fat` | g | ✓ |
 | `GarminCarbsKcal`, `GarminProteinKcal`, `GarminFatKcal` (custom) | the same grams x 4 / 4 / 9 (Atwater factors) | kcal; only for the stacked macro chart, whose percentages are then the energy share Garmin shows | ✓ |
 | `GarminTotalCalories` (custom) | `stats.totalKilocalories` (BMR + active) | kcal; the "burn" side of intake vs. burn | ✓ |
-| `GarminKcalBalance` (custom) | `kcalConsumed - GarminTotalCalories`, finished days with logged food only | kcal; weekly / monthly totals in the energy-balance charts | ✓ |
+| `GarminKcalBalance` (custom) | `kcalConsumed - GarminTotalCalories`, finished days with an intake – the one in Intervals, also from another app or typed in later: the daily run keeps the last 7 days in line, `kcal-balance` older ones | kcal; weekly / monthly totals in the energy-balance charts | ✓ |
 | `weight` | `body_composition.dateWeightList[].weight / 1000` | kg | ✓ |
 | `bodyFat` | `body_composition.dateWeightList[].bodyFat` | % | ✓ |
 

@@ -35,6 +35,7 @@ from .sources import activity_step, garmin_source, remember_direct_profile, sour
 from .store import InstanceBusy, Store, single_instance
 from .sync import (
     backfill_intake,
+    kcal_balance,
     restore_intake,
     sync_activities,
     sync_enrich,
@@ -238,6 +239,13 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Create the two fields if missing and write days whose HRVTrendAdvice is empty")
     trend.add_argument("--overwrite", action="store_true", help="Also replace existing HRVTrendAdvice values")
     trend.add_argument("--details", action="store_true", help="With --compare: list every day too")
+    balance = sub.add_parser("kcal-balance", help="The energy balance GarminKcalBalance from the intake Intervals "
+                                                   "holds (also typed in) minus Garmin's burn, for finished days; "
+                                                   "the scheduled run keeps the last 7 days in line (dry run unless "
+                                                   "--apply)")
+    balance.add_argument("--from", dest="start", help="YYYY-MM-DD (default: 7 days ago)")
+    balance.add_argument("--to", dest="end", help="YYYY-MM-DD (default: yesterday)")
+    balance.add_argument("--apply", action="store_true", help="Write the days whose balance is missing or differs")
     status = sub.add_parser("status", help="Show pending uploads requiring manual reconciliation")
     status.add_argument("--check", action="store_true",
                         help="Exit 1 when the bridge has stopped working (no run for twice the expected time) – "
@@ -707,8 +715,8 @@ def main(argv: list[str] | None = None) -> int:
                        # one activity on request: next to a running `run`, writes are idempotent
                        else ("enrich",) if args.cmd in ("enrich", "swap")
                        # the advice fields are the scheduled wellness run's too: never both at once
-                       else ("wellness",) if args.cmd in ("imready4", "hrvtrend") and args.apply
-                       else () if args.cmd in ("imready4", "hrvtrend")      # a preview writes nothing
+                       else ("wellness",) if args.cmd in ("imready4", "hrvtrend", "kcal-balance") and args.apply
+                       else () if args.cmd in ("imready4", "hrvtrend", "kcal-balance")   # a preview writes nothing
                        # read-only diagnosis must work next to a running `run`: no shared state written
                        else () if args.cmd in ("status", "snapshot-account", "gap")
                        else ("activities",))
@@ -717,7 +725,8 @@ def main(argv: list[str] | None = None) -> int:
         for lock_scope in lock_scopes:
             try:
                 _take_part(settings.data_dir, lock_scope, locks, log,
-                           wait=BUSY_WAIT_SECONDS if args.cmd in ("backfill", "imready4", "hrvtrend") else 0)
+                           wait=BUSY_WAIT_SECONDS if args.cmd in ("backfill", "imready4", "hrvtrend", "kcal-balance")
+                           else 0)
                 held.append(lock_scope)
             except InstanceBusy as exc:
                 if args.cmd not in ("watch", "sync"):
@@ -783,6 +792,16 @@ def main(argv: list[str] | None = None) -> int:
                         log.info("%s %s to %s: %s", args.cmd, start, end,
                                  ", ".join(f"{n} {action}" for action, n in (out.get("actions") or {}).items()))
                     print(json.dumps(out, indent=2, ensure_ascii=False))
+                    return 0
+                if args.cmd == "kcal-balance":
+                    intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    yesterday = datetime.now(settings.timezone).date() - timedelta(days=1)
+                    end = min(date.fromisoformat(args.end), yesterday) if args.end else yesterday
+                    start = date.fromisoformat(args.start) if args.start else end - timedelta(days=6)
+                    if start > end:
+                        raise ValueError("--from must not be after --to (and only finished days count)")
+                    out = kcal_balance(intervals, start, end, apply=args.apply)
+                    print(json.dumps(out, indent=2))
                     return 0
                 if args.cmd == "gear":
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)

@@ -62,6 +62,7 @@ class Intervals:
         self.records = {}
         self.gets = []
         self.writes = []
+        self.ranges = []
 
     def wellness(self, day):
         self.gets.append(day)
@@ -70,6 +71,10 @@ class Intervals:
     def write_wellness(self, day, changes):
         self.writes.append((day, changes))
         self.records.setdefault(day, {}).update(changes)
+
+    def wellness_range(self, oldest, newest, cols=None):
+        self.ranges.append((oldest, newest))
+        return [{"id": d.isoformat(), **r} for d, r in sorted(self.records.items()) if oldest <= d <= newest]
 
     def provision_fields(self, apply, needed):
         return list(needed)
@@ -606,4 +611,65 @@ def test_a_value_written_again_into_a_cleared_field_is_the_bridges(tmp_path):
     _days_resting_hr(g, 47)
     _final_read(tmp_path, st, g, i)
     assert i.records[TODAY]["restingHR"] == 47
+    st.close()
+
+
+# ---- the energy balance follows the intake Intervals holds ----
+
+def test_kcal_balance_writes_what_differs_and_leaves_the_rest():
+    from garmin_intervals_bridge.sync import kcal_balance
+    i = Intervals()
+    days = [TODAY - timedelta(days=n) for n in range(1, 6)]
+    i.records = {days[0]: {"kcalConsumed": 4000, "GarminTotalCalories": 2650},                   # typed in, no balance
+                 days[1]: {"kcalConsumed": 2500, "GarminTotalCalories": 2600, "GarminKcalBalance": -100},   # right
+                 days[2]: {"kcalConsumed": 3000, "GarminTotalCalories": 2600, "GarminKcalBalance": -100},   # corrected
+                 days[3]: {"GarminTotalCalories": 2600},                                         # nothing logged
+                 days[4]: {"kcalConsumed": 3000, "GarminTotalCalories": 2600, "locked": True}}
+    dry = kcal_balance(i, days[-1], days[0], apply=False)
+    assert dry["would write"] == {days[0].isoformat(): 1350, days[2].isoformat(): 400} and i.writes == []
+    assert (dry["same"], dry["without"], dry["locked"]) == (1, 1, 1)
+    done = kcal_balance(i, days[-1], days[0], apply=True)
+    assert done["written"] == dry["would write"]
+    assert i.records[days[0]]["GarminKcalBalance"] == 1350 and i.records[days[2]]["GarminKcalBalance"] == 400
+    assert "GarminKcalBalance" not in i.records[days[4]]
+
+
+def test_the_scheduled_check_does_it_once_a_day_after_yesterdays_final_read(tmp_path):
+    st, g, i = fresh(tmp_path)
+    st.mark_wellness(YESTERDAY, written=True)                                       # its final values are in
+    i.records[YESTERDAY] = {"kcalConsumed": 4000, "GarminTotalCalories": 2650}       # typed in after the final read
+    run(tmp_path, st, g, i, at(1))
+    assert i.records[YESTERDAY]["GarminKcalBalance"] == 1350
+    assert i.ranges == [(TODAY - timedelta(days=7), YESTERDAY)]
+    run(tmp_path, st, g, i, at(3))
+    assert len(i.ranges) == 1                                   # once a day
+    st.close()
+
+
+def test_the_balance_check_follows_a_final_read_in_the_same_run(tmp_path):
+    st, g, i = fresh(tmp_path)
+    st.delete_meta(f"wellness:final:{YESTERDAY}", 2e9)                    # yesterday not read finally yet
+    i.records[YESTERDAY] = {"kcalConsumed": 4000}
+    g.last_sync = f"{TODAY}T05:00:00"                                    # the watch synced after midnight
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if "stats" in raw["data"] and day == YESTERDAY:
+            raw["data"]["stats"]["totalKilocalories"] = 2650
+        return raw
+    g.snapshot = snapshot
+    i.records[TODAY] = {"steps": 100}                                    # the official import: touched
+    m = run(tmp_path, st, g, i, at(8, 0))
+    assert m["final"] == 1 and i.records[YESTERDAY]["GarminKcalBalance"] == 1350
+    st.close()
+
+
+def test_a_failed_final_write_keeps_the_balance_check_waiting(tmp_path):
+    st, g, i = fresh(tmp_path)
+    st.mark_wellness(YESTERDAY)                                          # read again, its write still failing
+    i.records[YESTERDAY] = {"kcalConsumed": 4000, "GarminTotalCalories": 2650}
+    i.write_wellness = lambda day, changes: (_ for _ in ()).throw(RuntimeError("Intervals is down"))
+    run(tmp_path, st, g, i, at(8, 0))
+    assert i.ranges == [] and not st.get_meta(f"wellness:balance:{TODAY}")
     st.close()

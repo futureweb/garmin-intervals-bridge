@@ -1079,8 +1079,17 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     night_read = bool(morning) or not _garmin_nights(store, current)
     advice_due = night_read and (imready4.due(settings, store, current, now_ts, apply=apply)
                                  or hrvtrend.due(settings, store, current, now_ts, apply=apply))
+    # once a day, when yesterday's final values are in Intervals: the energy balance of the last days
+    # follows the intake Intervals holds (asked again at the end: this check may finish yesterday)
+    balance_key = f"wellness:balance:{current}"
+
+    def balance_ready() -> bool:
+        yesterday = current - timedelta(days=1)
+        return bool(apply and not store.get_meta(balance_key) and store.get_meta(f"wellness:final:{yesterday}")
+                    and store.wellness_state(yesterday)[1] is not None)
+    balance_due = balance_ready()
     if (morning and not watching and not pending_past and not readiness_due and not unwritten and not files_due
-            and not advice_due):
+            and not advice_due and not balance_due):
         return metrics
     last = float(store.get_meta("wellness:check") or 0)        # the time of the last check, as the caller has it
     if throttle and not unwritten and not files_due and last and 0 <= now_ts - last < CHECK_MINUTES * 60 - 5:
@@ -1268,6 +1277,18 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
                     raise
                 log.warning("%s for %s failed: %s", key, current, _error_name(exc))
 
+    if balance_ready():
+        try:
+            done = kcal_balance(intervals, current - timedelta(days=BALANCE_DAYS), current - timedelta(days=1),
+                                apply=apply)
+            if done["written"]:
+                metrics["balance"] = done["written"]
+            store.set_meta(balance_key, "done")
+        except Exception as exc:                         # never at the cost of the wellness run; next check again
+            if rate_limited(exc) is not None:
+                raise
+            log.warning("Energy balance check failed: %s", _error_name(exc))
+
     if store.get_meta("wellness:pruned") != current.strftime("%Y-%m"):
         store.delete_meta("wellness:*:20*", now_ts - 40 * 86400)     # per-day bookkeeping, once a month
         store.delete_meta("imready4:*20*", now_ts - 40 * 86400)
@@ -1275,6 +1296,44 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         store.set_meta("wellness:pruned", current.strftime("%Y-%m"))
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
     return metrics
+
+
+BALANCE_DAYS = 7                # finished days whose energy balance the daily check keeps in line
+
+
+def kcal_balance(intervals: Any, start: date, end: date, *, apply: bool) -> dict:
+    """`GarminKcalBalance` = the intake Intervals holds minus Garmin's total burn, for finished days.
+
+    The intake may come from Garmin, another app or a value typed in later; the balance (the bridge's
+    own field) follows it, so weekly and monthly totals include it. One Intervals request for the range,
+    one write per day that differs; no Garmin request. Days without intake or burn, and locked days,
+    are left alone."""
+    rows = intervals.wellness_range(start, end, cols=["kcalConsumed", "GarminTotalCalories", "GarminKcalBalance",
+                                                      "locked"])
+    done = "written" if apply else "would write"
+    out: dict = {"days": len(rows), done: {}, "same": 0, "without": 0, "locked": 0}
+    plan = {}
+    for row in rows:
+        consumed = number(row.get("kcalConsumed"), low=1, high=20000)
+        burned = number(row.get("GarminTotalCalories"), low=1, high=30000)
+        if consumed is None or burned is None:
+            out["without"] += 1
+        elif row.get("locked") is True:
+            out["locked"] += 1
+        elif (want := round(consumed - burned)) == row.get("GarminKcalBalance"):
+            out["same"] += 1
+        else:
+            plan[str(row.get("id"))] = want
+    if plan and apply:
+        intervals.provision_fields(apply=True, needed={"GarminKcalBalance"})
+    for day, value in plan.items():
+        if apply:
+            intervals.write_wellness(date.fromisoformat(day), {"GarminKcalBalance": value})
+            time.sleep(0.25)
+        out[done][day] = value
+    if apply and plan:
+        log.info("Energy balance of %s from the intake in Intervals", ", ".join(sorted(plan)))
+    return out
 
 
 def _try_swap(settings: Any, gid: str, iid: str, garmin: Any, intervals: Any, store: Store, metrics: dict, *,

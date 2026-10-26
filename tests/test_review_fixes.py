@@ -128,6 +128,7 @@ def test_advice_commands_wait_for_the_scheduled_wellness_run(tmp_path, monkeypat
     with single_instance(tmp_path, ("wellness",)):                     # the scheduled run writes the advice
         assert main(["hrvtrend", "--from", "2026-10-01", "--apply"]) == 1 and ran == []
         assert main(["hrvtrend", "--from", "2026-10-01", "--compare"]) == 0 and ran == [1]   # a preview reads only
+        assert main(["kcal-balance", "--apply"]) == 1                    # writes: waits for the wellness run
     ran.clear()
     assert main(["hrvtrend", "--from", "2026-10-01", "--apply"]) == 0 and ran == [1]
 

@@ -2,7 +2,7 @@
 import json
 import re
 from dataclasses import replace
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -251,7 +251,8 @@ def test_hybrid_backup_personal_pause_still_archives_direct_data(settings, store
     monkeypatch.setattr(cli, "_source", lambda *a, **kw: g)
     assert cli.run_backup_loop(settings, store, every_minutes=5, iterations=1) == 0
     assert "account" in g.direct.calls and any(isinstance(call, tuple) for call in g.direct.calls)
-    raw = store.load_snapshot(datetime.now(timezone.utc).date() - timedelta(days=1))
+    # the day before yesterday: always due (yesterday only from noon on), whatever the time of day
+    raw = store.load_snapshot(datetime.now(settings.timezone).date() - timedelta(days=2))
     assert raw["data"] and "sleep" in raw["data"] and raw["errors"]
     assert p.requests == 0
 

@@ -33,7 +33,7 @@ import threading
 import time
 import webbrowser
 from collections import deque
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -59,7 +59,7 @@ from .personal import AUTH_WAIT_KEY, KEY_ALONE_MISSING, PersonalGarminSource
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import garmin_source, remember_direct_profile, source_status
 from .store import InstanceBusy, Store, single_instance
-from .sync import restore_intake
+from .sync import kcal_balance, restore_intake
 from .wizard import command_name
 
 log = logging.getLogger(__name__)
@@ -986,7 +986,9 @@ class UI:
             '<label>What <select name="scope"><option value="activities">Activities</option>'
             '<option value="wellness">Wellness</option>'
             '<option value="hrvtrend">Training advice: HRV trend (with the comparison to ImReady4)</option>'
-            '<option value="imready4">Training advice: ImReady4</option></select></label>'
+            '<option value="imready4">Training advice: ImReady4</option>'
+            '<option value="balance">Energy balance from the intake in Intervals (also typed in)</option>'
+            '</select></label>'
             f'<label>From <input type="date" name="start" required max="{today}"></label>'
             f'<label>To <input type="date" name="end" value="{today}" max="{today}"></label>'
             '<label><input type="checkbox" name="swap" value="1"> Activities: swap – the original file into Garmin\'s '
@@ -997,8 +999,8 @@ class UI:
     def _backfill_request(self, form: dict) -> tuple[dict | None, str]:
         """The request from the form, checked; (None, why) when it does not make sense."""
         scope = form.get("scope", "")
-        if scope not in ("activities", "wellness", *ADVICE_SCOPES):
-            return None, "Choose activities, wellness or a training advice."
+        if scope not in ("activities", "wellness", "balance", *ADVICE_SCOPES):
+            return None, "Choose activities, wellness, a training advice or the energy balance."
         try:
             start = date.fromisoformat(form.get("start", ""))
             end = date.fromisoformat(form.get("end") or date.today().isoformat())
@@ -1020,6 +1022,8 @@ class UI:
         days = (request["end"] - request["start"]).days + 1
         if request["scope"] in ADVICE_SCOPES:
             return self._advice_plan(session, request, days)
+        if request["scope"] == "balance":
+            return self._balance_plan(session, request)
         if request["scope"] == "wellness":
             plan = (f"Wellness for {days} days ({request['start']} to {request['end']}): about 15 Garmin requests "
                     f"per day, two seconds apart – roughly {max(1, round(days * 10 / 60))} minutes. Days the bridge "
@@ -1039,6 +1043,24 @@ class UI:
                          (("scope", request["scope"]), ("start", request["start"]), ("end", request["end"]),
                           ("swap", "1" if request["swap"] else "")))
         return self.form(session, "/actions/backfill-start", hidden, "Start it – writes to Intervals")
+
+    def _balance_plan(self, session: Session, request: dict) -> str:
+        """What `kcal-balance` would write: one Intervals request, finished days only."""
+        settings = self.settings()
+        end = min(request["end"], datetime.now(settings.timezone).date() - timedelta(days=1))
+        try:
+            out = kcal_balance(self._intervals(settings), request["start"], end, apply=False)
+        except Exception as exc:
+            log.warning("Energy balance plan not shown: %s", exc)
+            return self.actions_page(session, f'<p class="bad">The plan could not be made: {esc(type(exc).__name__)} '
+                                     '(the <a href="/log">Log</a> has more).</p>')
+        plan = out.get("would write") or {}
+        text = (f"Energy balance {request['start']} to {end}: <b>{len(plan)}</b> days get the balance of the intake "
+                f"Intervals holds minus Garmin's burn; {out['same']} are right already, {out['without']} have no "
+                "intake or burn" + (f", {out['locked']} are locked" if out["locked"] else "") + ".")
+        start = (self._backfill_start_form(session, {**request, "end": end}) if plan else
+                 '<p class="muted">Nothing to write.</p>')
+        return self.page(session, "The past", f'<section><p>{text}</p>{start}</section>')
 
     def _advice_plan(self, session: Session, request: dict, days: int) -> str:
         """What filling in a training advice would do, from one dry run: Intervals requests only."""
@@ -1077,8 +1099,9 @@ class UI:
             job = self._backfill_running()
             if job is not None and job["exit"] is None:
                 return self.actions_page(session, '<p class="warn">A backfill from this page is still running.</p>')
-            if request["scope"] in ADVICE_SCOPES:
-                cmd = [sys.executable, "-m", "garmin_intervals_bridge", request["scope"],
+            if request["scope"] in ADVICE_SCOPES or request["scope"] == "balance":
+                command = "kcal-balance" if request["scope"] == "balance" else request["scope"]
+                cmd = [sys.executable, "-m", "garmin_intervals_bridge", command,
                        "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
             else:
                 cmd = [sys.executable, "-m", "garmin_intervals_bridge", "backfill", "--scope", request["scope"],
@@ -1087,8 +1110,9 @@ class UI:
                 cmd += ["--mode", "upload"]
             if request["swap"]:
                 cmd.append("--swap")
-            label = (f"{ADVICE_SCOPES[request['scope']][0] if request['scope'] in ADVICE_SCOPES else request['scope']}"
-                     f" {request['start']} to {request['end']}" + (" with swap" if request["swap"] else ""))
+            name = (ADVICE_SCOPES[request["scope"]][0] if request["scope"] in ADVICE_SCOPES
+                    else "energy balance" if request["scope"] == "balance" else request["scope"])
+            label = f"{name} {request['start']} to {request['end']}" + (" with swap" if request["swap"] else "")
             try:
                 proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
                                         **({} if os.name == "nt" else {"start_new_session": True}))

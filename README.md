@@ -58,7 +58,8 @@ This bridge is a small self-hosted service that:
 - reacts within minutes of the official import (it asks Intervals every 5 minutes – or, [adaptive](#how-often-it-looks), mostly around the hours you usually finish an activity), with Garmin contacted only when there is something new.
 
 Everything is a dry run until you say `--apply`. Values that exist are never
-overwritten unless they demonstrably came from a filtered file.
+overwritten unless they demonstrably came from a filtered file – apart from the
+bridge's own derived values, such as the energy balance that follows your intake.
 
 **Sister project:** the [Futureweb Intervals MCP](https://github.com/futureweb/intervals-mcp-server)
 lets ChatGPT, Claude and any other MCP client read and analyse everything the bridge writes:
@@ -212,6 +213,7 @@ run is exactly what `--apply` would send.
 | `gear [--prefer intervals\|evidence\|garmin] [--map G=I] [--create] [--apply]` | Put Garmin's gear (bikes, shoes, skis …) on the Intervals activities, from the archive; see [Gear](#gear). |
 | `imready4 [--date D \| --from D [--to D]] [--compare] [--apply] [--overwrite]` | ImReady4-compatible training advice into `TrainingAdvice`: preview, comparison with existing values, filling the past; see [Training advice](#training-advice-imready4). |
 | `hrvtrend [--date D \| --from D [--to D]] [--compare] [--apply] [--overwrite]` | Experimental trend advice into its own field `HRVTrendAdvice`, compared with ImReady4's; see [docs/HRV_TREND.md](docs/HRV_TREND.md). |
+| `kcal-balance [--from D] [--to D] [--apply]` | The energy balance `GarminKcalBalance` from the intake Intervals holds – also one typed in later – minus Garmin's burn, for finished days. The scheduled run keeps the last 7 days in line; this is for older ones (also on the web page, *Actions → The past*). |
 | `run [--apply] [--mode …] [--poll-seconds N] [--sync-minutes N]` | Keep running in one process: a poll every 5 minutes (see [How often it looks](#how-often-it-looks)), a full run every 30 minutes, the daily health check (what autostart, the containers and the Home Assistant app start). See [Running it](#running-it). |
 | `status [--check]` | Pending uploads and failed activities with their retry time. `--check`: exit 1 when the bridge has stopped working – no run for twice the expected time (the container image's healthcheck). |
 | `reset-pending --activity-id <garmin id>` | Upload mode: clear a pending upload after you checked Intervals by hand. |

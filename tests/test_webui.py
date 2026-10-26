@@ -587,6 +587,28 @@ def test_the_past_fills_in_a_training_advice_after_showing_the_comparison(page, 
     assert cmd[cmd.index("--from") + 1] == "2026-09-01" and cmd[cmd.index("--to") + 1] == "2026-10-15"
 
 
+def test_the_past_puts_the_energy_balance_in_line_with_the_intake(page, monkeypatch):
+    FakeProcess.started = []
+    monkeypatch.setattr(webui.subprocess, "Popen", FakeProcess)
+    seen = []
+
+    def plan(intervals, start, end, *, apply):
+        seen.append((start, end, apply))
+        return {"days": 5, "would write": {"2026-09-24": 1350, "2026-09-25": 803}, "same": 2, "without": 1,
+                "locked": 0}
+    monkeypatch.setattr(webui, "kcal_balance", plan)
+    cookie = signed_in(page)
+    text = call(page, "GET", "/actions", cookie=cookie)[2]
+    assert 'value="balance"' in text
+    form = {"csrf": csrf(text), "scope": "balance", "start": "2026-09-20", "end": "2026-09-30"}
+    out = call(page, "POST", "/actions/backfill", form, cookie=cookie)[2]
+    assert seen == [(date(2026, 9, 20), date(2026, 9, 30), False)] and "<b>2</b> days" in out
+    assert "2 are right already" in out and "Start it" in out and FakeProcess.started == []
+    call(page, "POST", "/actions/backfill-start", form, cookie=cookie)
+    cmd = FakeProcess.started[0].cmd
+    assert cmd[1:4] == ["-m", "garmin_intervals_bridge", "kcal-balance"] and "--apply" in cmd
+
+
 def test_a_training_advice_with_nothing_to_write_offers_no_start(page, monkeypatch):
     monkeypatch.setattr(webui.imready4, "run_days",
                         lambda *a, **k: {"actions": {"keep": 5}, "field": "TrainingAdvice does not exist"})
@@ -604,7 +626,7 @@ def test_the_past_refuses_what_makes_no_sense(page, monkeypatch):
     token = csrf(call(page, "GET", "/actions", cookie=cookie)[2])
     for form, why in (({"scope": "wellness", "start": "2026-10-10", "end": "2026-10-01"}, "must not be after"),
                       ({"scope": "wellness", "start": "2099-01-01", "end": "2099-01-02"}, "future"),
-                      ({"scope": "everything", "start": "2026-01-01"}, "Choose activities, wellness or a training"),
+                      ({"scope": "everything", "start": "2026-01-01"}, "Choose activities, wellness, a training"),
                       ({"scope": "wellness", "start": "yesterday"}, "YYYY-MM-DD")):
         text = call(page, "POST", "/actions/backfill-start", {"csrf": token, **form}, cookie=cookie)[2]
         assert why in text
