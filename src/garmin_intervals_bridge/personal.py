@@ -26,10 +26,10 @@ DAY_KEYS = frozenset(("stats", "sleep", "hrv", "body_battery", "nutrition", "hyd
 HYBRID_KEYS = frozenset(("stats", "hrv", "body_battery", "nutrition"))
 PAUSE_KEY = "personal:paused_until"
 AUTH_WAIT_KEY = "notice:personal_authorization"
-KEY_ALONE_MISSING = ("Training Readiness, recovery time, acute load and training status; VO2max, endurance and "
-                     "hill scores and race predictions; the night's skin temperature and Body Battery change; sweat "
-                     "loss; Health Snapshots and the watch's own wellness files; gear and the activity extras "
-                     "(weather, splits, exercise sets); the account backup")
+KEY_ALONE_MISSING = ("Training Readiness, recovery time, acute and chronic load and training status; VO2max, "
+                     "endurance and hill scores and race predictions; the night's skin temperature and Body Battery "
+                     "change; sweat loss; Health Snapshots and the watch's own wellness files; gear and the activity "
+                     "extras (weather, splits, exercise sets); the account backup")
 KEY_ALONE = (f"With the Personal API key alone these stay empty: {KEY_ALONE_MISSING}. "
              "To get them, sign in to Garmin Connect as well, with the Garmin source auto or hybrid.")
 COVERAGE = ("Personal API coverage: activities and supported daily wellness; partial sleep and account data. "

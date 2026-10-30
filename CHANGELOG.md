@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.12.3 — 2026-10-30
+
+Garmin's chronic load and load ratio; the energy balance follows the intake in Intervals; a file
+that fails the FIT check every time no longer raises an alert every day.
+
+### Added
+
+- **Garmin's chronic load, the load ratio and the optimal range of the acute load** (thanks
+  JEFFREY_OHARA): four wellness fields next to `GarminAcuteLoad` – `GarminChronicLoad`,
+  `GarminLoadRatio` (acute:chronic) and `GarminAcuteLoadOptimalLow` / `…High`, the range Garmin
+  draws from the chronic load. They come from Garmin's training status of a finished day (the
+  primary device's), read with the day's final read – no extra Garmin request. The archive has
+  them for every day read in full, so `backfill --scope wellness --from-archive` fills in the past
+  without asking Garmin. A device without Training Readiness now gets `GarminAcuteLoad` from the
+  training status as well.
+- **Wellness from the archive on the web page:** *Actions → The past → Wellness from the archive*
+  does what `backfill --from-archive` does – fields a new version added, for days read before,
+  without a Garmin request. For Home Assistant, which has no terminal.
+
+### Changed
+
+- **The energy balance follows the intake in Intervals.** `GarminKcalBalance` was written only
+  from Garmin's nutrition at a day's final read, so an intake typed into Intervals later, or
+  from another app, never reached the weekly and monthly balance charts. Once a day, after
+  yesterday's final read, the scheduled run reads the last 7 finished days (one Intervals
+  request, none to Garmin) and writes the balance where it is missing or differs – not on locked
+  days, not without intake or burn. `kcal-balance` and the web page's *Actions → The past →
+  Energy balance* do it for older days.
+- **After an update, failed activities are tried again right away** instead of waiting out
+  their pause – up to a week: those of the last days at the next run, older ones a few per run
+  (in enrich mode). A fix in the new version reaches them that much sooner.
+
+### Fixed
+
+- **An activity whose FIT file fails its check every time no longer raises an alert every day**
+  (thanks anderfo). A refused file is checked again after 10 minutes and after an hour; when the
+  very same file comes a third time and fails again, it isn't a broken download but the file as
+  Garmin keeps it. The bridge then gives the activity up instead of asking for it every week, and
+  the daily health check names it once ("activities given up") instead of "failing repeatedly"
+  every day. An empty answer or an error page never counts. `status` lists such activities under
+  `given_up_activities`; an update of the bridge, or `enrich` of that one activity, tries again.
+
 ## 0.12.2 — 2026-10-26
 
 Originals of older devices such as the Edge 510 go through.

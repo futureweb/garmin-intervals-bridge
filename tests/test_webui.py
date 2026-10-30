@@ -609,6 +609,21 @@ def test_the_past_puts_the_energy_balance_in_line_with_the_intake(page, monkeypa
     assert cmd[1:4] == ["-m", "garmin_intervals_bridge", "kcal-balance"] and "--apply" in cmd
 
 
+def test_the_past_maps_wellness_from_the_archive_without_asking_garmin(page, monkeypatch):
+    FakeProcess.started = []
+    monkeypatch.setattr(webui.subprocess, "Popen", FakeProcess)
+    cookie = signed_in(page)
+    text = call(page, "GET", "/actions", cookie=cookie)[2]
+    assert 'value="archive"' in text
+    form = {"csrf": csrf(text), "scope": "archive", "start": "2026-01-01", "end": "2026-01-31"}
+    plan = call(page, "POST", "/actions/backfill", form, cookie=cookie)[2]
+    assert "Wellness for 31 days" in plan and "no Garmin request" in plan and FakeProcess.started == []
+    text = call(page, "POST", "/actions/backfill-start", form, cookie=cookie)[2]
+    assert "wellness from the archive 2026-01-01 to 2026-01-31" in text
+    cmd = FakeProcess.started[0].cmd
+    assert cmd[cmd.index("--scope") + 1] == "wellness" and "--from-archive" in cmd and "--apply" in cmd
+
+
 def test_a_training_advice_with_nothing_to_write_offers_no_start(page, monkeypatch):
     monkeypatch.setattr(webui.imready4, "run_days",
                         lambda *a, **k: {"actions": {"keep": 5}, "field": "TrainingAdvice does not exist"})

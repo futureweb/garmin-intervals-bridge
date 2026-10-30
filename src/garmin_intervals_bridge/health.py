@@ -45,6 +45,7 @@ ENDPOINT_ERROR_DAYS = 3
 DROPOUT_BASELINE_DAYS = 7
 DROPOUT_MIN_BASELINE = 5
 DROPOUT_MISSING_DAYS = 2
+GIVEN_UP = "activities given up"   # the list of those named before: information, not a warning
 # Raw sources that exist only when the athlete logs something (scale, food and drink log) or
 # starts it (Health Snapshot): their absence is no dropout.
 USER_LOGGED = ("body_composition", "nutrition", "hydration", "health_snapshots")
@@ -121,10 +122,13 @@ def probe(settings: Any, garmin: Any, intervals: Any, store: Any, *, now: float 
         report["findings"].append(update)
     for f in report["findings"]:
         # the day summary is information, not a warning
-        level = (log.error if f["alert"] else log.info if f["what"] in ("last 24 h", "Personal API coverage")
+        level = (log.error if f["alert"] else log.info if f["what"] in ("last 24 h", "Personal API coverage", GIVEN_UP)
                  else log.warning)
         level("%s: %s", f["what"], f["detail"])
-    alerts.health(settings, store, report["findings"], _today(settings).isoformat())
+    sent = alerts.health(settings, store, report["findings"], _today(settings).isoformat())
+    told = [gid for f in report["findings"] for gid in f.get("invalid_ids", ())]
+    if told and (sent or not alerts.channels(settings)):
+        store.mark_invalid_told(told)                  # named once: by its alert, or (no channel) in the log
     if any(f["alert"] for f in report["findings"]):
         report["exit"] = 2
     return report
@@ -206,10 +210,24 @@ def silent_error_checks(settings: Any, store: Any, *, now: float | None = None) 
                              "detail": f"no {command} run recorded in the last {hours} h"})
 
     # 2) Activities that keep failing, uploads waiting for a human
-    failed = [f for f in store.failed_activities() if (f.get("attempts") or 0) >= 2]
+    # (one given up and named before, due again after an update, is not news)
+    failed = [f for f in store.failed_activities() if (f.get("attempts") or 0) >= 2 and not f["given_up_before"]]
     if failed:
         findings.append({"alert": True, "what": f"{len(failed)} activities failing repeatedly",
                          "detail": "; ".join(f"{f['garmin_id']}: {f['error']}" for f in failed[:5])})
+    # Given up (the same file refused three times in a row): named once as an alert, then only listed
+    invalid = store.invalid_activities()
+    new = [f for f in invalid if not f["told"]]
+    if new:
+        findings.append({"alert": True, "what": f"{len(new)} activities given up",
+                         "detail": "the same file came again and again and fails the FIT check every time, so the "
+                                   "bridge stopped asking (an update tries again): "
+                                   + "; ".join(f"{f['garmin_id']}: {f['error']}" for f in new[:5]),
+                         "invalid_ids": [f["garmin_id"] for f in new]})
+    if len(invalid) > len(new):
+        told = [f["garmin_id"] for f in invalid if f["told"]]
+        findings.append({"alert": False, "what": GIVEN_UP,
+                         "detail": f"{len(told)}, their file fails the FIT check every time: " + ", ".join(told[:10])})
     pending = store.pending_activities()
     if pending:
         findings.append({"alert": True, "what": f"{len(pending)} uploads pending reconciliation",

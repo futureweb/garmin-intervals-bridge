@@ -22,7 +22,10 @@ from garmin_fit_sdk.crc_calculator import CrcCalculator
 
 
 class InvalidFIT(ValueError):
-    pass
+    """A file that is no valid FIT. `digest`: the SHA-256 of a refused file that looks like a FIT (header
+    and magic) but fails its check – the same digest refused again and again is the file itself, not
+    the transfer. An empty answer or an error page carries none: it says nothing about the file."""
+    digest: str | None = None
 
 
 # Size guard for anything we are asked to decode. Device activity files are a
@@ -85,7 +88,21 @@ def _check_crcs(segment: bytes) -> None:
 
 
 def extract_original_fit(download: bytes) -> bytes:
-    """The ORIGINAL Garmin Connect export is normally a ZIP containing a FIT."""
+    """The ORIGINAL Garmin Connect export is normally a ZIP containing a FIT.
+
+    A FIT that fails its check carries its SHA-256 (of the FIT itself: a ZIP around the same file
+    need not be the same bytes twice)."""
+    data = _unpack(download)
+    try:
+        validate_fit(data)
+    except InvalidFIT as exc:
+        if len(data) >= 14 and data[0] in (12, 14) and data[8:12] == b".FIT":
+            exc.digest = sha256(data)
+        raise
+    return data
+
+
+def _unpack(download: bytes) -> bytes:
     if zipfile.is_zipfile(io.BytesIO(download)):
         with zipfile.ZipFile(io.BytesIO(download)) as z:
             entries = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(".fit")]
@@ -101,7 +118,6 @@ def extract_original_fit(download: bytes) -> bytes:
         data = download
     if len(data) > MAX_FIT_BYTES:
         raise InvalidFIT(f"Unexpectedly large FIT (>{MAX_FIT_BYTES // 2**20} MB)")
-    validate_fit(data)
     return data
 
 

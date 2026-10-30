@@ -112,6 +112,7 @@ definitions with the same code are reused, never changed.
 | `BodyBatteryMax`, `BodyBatteryMin` | `stats.bodyBatteryHighestValue/LowestValue` | both | ✓ |
 | `GarminBodyBatteryCharged`, `GarminBodyBatteryDrained` | `body_battery[].charged/drained` | both | ✓ |
 | `GarminTrainingReadiness`, `GarminRecoveryTimeMinutes`, `GarminAcuteLoad` | readiness: the morning's score; recovery and load of the morning, replaced by the evening's | both | – |
+| `GarminChronicLoad`, `GarminLoadRatio`, `GarminAcuteLoadOptimalLow`, `…High` | Garmin's training status of a finished day, the primary device's entry, of that day (`daily_training_status` → `acuteTrainingLoadDTO`): chronic load, acute:chronic ratio, and the optimal range of the acute load that Garmin draws from the chronic load; a device without Training Readiness gets `GarminAcuteLoad` from there too | both | – |
 | `GarminHRV5MinHigh`, `GarminHRV7DayAvg` | `hrv.hrvSummary` | both | ✓ |
 | `GarminSleepDeepMinutes`, `…REMMinutes`, `…LightMinutes`, `…AwakeMinutes` | sleep stages / 60 | both | ✓ |
 | `GarminSleepStressAvg`, `GarminSkinTempDeviationC` | sleep | both | stress ✓, skin temperature – |

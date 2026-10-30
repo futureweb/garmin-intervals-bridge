@@ -750,7 +750,8 @@ def main(argv: list[str] | None = None) -> int:
                 if args.cmd == "status":
                     print(json.dumps({**source_status(settings, store),
                                       "pending_garmin_activity_ids": store.pending_activities(),
-                                      "failed_activities": store.failed_activities()}, indent=2))
+                                      "failed_activities": store.failed_activities(),
+                                      "given_up_activities": store.invalid_activities()}, indent=2))
                     return 0
                 if args.cmd == "reset-pending":
                     if not args.activity_id.isdecimal() or store.activity_status(args.activity_id) != "pending":
@@ -886,6 +887,7 @@ def main(argv: list[str] | None = None) -> int:
                         gid, iid = resolve_one(intervals, args.intervals_id)
                     plan = enrich_activity(gid, garmin, intervals, store, apply=args.apply, intervals_id=iid,
                                            refresh_own=True, recheck=True)
+                    store.clear_failure(gid)              # it went through: no longer failed or given up
                     if plan.get("intervals_id"):
                         plan["intake"] = restore_intake(gid, plan["intervals_id"], intervals, store, apply=args.apply)
                     print(json.dumps(plan, indent=2, default=str))

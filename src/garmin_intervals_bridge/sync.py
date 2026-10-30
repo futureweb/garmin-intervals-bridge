@@ -25,7 +25,7 @@ from .mapping import (
     snapshot_corrections,
 )
 from .sources import merge_snapshot, supports
-from .store import InstanceBusy, Store
+from .store import REFUSED_TIMES, InstanceBusy, Store
 from .times import external_id_names, parse_utc
 
 log = logging.getLogger(__name__)
@@ -41,6 +41,18 @@ def _error_name(exc: BaseException) -> str:
         found = re.search(r"\b(?:API Error|HTTP) (\d{3})\b", str(exc))
         status = found.group(1) if found else None
     return f"{type(exc).__name__} (HTTP {status})" if status else type(exc).__name__
+
+
+def _record_failure(store: Store, gid: str, exc: BaseException) -> int | None:
+    """Book a failed activity for its retry; None when it is given up instead – the same FIT file
+    was refused REFUSED_TIMES times in a row, so asking again would not help (logged here)."""
+    attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}", refused=getattr(exc, "digest", None))
+    if store.activity_status(gid) != "invalid":
+        return attempts
+    log.warning("Activity %s given up: the same file came %d times and fails the FIT check every time (%s); "
+                "no more retries – the health check names it once, an update of the bridge tries it again",
+                gid, REFUSED_TIMES, _error_name(exc))
+    return None
 
 
 _time = parse_utc
@@ -515,6 +527,7 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
     """Upload mode: every Garmin activity Intervals does not have is uploaded as the athlete's
     own file. `date_range` replaces the lookback for a backfill; `pause_seconds` paces it.
     `catch_up` (the scheduled full runs): after a pause, back to the bridge's last run."""
+    store.retry_after_update()
     if not date_range:
         resume_direct_archives(garmin, store)
     if date_range:
@@ -574,10 +587,11 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
                 log.error("Upload of %s ended with %s; outcome unknown, left pending for manual check",
                           gid, _error_name(exc))
                 continue
-            attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}")
+            attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
-            log.warning("Activity %s failed with %s (attempt %d); retrying later with backoff",
-                        gid, _error_name(exc), attempts)
+            if attempts is not None:
+                log.warning("Activity %s failed with %s (attempt %d); retrying later with backoff",
+                            gid, _error_name(exc), attempts)
     if catch_up and not date_range and not metrics["failed"]:
         caught_up(store, "activities")                 # a failed one keeps the window: retried in it
     return metrics
@@ -600,6 +614,7 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
     net (late imports, retries, new field definitions) and is skipped while the last one
     is younger than this, unless a failed activity is due for its retry.
     """
+    store.retry_after_update()
     if not date_range:
         resume_direct_archives(garmin, store)
     if catch_up and not date_range and not archive_only:
@@ -677,9 +692,10 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
-            attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}")
+            attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
-            log.warning("Enrich %s failed with %s (attempt %d); retrying later", gid, _error_name(exc), attempts)
+            if attempts is not None:
+                log.warning("Enrich %s failed with %s (attempt %d); retrying later", gid, _error_name(exc), attempts)
             continue
         store.clear_failure(gid)
         outcome = result["outcome"]
@@ -724,10 +740,11 @@ def _retry_overdue(garmin: Any, intervals: Any, store: Store, metrics: dict, lis
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
-            attempts = store.record_failure(gid, f"{type(exc).__name__}: {exc}")
+            attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
-            log.warning("Retry of %s (outside the scan window) failed with %s (attempt %d)", gid, _error_name(exc),
-                        attempts)
+            if attempts is not None:
+                log.warning("Retry of %s (outside the scan window) failed with %s (attempt %d)", gid,
+                            _error_name(exc), attempts)
             continue
         store.clear_failure(gid)
         metrics[result["outcome"]] = metrics.get(result["outcome"], 0) + 1
@@ -1426,10 +1443,10 @@ def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *,
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
-            store.record_failure(external, f"{type(exc).__name__}: {exc}")
             metrics["failed"] += 1
-            log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry",
-                        external, _error_name(exc))
+            if _record_failure(store, external, exc) is not None:
+                log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry",
+                            external, _error_name(exc))
             continue
         store.clear_failure(external)
         metrics[result["outcome"]] += 1

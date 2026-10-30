@@ -12,7 +12,7 @@ from pathlib import Path
 
 from . import __version__
 
-ACTIVITY_STATUSES = ("downloaded", "pending", "uploaded", "remote_exists", "failed", "skipped")
+ACTIVITY_STATUSES = ("downloaded", "pending", "uploaded", "remote_exists", "failed", "skipped", "invalid")
 
 # States a later *failure* must never downgrade: an upload whose outcome is
 # unknown stays pending (manual reconciliation), a completed upload stays done.
@@ -25,6 +25,22 @@ GUARDED_STATUSES = ("pending", "uploaded")
 # right after the watch syncs, Garmin sometimes answers with a server error for
 # an activity it serves fine minutes later.
 RETRY_BACKOFF_SECONDS = (600, 3600, 6 * 3600, 24 * 3600, 7 * 86400)
+
+# A FIT file refused again and again with the very same bytes is no broken download: it is the
+# file as Garmin keeps it, and asking again brings it again. It is checked twice more, after 10
+# minutes and after an hour; refused the third time, the activity is given up ("invalid"): no
+# more retries, and the daily health check names it once instead of every day. An update of the
+# bridge gives it, and every failed activity, one fresh try (its check may have changed).
+REFUSED_TIMES = 3
+REFUSED_KEY = "refused_fit:"          # + Garmin id: "<SHA-256 of the file last refused> <times in a row>"
+TOLD_KEY = "refused_fit_told:"        # + Garmin id: the health check has named it
+VERSION_KEY = "failures:version"      # the version that last gave the failures their fresh try
+
+
+def _release(text: str | None) -> tuple[int, ...] | None:
+    """'0.12.3' -> (0, 12, 3); anything else (a development version) -> None."""
+    parts = (text or "").split(".")
+    return tuple(int(p) for p in parts) if all(p.isdecimal() for p in parts) else None
 
 
 class InstanceBusy(RuntimeError):
@@ -64,6 +80,18 @@ class Store:
             self.db.execute("ALTER TABLE enrichment ADD COLUMN mapping TEXT")  # 0.2.0: field definitions used
         self.db.commit()
 
+    def retry_after_update(self) -> int:
+        """Once per newer version: every failed or given-up activity is due again, its count kept.
+        Called by the activity runs, not on opening: an older process still running next to a
+        newer one (a web page started before the update) must not undo the newer one's backoff."""
+        current, done = _release(__version__), _release(self.get_meta(VERSION_KEY))
+        if current is None or (done is not None and done >= current):
+            return 0
+        cursor = self.db.execute("""UPDATE activity SET status='failed', next_retry=NULL
+                                    WHERE status IN ('failed','invalid')""")
+        self.set_meta(VERSION_KEY, __version__)
+        return cursor.rowcount
+
     def activity_intervals_id(self, garmin_id: str) -> str | None:
         """The Intervals activity the bridge enriched or uploaded for this Garmin activity, if any."""
         for table in ("enrichment", "activity"):
@@ -84,7 +112,8 @@ class Store:
     def record_activity(self, garmin_id: str, status: str, sha: str | None = None,
                         intervals_id: str | None = None) -> None:
         """Record a non-failure outcome; this also clears any earlier failure bookkeeping."""
-        assert status in ACTIVITY_STATUSES and status != "failed"
+        assert status in ACTIVITY_STATUSES and status not in ("failed", "invalid")
+        self.db.execute("DELETE FROM meta WHERE key IN (?,?)", (REFUSED_KEY + garmin_id, TOLD_KEY + garmin_id))
         self.db.execute("""INSERT INTO activity (garmin_id,status,sha256,intervals_id,updated)
             VALUES (?,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET
             status=excluded.status,sha256=excluded.sha256,
@@ -93,11 +122,13 @@ class Store:
                         (garmin_id, status, sha, intervals_id, time.time()))
         self.db.commit()
 
-    def record_failure(self, garmin_id: str, error: str) -> int:
+    def record_failure(self, garmin_id: str, error: str, *, refused: str | None = None) -> int:
         """Mark one activity as failed with exponential backoff; returns the attempt count.
 
         Guarded states are left untouched so that an upload with an unknown
-        outcome is never turned into a retryable failure.
+        outcome is never turned into a retryable failure. `refused` is the SHA-256 of
+        a FIT file that failed its check: it is checked again soon, and refused
+        REFUSED_TIMES times in a row the activity is given up (status "invalid").
         """
         row = self.db.execute("SELECT status, attempts FROM activity WHERE garmin_id=?",
                               (garmin_id,)).fetchone()
@@ -106,32 +137,61 @@ class Store:
         attempts = (int(row[1]) if row else 0) + 1
         delay = RETRY_BACKOFF_SECONDS[min(attempts, len(RETRY_BACKOFF_SECONDS)) - 1]
         now = time.time()
+        given_up = False
+        if refused:
+            last, _, times = (self.get_meta(REFUSED_KEY + garmin_id) or "").partition(" ")
+            times = int(times) + 1 if last == refused and times.isdecimal() else 1
+            self.set_meta(REFUSED_KEY + garmin_id, f"{refused} {times}")
+            given_up = times >= REFUSED_TIMES
+            if times > 1 or not last:
+                # the first refusal, or the same file again: checked again soon, whatever the count before
+                # (a file that differs every time is a transfer problem and keeps the usual backoff)
+                delay = RETRY_BACKOFF_SECONDS[min(times, len(RETRY_BACKOFF_SECONDS)) - 1]
         self.db.execute("""INSERT INTO activity (garmin_id,status,sha256,intervals_id,updated,attempts,next_retry,error)
-            VALUES (?,'failed',NULL,NULL,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET
-            status='failed',updated=excluded.updated,attempts=excluded.attempts,
+            VALUES (?,?,NULL,NULL,?,?,?,?) ON CONFLICT(garmin_id) DO UPDATE SET
+            status=excluded.status,updated=excluded.updated,attempts=excluded.attempts,
             next_retry=excluded.next_retry,error=excluded.error""",
-                        (garmin_id, now, attempts, now + delay, error[:200]))
+                        (garmin_id, "invalid" if given_up else "failed", now, attempts,
+                         None if given_up else now + delay, error[:200]))
         self.db.commit()
         return attempts
 
     def is_deferred(self, garmin_id: str, now: float | None = None) -> bool:
-        """True while a failed activity is still inside its backoff window."""
+        """True while a failed activity is still inside its backoff window, and for a given-up one."""
         row = self.db.execute("SELECT status, next_retry FROM activity WHERE garmin_id=?",
                               (garmin_id,)).fetchone()
+        if row and row[0] == "invalid":
+            return True
         if not row or row[0] != "failed" or row[1] is None:
             return False
         return (now if now is not None else time.time()) < row[1]
 
     def clear_failure(self, garmin_id: str) -> None:
         """A later success ends the failure bookkeeping; guarded states are not touched."""
-        self.db.execute("""UPDATE activity SET status='downloaded', attempts=0, next_retry=NULL, error=NULL,
-                           updated=? WHERE garmin_id=? AND status='failed'""", (time.time(), garmin_id))
+        cursor = self.db.execute("""UPDATE activity SET status='downloaded', attempts=0, next_retry=NULL, error=NULL,
+                           updated=? WHERE garmin_id=? AND status IN ('failed','invalid')""", (time.time(), garmin_id))
+        if cursor.rowcount:
+            self.db.execute("DELETE FROM meta WHERE key IN (?,?)", (REFUSED_KEY + garmin_id, TOLD_KEY + garmin_id))
         self.db.commit()
 
     def failed_activities(self) -> list[dict]:
+        """`given_up_before`: its file was given up and named once; an update made it due again."""
         rows = self.db.execute("""SELECT garmin_id, attempts, next_retry, error FROM activity
-                                  WHERE status='failed' ORDER BY next_retry""")
-        return [{"garmin_id": r[0], "attempts": r[1], "next_retry": r[2], "error": r[3]} for r in rows]
+                                  WHERE status='failed' ORDER BY next_retry""").fetchall()
+        return [{"garmin_id": r[0], "attempts": r[1], "next_retry": r[2], "error": r[3],
+                 "given_up_before": self.get_meta(TOLD_KEY + r[0]) is not None} for r in rows]
+
+    def invalid_activities(self) -> list[dict]:
+        """Given-up activities (their FIT file is refused the same way every time), oldest first;
+        `told`: the health check has named it already."""
+        rows = self.db.execute("""SELECT garmin_id, error, updated FROM activity
+                                  WHERE status='invalid' ORDER BY updated""").fetchall()
+        return [{"garmin_id": r[0], "error": r[1], "since": r[2], "told": self.get_meta(TOLD_KEY + r[0]) is not None}
+                for r in rows]
+
+    def mark_invalid_told(self, garmin_ids: list[str]) -> None:
+        for garmin_id in garmin_ids:
+            self.set_meta(TOLD_KEY + garmin_id)
 
     def wellness_recent(self, day: date, hours: int, since: float | None = None) -> bool:
         """Fetched within `hours`, and (if given) not before `since`.

@@ -985,6 +985,7 @@ class UI:
         form = self.form(session, "/actions/backfill", (
             '<label>What <select name="scope"><option value="activities">Activities</option>'
             '<option value="wellness">Wellness</option>'
+            '<option value="archive">Wellness from the archive: fields an update added, no Garmin request</option>'
             '<option value="hrvtrend">Training advice: HRV trend (with the comparison to ImReady4)</option>'
             '<option value="imready4">Training advice: ImReady4</option>'
             '<option value="balance">Energy balance from the intake in Intervals (also typed in)</option>'
@@ -999,7 +1000,7 @@ class UI:
     def _backfill_request(self, form: dict) -> tuple[dict | None, str]:
         """The request from the form, checked; (None, why) when it does not make sense."""
         scope = form.get("scope", "")
-        if scope not in ("activities", "wellness", "balance", *ADVICE_SCOPES):
+        if scope not in ("activities", "wellness", "archive", "balance", *ADVICE_SCOPES):
             return None, "Choose activities, wellness, a training advice or the energy balance."
         try:
             start = date.fromisoformat(form.get("start", ""))
@@ -1024,7 +1025,11 @@ class UI:
             return self._advice_plan(session, request, days)
         if request["scope"] == "balance":
             return self._balance_plan(session, request)
-        if request["scope"] == "wellness":
+        if request["scope"] == "archive":
+            plan = (f"Wellness for {days} days ({request['start']} to {request['end']}) from what the bridge has "
+                    "archived – no Garmin request: the empty fields get Garmin's values, including fields an update "
+                    "added for days read before. Days not in the archive are left as they are.")
+        elif request["scope"] == "wellness":
             plan = (f"Wellness for {days} days ({request['start']} to {request['end']}): about 15 Garmin requests "
                     f"per day, two seconds apart – roughly {max(1, round(days * 10 / 60))} minutes. Days the bridge "
                     "has read before are skipped; only empty fields are filled.")
@@ -1104,14 +1109,18 @@ class UI:
                 cmd = [sys.executable, "-m", "garmin_intervals_bridge", command,
                        "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
             else:
-                cmd = [sys.executable, "-m", "garmin_intervals_bridge", "backfill", "--scope", request["scope"],
+                cmd = [sys.executable, "-m", "garmin_intervals_bridge", "backfill", "--scope",
+                       "wellness" if request["scope"] == "archive" else request["scope"],
                        "--from", request["start"].isoformat(), "--to", request["end"].isoformat(), "--apply"]
+            if request["scope"] == "archive":
+                cmd.append("--from-archive")
             if request["scope"] == "activities" and self.settings().mode == "upload":
                 cmd += ["--mode", "upload"]
             if request["swap"]:
                 cmd.append("--swap")
             name = (ADVICE_SCOPES[request["scope"]][0] if request["scope"] in ADVICE_SCOPES
-                    else "energy balance" if request["scope"] == "balance" else request["scope"])
+                    else "energy balance" if request["scope"] == "balance"
+                    else "wellness from the archive" if request["scope"] == "archive" else request["scope"])
             label = f"{name} {request['start']} to {request['end']}" + (" with swap" if request["swap"] else "")
             try:
                 proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL,
@@ -1186,6 +1195,7 @@ class UI:
                                        intervals=intervals, apply=apply)
                 plan = enrich_activity(gid, garmin, intervals, store, apply=apply, intervals_id=iid,
                                        refresh_own=True, recheck=True)
+                store.clear_failure(gid)                  # it went through: no longer failed or given up
                 intake = restore_intake(gid, iid, intervals, store, apply=apply)
         finally:
             store.close()

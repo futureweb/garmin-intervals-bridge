@@ -45,6 +45,12 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminIntensityVigorousMinutes": CustomField("Garmin Vigorous Intensity", "min"),
     "GarminStepsGoal": CustomField("Garmin Daily Steps Goal", "steps"),
     "GarminAcuteLoad": CustomField("Garmin Acute Training Load"),
+    # Garmin's load model from its training status: the chronic load, the acute:chronic ratio and the
+    # optimal range of the acute load (Garmin draws it from the chronic load)
+    "GarminChronicLoad": CustomField("Garmin Chronic Training Load"),
+    "GarminLoadRatio": CustomField("Garmin Acute:Chronic Load Ratio"),
+    "GarminAcuteLoadOptimalLow": CustomField("Garmin Acute Load Optimal Low"),
+    "GarminAcuteLoadOptimalHigh": CustomField("Garmin Acute Load Optimal High"),
     "GarminVO2MaxCycling": CustomField("Garmin Cycling VO2max", "ml/kg/min"),
     "GarminSleepDeepMinutes": CustomField("Garmin Deep Sleep", "min"),
     "GarminSleepREMMinutes": CustomField("Garmin REM Sleep", "min"),
@@ -134,6 +140,16 @@ def choose(obj: Any, *paths: tuple[str, ...], low=0, high=1000000) -> float | in
     return None
 
 
+def _training_status(raw: Any, target: date) -> dict:
+    """Garmin's training status of the day: the primary training device's entry (without one marked,
+    the only device's), of that very day – an entry from an earlier day is that day's load."""
+    entries = get(raw, "latestTrainingStatusData")
+    entries = [x for x in entries.values() if isinstance(x, dict)] if isinstance(entries, dict) else []
+    primary = [x for x in entries if x.get("primaryTrainingDevice") is True]
+    chosen = primary if primary else entries if len(entries) == 1 else []
+    return chosen[0] if chosen and chosen[0].get("calendarDate") == target.isoformat() else {}
+
+
 def _day_record(raw: Any, target: date) -> dict:
     """Select a day-specific score rather than an unrelated weekly aggregate."""
     if isinstance(raw, dict):
@@ -220,6 +236,18 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     if "GarminRecoveryTimeMinutes" in custom:
         custom["GarminRecoveryTimeHours"] = round(custom["GarminRecoveryTimeMinutes"] / 60, 1)
     put(custom, "GarminAcuteLoad", choose(load_source, ("acuteLoad",)), high=3000)
+    if target < today:
+        # Garmin's load model as of the day's end: its training status comes with the final read
+        load = _training_status(data.get("daily_training_status"), target).get("acuteTrainingLoadDTO") or {}
+        if "GarminAcuteLoad" not in custom:            # a device without Training Readiness: the status has it
+            put(custom, "GarminAcuteLoad", choose(load, ("dailyTrainingLoadAcute",), high=3000), high=3000)
+        put(custom, "GarminChronicLoad", choose(load, ("dailyTrainingLoadChronic",), high=3000), high=3000)
+        put(custom, "GarminLoadRatio", choose(load, ("dailyAcuteChronicWorkloadRatio",), high=10), high=10)
+        for code, key in (("GarminAcuteLoadOptimalLow", "minTrainingLoadChronic"),
+                          ("GarminAcuteLoadOptimalHigh", "maxTrainingLoadChronic")):
+            value = choose(load, (key,), high=5000)
+            if value is not None:
+                custom[code] = round(value)
     if target < today:
         # a run or ride later today may revise the day's estimate; the native field is never replaced
         put(native, "vo2max", choose(maximum, ("generic", "vo2MaxPreciseValue"),

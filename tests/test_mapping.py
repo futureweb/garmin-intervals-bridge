@@ -195,3 +195,29 @@ def test_values_final_only_at_the_end_of_the_day_and_unlogged_hydration_stays_em
     assert "weight" in nat_today and "weight" in nat_past                    # a weigh-in is final at once
     assert "hydrationVolume" not in nat_past and cus_past["GarminSweatLossLitres"] == 0.722
     assert nat_past["floorsClimbed"] == 14
+
+
+def test_chronic_load_ratio_and_optimal_range_of_a_finished_day():
+    src = sample()
+
+    def entry(day, chronic, primary):
+        return {"calendarDate": day, "primaryTrainingDevice": primary, "acuteTrainingLoadDTO": {
+            "dailyTrainingLoadAcute": 459, "dailyTrainingLoadChronic": chronic, "dailyAcuteChronicWorkloadRatio": 0.9,
+            "minTrainingLoadChronic": 388.8, "maxTrainingLoadChronic": 729.0, "acwrStatus": "OPTIMAL"}}
+
+    src["data"]["daily_training_status"] = {"latestTrainingStatusData": {
+        "1": entry("2026-10-07", 999, False), "2": entry("2026-10-07", 486, True)}}
+    _, custom = map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))
+    assert custom["GarminChronicLoad"] == 486 and custom["GarminLoadRatio"] == 0.9      # the primary device's
+    assert (custom["GarminAcuteLoadOptimalLow"], custom["GarminAcuteLoadOptimalHigh"]) == (389, 729)
+    _, today = map_wellness(src, date(2026, 10, 7), date(2026, 10, 7))
+    assert "GarminChronicLoad" not in today                    # comes with the day's final read
+    # one device, no primary flag: its entry; an entry of an earlier day is not this day's load
+    src["data"]["daily_training_status"] = {"latestTrainingStatusData": {"1": entry("2026-10-07", 486, None)}}
+    assert map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]["GarminChronicLoad"] == 486
+    # the acute load comes from Training Readiness; a device without it: from the training status
+    assert map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]["GarminAcuteLoad"] == 422
+    src["data"].pop("morning_readiness")
+    assert map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]["GarminAcuteLoad"] == 459
+    src["data"]["daily_training_status"] = {"latestTrainingStatusData": {"1": entry("2026-10-06", 486, True)}}
+    assert "GarminChronicLoad" not in map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]
