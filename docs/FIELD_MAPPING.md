@@ -59,7 +59,10 @@ name (177, 178, 179), and is written as soon as the bridge has the original.
 A drink logged later in the app is only in the summary, so that is read once
 more about twelve hours after the start (one request per activity) and fills
 what is still empty; `backfill --scope activities --from DATE --intake` fills
-the past from the archive without asking Garmin. Garmin records no sodium and
+the past from the archive without asking Garmin. It finds the Intervals activity
+by the Garmin id in its external id, else – Intervals' first Garmin import names
+Garmin's file, not the activity – by start and duration, only when exactly one
+copy of the official sync agrees. Garmin records no sodium and
 no grams of carbohydrate, and no time of each intake (the eat and drink markers
 in the file are the device's reminders).
 

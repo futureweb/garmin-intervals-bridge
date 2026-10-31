@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.6 — 2026-10-31
+
+The intake backfill finds the activities of Intervals' first Garmin import too, and pauses
+between activities.
+
+### Fixed
+
+- **`backfill --intake` finds the activities of Intervals' first Garmin import.** That import
+  names Garmin's file (`<user>_<file id>.fit`), not the activity, so these activities stayed
+  unmatched. The backfill now also takes the one copy of the official sync whose start and
+  duration agree, as the enrichment does – never when two agree.
+- **`backfill --intake` pauses between activities** (`--pause`, default 2 s): a few hundred in
+  a row drew an HTTP 429 from Intervals.
+
 ## 0.12.5 — 2026-10-31
 
 Food and drink entered on the device reach Intervals right after the activity, and every

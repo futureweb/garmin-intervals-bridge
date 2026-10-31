@@ -198,3 +198,32 @@ def test_an_unreadable_file_does_not_hold_up_the_summary(tmp_path, monkeypatch):
     complete_intake("42", activity, "i1", g, i, st, {}, apply=True, now=datetime(2026, 9, 21, 7, 0, tzinfo=timezone.utc))
     assert g.asked == 1 and i.updates == [("i1", EXPECTED)]
     st.close()
+
+
+def test_the_first_garmin_import_is_found_by_start_and_duration(tmp_path):
+    # Intervals' first Garmin import names Garmin's file, not the activity: start and duration decide
+    st = Store(tmp_path)
+    st.save_activity_json("44", {"summaryDTO": {"startTimeLocal": "2020-01-01T11:03:57.0",
+                                                "startTimeGMT": "2020-01-01T10:03:57.0", "duration": 3600.0,
+                                                "waterEstimated": 900.0}})
+    old = {"id": "i44", "external_id": "hellkeeper_46500740483.fit", "source": "GARMIN_CONNECT",
+           "start_date": "2020-01-01T10:04:01Z", "moving_time": 3550, "elapsed_time": 3700}
+    i = Intervals(listing=[old])
+    out = backfill_intake(i, st, start=date(2020, 1, 1), end=date(2020, 1, 31), apply=True)
+    assert out["written"] == 1 and i.updates == [("i44", {"GarminSweatLoss": 900, "GarminSweatRate": 900})]
+    # a watch and an Edge on the same ride agree both: no guess
+    twin = dict(old, id="i45", external_id="hellkeeper_46500740484.fit")
+    i = Intervals(listing=[old, twin])
+    st.set_meta("intake:44", "")
+    assert backfill_intake(i, st, start=date(2020, 1, 1), end=date(2020, 1, 31), apply=False)["unmatched"] == 1
+    st.close()
+
+
+def test_the_backfill_pauses_after_each_activity_it_reads(tmp_path, monkeypatch):
+    st, slept = Store(tmp_path), []
+    monkeypatch.setattr(sync.time, "sleep", slept.append)
+    st.save_activity_json("42", SUMMARY)
+    i = Intervals(listing=[{"id": "i42", "external_id": "42", "source": "GARMIN_CONNECT"}])
+    backfill_intake(i, st, start=date(2026, 9, 1), end=date(2026, 9, 30), apply=True, pause_seconds=2.0)
+    assert slept == [2.0]
+    st.close()

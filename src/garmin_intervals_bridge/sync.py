@@ -10,7 +10,7 @@ from typing import Any
 
 from . import hrvtrend, imready4
 from .config import Settings
-from .enrich import enrich_activity, load_field_mappings
+from .enrich import enrich_activity, exact_match, load_field_mappings, match_activity
 from .fit import InvalidFIT, decode_fit, sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .intake import fit_intake_values, intake_values, write_intake
@@ -315,11 +315,15 @@ def _complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin:
         log.warning("Intake of %s not written: %s; next run tries again", gid, _error_name(exc))
 
 
-def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, apply: bool) -> dict:
+def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, apply: bool,
+                    pause_seconds: float = 0) -> dict:
     """Intake and sweat fields for past activities from the archived Garmin summaries: no Garmin request.
 
     The Intervals activity is the one the bridge enriched or uploaded, else the one whose
-    external id names the Garmin activity (a bare number only from the official sync).
+    external id names the Garmin activity (a bare number only from the official sync), else the
+    one copy of the official sync whose start and duration agree: Intervals' first Garmin
+    import names Garmin's file (`<user>_<file id>.fit`), not the activity. `pause_seconds`
+    after each activity read from Intervals: a few hundred in a row draw an HTTP 429.
     """
     found = []
     for path in sorted((store.base / "raw" / "activities").glob("*.json")):
@@ -330,13 +334,15 @@ def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, app
             summary = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        day = str((summary.get("summaryDTO") or {}).get("startTimeLocal") or "")[:10]
+        dto = summary.get("summaryDTO") or {}
+        day = str(dto.get("startTimeLocal") or "")[:10]
         if start.isoformat() <= day <= end.isoformat() and (values := intake_values(summary)):
-            found.append((day, gid, values))
+            found.append((day, gid, values, {"activityId": gid, "startTimeGMT": dto.get("startTimeGMT"),
+                                             "duration": dto.get("duration")}))
     metrics = {"with_intake": len(found), "written": 0, "already": 0, "unmatched": 0}
     months: dict[str, list[dict]] = {}
     items = intervals.custom_items() if found else []      # read once: which fields exist, an own sweat field
-    for day, gid, values in found:
+    for day, gid, values, garmin in found:
         intervals_id = store.activity_intervals_id(gid)
         if not intervals_id:
             month = day[:7]
@@ -344,11 +350,9 @@ def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, app
                 first = date.fromisoformat(f"{month}-01")
                 after = date(first.year + (first.month == 12), first.month % 12 + 1, 1)
                 months[month] = intervals.activities(first - timedelta(days=1), after,
-                                                     fields=["id", "external_id", "source"])
-            match = next((a for a in months[month]
-                          if external_id_names(str(a.get("external_id") or ""), gid)
-                          and (str(a.get("source") or "").upper() == "GARMIN_CONNECT"
-                               or not str(a.get("external_id") or "").isdecimal())), None)
+                                                     fields=["id", "external_id", "source", "start_date",
+                                                             "moving_time", "elapsed_time"])
+            match = exact_match(months[month], gid) or match_activity(garmin, months[month])
             intervals_id = str(match["id"]) if match else None
         if not intervals_id:
             metrics["unmatched"] += 1
@@ -357,6 +361,8 @@ def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, app
         metrics["written" if written else "already"] += 1
         if apply:
             store.set_meta(f"intake:{gid}", json.dumps(values, sort_keys=True))
+        if pause_seconds:
+            time.sleep(pause_seconds)
     return metrics
 
 

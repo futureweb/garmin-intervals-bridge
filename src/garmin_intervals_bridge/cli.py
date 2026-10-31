@@ -1020,8 +1020,10 @@ def main(argv: list[str] | None = None) -> int:
                                             endpoints=endpoints, from_archive=args.from_archive,
                                             rewrite=rewrite or None)
                     elif args.intake:
-                        log.info("Backfill intake %s..%s from the archived summaries, no Garmin requests", start, end)
-                        out = backfill_intake(intervals, store, start=start, end=end, apply=args.apply)
+                        log.info("Backfill intake %s..%s from the archived summaries, no Garmin requests, "
+                                 "%.1fs pause", start, end, args.pause)
+                        out = backfill_intake(intervals, store, start=start, end=end, apply=args.apply,
+                                              pause_seconds=args.pause)
                     elif args.mode == "upload" and not args.archive_only:
                         log.info("Backfill activities %s..%s, UPLOAD mode: originals of activities Intervals "
                                  "does not have, %.1fs pause", start, end, args.pause)
