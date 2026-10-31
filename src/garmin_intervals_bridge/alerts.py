@@ -23,6 +23,8 @@ from typing import Any
 
 import requests
 
+from . import __version__
+
 log = logging.getLogger(__name__)
 
 # domain -> (server, port); the user name is the address itself
@@ -96,7 +98,7 @@ def send_email(settings: Any, subject: str, text: str, *, smtp: Any = None) -> N
     message["Subject"] = subject
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid(domain=(user.rsplit("@", 1)[-1] if "@" in user else None))
-    message.set_content(text + "\n\n-- \nSent by your garmin-intervals-bridge "
+    message.set_content(text + f"\n\n-- \nSent by your garmin-intervals-bridge {__version__} "
                         "(https://github.com/futureweb/garmin-intervals-bridge).\n")
     context = ssl.create_default_context()
     if smtp is None:
@@ -122,6 +124,7 @@ def send_push(settings: Any, subject: str, text: str, *, session: Any = None) ->
     token = str(getattr(settings, "ntfy_token", None) or "").strip()
     if token:
         headers["Authorization"] = f"Bearer {token}"
+    text = f"{text}\n(garmin-intervals-bridge {__version__})"
     response = (session or requests).post(url, data=text.encode("utf-8"), headers=headers, timeout=15)
     response.raise_for_status()
 

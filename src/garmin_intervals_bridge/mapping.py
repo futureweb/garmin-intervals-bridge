@@ -314,7 +314,8 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
 
     # Energy totals change all day; only import after the day has finished.
     if target < today:
-        put(native, "steps", choose(stats, ("totalSteps",), high=100000), high=100000)
+        # A day without a device reports 0 steps: no measurement, and Intervals refuses it (HTTP 422).
+        put(native, "steps", choose(stats, ("totalSteps",), low=1, high=100000), low=1, high=100000)
         floors = choose(stats, ("floorsAscended",), high=5000)
         if floors is not None:
             put(native, "floorsClimbed", round(floors), high=5000)      # Garmin reports a fraction

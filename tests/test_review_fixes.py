@@ -231,6 +231,25 @@ def test_archive_replay_maps_without_garmin(tmp_path):
     st.close()
 
 
+def test_archive_replay_names_days_read_without_training_status(tmp_path, caplog):
+    st = Store(tmp_path)
+    g, i = CountingGarmin(), IntervalsFake()
+    i.current_wellness = {"locked": False}
+    days = [date(2026, 10, 5), date(2026, 10, 6), date(2026, 10, 7)]
+    for day in days[:2]:
+        st.save_snapshot(day, GarminFake().snapshot(day))               # a backfill's default endpoints
+    full = GarminFake().snapshot(days[2])
+    full["data"]["daily_training_status"] = {}
+    st.save_snapshot(days[2], full)
+    with caplog.at_level("INFO"):
+        sync_wellness(settings(tmp_path), g, i, st, apply=False, days=days, today=date(2026, 10, 8),
+                      from_archive=True)
+    (hint,) = [r.getMessage() for r in caplog.records if "training status" in r.getMessage()]
+    assert hint.startswith("2 archived days (2026-10-05 to 2026-10-06)") and g.snapshots == []
+    assert "--from 2026-10-05 --to 2026-10-06 --endpoints daily_training_status --force-wellness" in hint
+    st.close()
+
+
 def test_one_days_intervals_error_does_not_end_the_run(tmp_path):
     st = Store(tmp_path)
     g, i = CountingGarmin(), IntervalsFake()

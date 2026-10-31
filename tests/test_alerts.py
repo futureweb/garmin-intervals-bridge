@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 import requests
 
-from garmin_intervals_bridge import alerts, cli, notices
+from garmin_intervals_bridge import __version__, alerts, cli, notices
 from garmin_intervals_bridge.store import Store
 
 
@@ -67,6 +67,7 @@ def test_e_mail_through_the_providers_server_with_starttls():
     assert log[2] == ("login", "ann@gmx.at")
     kind, sender, to, subject, body = log[3]
     assert sender == to == "ann@gmx.at" and subject == "Subject" and body.startswith("Text")
+    assert f"garmin-intervals-bridge {__version__} " in body                  # which version is asking
 
 
 def test_e_mail_over_ssl_on_465_and_an_own_server():
@@ -89,7 +90,7 @@ def test_push_carries_the_headline_and_an_optional_token():
     s = settings(ntfy_url="https://ntfy.sh/garmin-bridge-abc", ntfy_token="tk")
     alerts.send_push(s, "Garmin bridge: test message", "Text", session=ntfy)
     url, text, headers = ntfy.posts[0]
-    assert url == "https://ntfy.sh/garmin-bridge-abc" and text == "Text"
+    assert url == "https://ntfy.sh/garmin-bridge-abc" and text == f"Text\n(garmin-intervals-bridge {__version__})"
     assert headers["Title"] == "Garmin bridge: test message" and headers["Authorization"] == "Bearer tk"
     with pytest.raises(ValueError, match="web address"):
         alerts.send_push(settings(ntfy_url="ntfy.sh/topic"), "S", "T", session=ntfy)

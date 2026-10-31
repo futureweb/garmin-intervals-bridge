@@ -79,6 +79,13 @@ def test_merge_preserves_manual_and_custom_values():
     assert merge_wellness({"locked": True}, {"hrv": 30}, {"GarminHillScore": 70}) == {}
 
 
+def test_no_steps_from_a_day_without_a_device():
+    source = sample()
+    source["data"]["stats"]["totalSteps"] = 0                    # Intervals answers a 0 with HTTP 422
+    nat, custom = map_wellness(source, date(2026, 10, 7), date(2026, 10, 8))
+    assert "steps" not in nat and nat["restingHR"] == 49
+
+
 def test_prevent_invalid_numeric_data_and_out_of_range():
     source = sample()
     source["data"]["stats"]["totalSteps"] = "9001"

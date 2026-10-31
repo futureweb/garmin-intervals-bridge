@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.4 — 2026-10-31
+
+A day with 0 steps no longer fails in Intervals; every alert names the bridge's version.
+
+### Changed
+
+- **Every alert names the bridge's version** (thanks anderfo): in the e-mail's signature and on
+  the last line of a push message, so an alert tells which version sent it – also when the
+  computer the bridge runs on is out of reach.
+- **`--from-archive` names the days whose archive has no training status**, the source of the
+  load fields. A backfill reads it only with `--endpoints all`; the log line gives the backfill
+  that adds it for those days, one Garmin request per day. After *Wellness from the archive* on
+  the web page, the line is in its Log.
+
+### Fixed
+
+- **A day with 0 steps is written** (thanks JEFFREY_OHARA). Garmin reports 0 steps for a day
+  without a device, and Intervals refuses a 0 (HTTP 422), so none of that day's wellness was
+  written. A 0 is no measurement: the bridge leaves it out.
+
 ## 0.12.3 — 2026-10-30
 
 Garmin's chronic load and load ratio; the energy balance follows the intake in Intervals; a file

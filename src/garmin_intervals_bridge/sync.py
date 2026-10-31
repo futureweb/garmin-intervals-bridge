@@ -883,6 +883,7 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
     day_list = days if days is not None else [current - timedelta(days=o) for o in reversed(range(lookback))]
     midnight = datetime.combine(current, datetime.min.time(), tzinfo=settings.timezone).timestamp()
     refresh = settings.wellness_refresh_hours * 3600
+    without_status = []                  # archived days whose read left out Garmin's training status
     for index, day in enumerate(day_list):
         if pause_seconds and index:
             time.sleep(pause_seconds)
@@ -894,6 +895,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                 log.info("No archived snapshot for %s; nothing to map", day)
                 continue
             metrics["days_from_archive"] += 1
+            if "daily_training_status" not in (raw.get("data") or {}):
+                without_status.append(day)
         elif not force and not wellness_due(day, current, fetched, midnight, refresh):
             if written or not apply:
                 metrics["days_skipped_recent"] += 1
@@ -929,6 +932,12 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             continue
         if apply and unlocked:
             store.mark_wellness(day, written=True)
+    if without_status:
+        # a backfill reads it only on request: the load fields cannot come from the archive for these
+        log.info("%d archived days (%s to %s) have no training status, the source of the load fields: "
+                 "backfill --scope wellness --from %s --to %s --endpoints daily_training_status "
+                 "--force-wellness --apply reads it, one Garmin request per day", len(without_status),
+                 without_status[0], without_status[-1], without_status[0], without_status[-1])
     metrics["new_fields"] = sorted(set(metrics["new_fields"]))
     return metrics
 

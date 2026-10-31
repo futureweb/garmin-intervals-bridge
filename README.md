@@ -77,7 +77,7 @@ from Docker Hub or as a Claude Desktop bundle; [more below](#use-it-with-an-ai-c
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.3. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.4. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -319,7 +319,10 @@ days backfilled before, name them and force the re-read, e.g.
 `--endpoints endurance_score,hill_score,race_predictions --force-wellness`.
 Fields a new version added (such as the chronic load in 0.12.3) come for days
 read before from the archive, without a Garmin request: `--from-archive`, or
-on the web page *Actions → The past → Wellness from the archive*.
+on the web page *Actions → The past → Wellness from the archive*. The load
+fields need Garmin's training status, which a backfill reads only with
+`--endpoints all`; for days backfilled without it,
+`--endpoints daily_training_status --force-wellness` adds it (one request per day).
 
 ## Gear
 
