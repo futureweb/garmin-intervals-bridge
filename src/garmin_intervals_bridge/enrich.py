@@ -568,7 +568,7 @@ OWN_KEY = "enrich:written:"          # + Garmin id: the field values the bridge 
 def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply: bool,
                     remote_candidates: list[dict] | None = None, intervals_id: str | None = None,
                     mappings: FieldMappings | None = None, refresh_own: bool = False,
-                    recheck: bool = False) -> dict:
+                    recheck: bool = False, garmin_activity: dict | None = None) -> dict:
     """Download (or reuse) the original, find the Intervals activity, plan, optionally write.
 
     Returns the plan plus an `outcome`:
@@ -581,6 +581,9 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
     `recheck` (one activity on request) compares with what Intervals holds now even when
     nothing changed on the bridge's side – after Intervals' "Reprocess file", say, which
     drops everything the bridge added.
+
+    `garmin_activity` (start and duration, as Garmin lists it) lets a look-alike among
+    `remote_candidates` count when no external id names the activity.
     """
     from .fit import decode_fit, extract_original_fit, sha256  # local import keeps fit optional for tests
 
@@ -601,7 +604,9 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
             remote_candidates = intervals.activities(day.date() - timedelta(days=1), day.date() + timedelta(days=1))
             found = match_activity(activity, remote_candidates)
         else:
-            found = exact_match(remote_candidates, gid)
+            # Intervals' first Garmin import names Garmin's file (`<user>_<file id>.fit`), not the activity
+            found = exact_match(remote_candidates, gid) or (
+                match_activity(garmin_activity, remote_candidates) if garmin_activity else None)
         if found is None:
             return {"activity_id": gid, "outcome": "unmatched", "candidates_seen": len(remote_candidates)}
         intervals_id = str(found["id"])

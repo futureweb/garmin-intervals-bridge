@@ -719,7 +719,7 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
                     result = {"outcome": "swapped", "intervals_id": swapped}
             if result is None:
                 result = enrich_activity(gid, garmin, intervals, store, apply=apply,
-                                         remote_candidates=remote, mappings=mappings)
+                                         remote_candidates=remote, mappings=mappings, garmin_activity=activity)
             asked = _complete_archive(gid, activity, garmin, store, metrics) != "on_disk"
             _complete_intake(gid, activity, result.get("intervals_id"), garmin, intervals, store, metrics,
                              apply=apply)

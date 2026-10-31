@@ -77,7 +77,7 @@ from Docker Hub or as a Claude Desktop bundle; [more below](#use-it-with-an-ai-c
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.6. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.7. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -698,7 +698,7 @@ the page answers only Home Assistant's ingress).
 | `429` during `login` | The mobile login path was refused; the web path usually follows. Do not retry in a loop. |
 | `Another bridge instance is running (wellness)` | A backfill holds that part; the rest keeps running, and the bridge goes on with it once the backfill is done. For a backfill: another one is still working on that part. `(run)`: a background bridge runs already. |
 | Garmin values gone after *Reprocess file* in Intervals | `enrich <the activity's id or link> --apply`, or the web page's *Actions → One activity again*. |
-| `outcome: unmatched` | The official import has not created the activity yet; the next run looks again. |
+| `outcome: unmatched` | The official import has not created the activity yet; the next run looks again. An old activity of Intervals' first Garmin import is found by start and duration – not when two copies agree (two devices on the same ride). |
 | `status` lists a *pending* upload | Upload mode: the request's outcome is unknown. Check Intervals before `reset-pending`. |
 | `203/EXEC Permission denied` under systemd | SELinux: the virtualenv must not live under a web document root. |
 

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.7 — 2026-10-31
+
+Enrichment finds the activities of Intervals' first Garmin import.
+
+### Fixed
+
+- **Backfill and scheduled runs find the activities of Intervals' first Garmin import**
+  (thanks Bernd_Vantyghem). That import names Garmin's file (`<user>_<file id>.fit`), not the
+  activity, so a backfill logged *has no Intervals counterpart yet* for every one of them.
+  Like `enrich` by hand, they now also take the one copy of the official sync whose start
+  (±2 min) and duration (±5 %) agree – never when two agree, never a copy that names another
+  Garmin activity. Originals already downloaded are not fetched again.
+
 ## 0.12.6 — 2026-10-31
 
 The intake backfill finds the activities of Intervals' first Garmin import too, and pauses

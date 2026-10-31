@@ -177,3 +177,23 @@ def test_enrich_puts_the_logged_intake_back_after_a_reprocess(tmp_path):
     assert i.updates[-1] == ("i42", {"GarminFluidIntake": 1500, "GarminCaloriesConsumed": 1200})
     assert restore_intake("42", "i42", i, st, apply=True) == {}                 # there now: not again
     st.close()
+
+
+def test_intervals_first_garmin_import_is_found_by_start_and_duration(tmp_path):
+    # that import names Garmin's file, not the activity: the one look-alike whose start and duration agree
+    st, g, i = Store(tmp_path), GarminFake(), IntervalsFake()
+    i.remote = [{"id": "i42", "source": "GARMIN_CONNECT", "external_id": "athlete_46500740483.fit",
+                 "start_date": "2026-10-07T08:00:30Z", "elapsed_time": 3}]
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert m["enriched"] == 1 and i.updates == [("i42", {"AerobicEffect": 3.2})]
+    st.close()
+
+
+def test_two_look_alikes_from_the_first_import_are_no_match(tmp_path):
+    st, g, i = Store(tmp_path), GarminFake(), IntervalsFake()
+    one = {"id": "i42", "source": "GARMIN_CONNECT", "external_id": "athlete_1.fit",
+           "start_date": "2026-10-07T08:00:30Z", "elapsed_time": 3}
+    i.remote = [one, dict(one, id="i43", external_id="athlete_2.fit")]   # a watch and an Edge
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert m["unmatched"] == 1 and i.updates == []
+    st.close()
