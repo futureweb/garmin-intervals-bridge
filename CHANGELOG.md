@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.8 — 2026-10-31
+
+An activity uploaded to Garmin Connect as GPX or TCX is skipped, no longer retried for good.
+
+### Fixed
+
+- **A GPX or TCX upload in Garmin Connect is skipped, not retried.** Its original is no FIT – a
+  GPS unit, BaseCamp or another app uploaded it – so a backfill over older years booked every
+  such activity as failed (*Expected exactly one FIT in archive, found 0*) and retried it for
+  good, up to three per run. Now the file goes into the archive next to the originals, the
+  activity is skipped and Garmin is not asked again; there is nothing in it to add. Activities
+  already booked as failed end their retries with the next one.
+
 ## 0.12.7 — 2026-10-31
 
 Enrichment finds the activities of Intervals' first Garmin import.

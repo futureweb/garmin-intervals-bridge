@@ -31,6 +31,17 @@ class InvalidFIT(ValueError):
 # Size guard for anything we are asked to decode. Device activity files are a
 # few hundred kB; the guard only blocks absurd inputs such as ZIP bombs.
 MAX_FIT_BYTES = 32 * 1024 * 1024
+NOT_FIT_SUFFIXES = (".gpx", ".tcx")
+
+
+class NotFIT(ValueError):
+    """Garmin's original is no FIT but a GPX or TCX: an activity uploaded to Garmin Connect from a
+    GPS unit, BaseCamp or another app. Nothing to add from it, and asking again changes nothing.
+    `name`, `data`: the file, for the archive."""
+
+    def __init__(self, name: str, data: bytes):
+        super().__init__(f"Garmin's original is a {name.rsplit('.', 1)[-1].upper()} file, no FIT")
+        self.name, self.data = name, data
 
 
 def fit_segments(data: bytes) -> list[bytes]:
@@ -106,6 +117,10 @@ def _unpack(download: bytes) -> bytes:
     if zipfile.is_zipfile(io.BytesIO(download)):
         with zipfile.ZipFile(io.BytesIO(download)) as z:
             entries = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(".fit")]
+            others = [i for i in z.infolist() if not i.is_dir() and i.filename.lower().endswith(NOT_FIT_SUFFIXES)]
+            if not entries and len(others) == 1 and others[0].file_size <= MAX_FIT_BYTES:
+                with z.open(others[0]) as f:
+                    raise NotFIT(others[0].filename, f.read(MAX_FIT_BYTES + 1))
             if len(entries) != 1:
                 raise InvalidFIT(f"Expected exactly one FIT in archive, found {len(entries)}")
             # No extraction to disk: prevents zip-slip, oversized ZIP bombs, etc.

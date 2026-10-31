@@ -40,7 +40,8 @@ def test_a_refused_file_carries_the_digest_of_the_fit_not_of_its_zip():
         digests.append(caught.value.digest)
     assert digests[0] == digests[1] == sha256(broken_fit())
     # an empty answer, an error page, a ZIP without a FIT say nothing about the file: no digest
-    for download in (b"", b"<html>Service unavailable</html>", zipped(b"", 2026).replace(b".fit", b".gpx")):
+    # (a ZIP with a GPX or TCX instead is no failure at all: NotFIT, see test_sync_enrich)
+    for download in (b"", b"<html>Service unavailable</html>", zipped(b"", 2026).replace(b".fit", b".txt")):
         with pytest.raises(InvalidFIT) as caught:
             extract_original_fit(download)
         assert caught.value.digest is None

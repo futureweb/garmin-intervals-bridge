@@ -11,7 +11,7 @@ from typing import Any
 from . import hrvtrend, imready4
 from .config import Settings
 from .enrich import enrich_activity, exact_match, load_field_mappings, match_activity
-from .fit import InvalidFIT, decode_fit, sha256, validate_fit, wellness_bundle_index
+from .fit import NOT_FIT_SUFFIXES, InvalidFIT, NotFIT, decode_fit, sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .intake import fit_intake_values, intake_values, write_intake
 from .intervals import rate_limited, refused
@@ -53,6 +53,24 @@ def _record_failure(store: Store, gid: str, exc: BaseException) -> int | None:
                 "no more retries – the health check names it once, an update of the bridge tries it again",
                 gid, REFUSED_TIMES, _error_name(exc))
     return None
+
+
+def _not_a_fit(store: Store, gid: str, exc: BaseException, metrics: dict) -> bool:
+    """Garmin's original is a GPX or TCX: kept in the archive next to where the FIT would be, the
+    activity skipped for good (no retries); False for any other error."""
+    if not isinstance(exc, NotFIT):
+        return False
+    suffix = "." + exc.name.rsplit(".", 1)[-1].lower()
+    store.atomic_save(store.fit_path(gid).with_suffix(suffix), exc.data)
+    store.record_activity(gid, "skipped")
+    metrics["not_fit"] = metrics.get("not_fit", 0) + 1
+    log.info("Activity %s: %s – nothing to add, archived and not asked again", gid, exc)
+    return True
+
+
+def _known_not_fit(store: Store, gid: str) -> bool:
+    """Its original was a GPX or TCX before: no need to ask Garmin again."""
+    return any(store.fit_path(gid).with_suffix(s).is_file() for s in NOT_FIT_SUFFIXES)
 
 
 _time = parse_utc
@@ -596,6 +614,9 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
                 store.record_activity(gid, "skipped")
             metrics["skipped"] += 1
             continue
+        if _known_not_fit(store, gid):
+            metrics["skipped"] += 1
+            continue
         if store.is_deferred(gid):
             metrics["deferred"] += 1
             continue
@@ -624,6 +645,8 @@ def sync_activities(settings: Settings, garmin: Any, intervals: Any, store: Stor
                 metrics["pending"] += 1
                 log.error("Upload of %s ended with %s; outcome unknown, left pending for manual check",
                           gid, _error_name(exc))
+                continue
+            if _not_a_fit(store, gid, exc, metrics):
                 continue
             attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
@@ -689,7 +712,7 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
         if not gid.isdecimal():
             continue
         metrics["seen"] += 1
-        if activity.get("manualActivity") is True:
+        if activity.get("manualActivity") is True or _known_not_fit(store, gid):
             metrics["skipped"] += 1
             continue
         if store.is_deferred(gid):
@@ -730,6 +753,8 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
+            if _not_a_fit(store, gid, exc, metrics):
+                continue
             attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
             if attempts is not None:
@@ -778,6 +803,8 @@ def _retry_overdue(garmin: Any, intervals: Any, store: Store, metrics: dict, lis
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
+            if _not_a_fit(store, gid, exc, metrics):
+                continue
             attempts = _record_failure(store, gid, exc)
             metrics["failed"] += 1
             if attempts is not None:
@@ -1477,7 +1504,7 @@ def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *,
         if source.upper() != "GARMIN_CONNECT" or not external.isdecimal():
             metrics["ignored"] += 1          # manual uploads, Strava, ... : not ours to touch
             continue
-        if store.is_deferred(external):
+        if store.is_deferred(external) or _known_not_fit(store, external):
             continue
         if getattr(settings, "swap", False):
             done = _try_swap(settings, external, iid, garmin, intervals, store, metrics, apply=apply)
@@ -1490,6 +1517,8 @@ def watch_once(settings: Settings, garmin: Any, intervals: Any, store: Store, *,
         except Exception as exc:
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise
+            if _not_a_fit(store, external, exc, metrics):
+                continue
             metrics["failed"] += 1
             if _record_failure(store, external, exc) is not None:
                 log.warning("Watch: enrich of %s failed with %s; the scheduled run will retry",

@@ -197,3 +197,54 @@ def test_two_look_alikes_from_the_first_import_are_no_match(tmp_path):
     m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
     assert m["unmatched"] == 1 and i.updates == []
     st.close()
+
+
+def _gpx_zip(name="42_UNKNOWN.gpx"):
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr(name, "<gpx><trk/></gpx>")
+    return buf.getvalue()
+
+
+def test_an_original_that_is_a_gpx_is_named_as_such():
+    import pytest
+
+    from garmin_intervals_bridge.fit import InvalidFIT, NotFIT, extract_original_fit
+    with pytest.raises(NotFIT) as caught:
+        extract_original_fit(_gpx_zip())
+    assert caught.value.name == "42_UNKNOWN.gpx" and caught.value.data == b"<gpx><trk/></gpx>"
+    assert not isinstance(caught.value, InvalidFIT)                  # no FIT refused: nothing to give up on
+    assert "GPX file, no FIT" in str(caught.value)
+
+
+class GarminGpx(GarminFake):
+    def original_fit(self, gid):
+        from garmin_intervals_bridge.fit import extract_original_fit
+        self.downloads += 1
+        return extract_original_fit(_gpx_zip())
+
+
+def test_a_gpx_upload_is_archived_and_skipped_for_good(tmp_path):
+    # an activity uploaded to Garmin Connect as GPX (a GPS unit, BaseCamp): nothing to add, never retried
+    st, g, i = Store(tmp_path), GarminGpx(), IntervalsFake()
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert m.get("not_fit") == 1 and m["failed"] == 0 and i.updates == []
+    assert st.activity_status("42") == "skipped" and st.failed_activities() == []
+    assert st.fit_path("42").with_suffix(".gpx").read_bytes() == b"<gpx><trk/></gpx>"
+    again = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert again["skipped"] == 1 and g.downloads == 1                 # not asked again
+    st.close()
+
+
+def test_a_failed_gpx_upload_outside_the_window_ends_its_retries(tmp_path):
+    from garmin_intervals_bridge.sync import _retry_overdue
+    st, g, i = Store(tmp_path), GarminGpx(), IntervalsFake()
+    st.record_failure("42", "InvalidFIT: Expected exactly one FIT in archive, found 0")
+    st.db.execute("UPDATE activity SET next_retry=0 WHERE garmin_id='42'")
+    metrics = {"failed": 0}
+    _retry_overdue(g, i, st, metrics, set(), None, apply=True)
+    assert metrics == {"failed": 0, "not_fit": 1} and st.failed_activities() == []
+    assert st.activity_status("42") == "skipped"
+    st.close()
