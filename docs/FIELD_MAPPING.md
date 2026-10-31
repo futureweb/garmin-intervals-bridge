@@ -41,14 +41,27 @@ takes for the bridge to fill them.
 ### Fluid and food logged for an activity
 
 Garmin keeps what you logged during or after an activity in its activity
-summary, not in the FIT file: `waterConsumed` (ml) and `caloriesConsumed`
-(kcal). The bridge writes them into two private activity fields it creates
-itself, `GarminFluidIntake` (ml) and `GarminCaloriesConsumed` (kcal), only
-where the activity has no value yet. Because a drink is usually logged after
-the ride, the summary is read once more about twelve hours after the start
-(one request per activity); `backfill --scope activities --from DATE --intake`
-fills the past from the archive without asking Garmin. Garmin records no
-sodium and no grams of carbohydrate, and no time of each intake.
+summary: `waterConsumed` (ml) and `caloriesConsumed` (kcal), next to its
+sweat loss estimate `waterEstimated` (ml). The bridge writes them into private
+activity fields it creates itself, only where the activity has no value yet:
+
+| Field | Source | Unit |
+|---|---|---|
+| `GarminFluidIntake` | `waterConsumed`; FIT session field 179 | ml |
+| `GarminCaloriesConsumed` | `caloriesConsumed`; FIT session field 177 | kcal |
+| `GarminSweatLoss` | `waterEstimated`; FIT session field 178 – not when a field of your own reads 178 from the file already | ml |
+| `GarminFluidBalance` | fluid intake − sweat loss, when both are known | ml |
+| `GarminSweatRate` | sweat loss per hour of timer time (activities of 10 minutes or more) | ml/h |
+
+What the device knows – an Edge asks for food and drink right after the ride –
+is in the original file too, in session fields the public FIT profile does not
+name (177, 178, 179), and is written as soon as the bridge has the original.
+A drink logged later in the app is only in the summary, so that is read once
+more about twelve hours after the start (one request per activity) and fills
+what is still empty; `backfill --scope activities --from DATE --intake` fills
+the past from the archive without asking Garmin. Garmin records no sodium and
+no grams of carbohydrate, and no time of each intake (the eat and drink markers
+in the file are the device's reminders).
 
 ## Wellness: an explicit, unit-checked table
 

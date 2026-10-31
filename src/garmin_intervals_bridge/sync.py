@@ -11,9 +11,9 @@ from typing import Any
 from . import hrvtrend, imready4
 from .config import Settings
 from .enrich import enrich_activity, load_field_mappings
-from .fit import InvalidFIT, sha256, validate_fit, wellness_bundle_index
+from .fit import InvalidFIT, decode_fit, sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
-from .intake import intake_values, write_intake
+from .intake import fit_intake_values, intake_values, write_intake
 from .intervals import rate_limited, refused
 from .mapping import (
     PROVISIONAL_CODES,
@@ -209,6 +209,8 @@ def complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin: 
                     metrics: dict, *, apply: bool, now: datetime | None = None) -> None:
     """Fluid and food logged for an activity, into its Intervals fields, once the athlete had time to log.
 
+    What the device knows – asked for right after the activity, and its sweat estimate – is in
+    the original file and written at once; the summary half a day later fills what is still empty.
     The summary archived with the activity is reused when it was fetched late enough;
     otherwise it is asked for once more (one request), and the archive keeps the newer one.
     The same goes for its gear, which many pick in the app after the run (one more request):
@@ -218,6 +220,7 @@ def complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin: 
     key = f"intake:{gid}"
     if not apply or not intervals_id or store.get_meta(key) is not None:
         return
+    _file_intake(gid, intervals_id, intervals, store, metrics)
     started = _time(activity.get("startTimeGMT"), garmin_gmt=True)
     current = now or datetime.now(timezone.utc)
     settled = started is not None and current - started >= timedelta(hours=INTAKE_SETTLE_HOURS)
@@ -245,15 +248,43 @@ def complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin: 
     store.set_meta(key, json.dumps(values, sort_keys=True))
 
 
+def _file_values(store: Store, gid: str) -> dict[str, int] | None:
+    """Intake and sweat from the archived original file; None without one."""
+    path = store.fit_path(gid)
+    if not path.is_file():
+        return None
+    try:
+        messages, _ = decode_fit(path.read_bytes(), checked=True)    # checked when it was downloaded
+    except Exception as exc:              # a file the decoder cannot read must not hold up the summary
+        log.warning("Intake of %s: original file not readable (%s); the summary half a day later fills it",
+                    gid, _error_name(exc))
+        return {}
+    return fit_intake_values(messages)
+
+
+def _file_intake(gid: str, intervals_id: str, intervals: Any, store: Store, metrics: dict) -> None:
+    """Once per activity, as soon as its original is on disk."""
+    key = f"intake-file:{gid}"
+    if store.get_meta(key) is not None or (values := _file_values(store, gid)) is None:
+        return
+    written = write_intake(intervals_id, values, intervals, apply=True)
+    if written:
+        metrics["intake_written"] = metrics.get("intake_written", 0) + 1
+        log.info("Intake of %s -> %s from the file: %s", gid, intervals_id, written)
+    store.set_meta(key, json.dumps(values, sort_keys=True))
+
+
 def restore_intake(gid: str, intervals_id: str, intervals: Any, store: Store, *, apply: bool) -> dict:
-    """The logged intake again, from the archived summary (no Garmin request): Intervals'
-    "Reprocess file" empties fields the file does not fill. Only empty fields are written."""
+    """The logged intake again, from the archived summary – or before it is archived, from the
+    original file – with no Garmin request: Intervals' "Reprocess file" empties fields the file
+    does not fill. Only empty fields are written."""
     path = store.activity_json_path(gid)
     try:
         summary = json.loads(path.read_text()) if path.is_file() else None
     except (OSError, ValueError):
         summary = None
-    return write_intake(intervals_id, intake_values(summary), intervals, apply=apply) if summary else {}
+    values = intake_values(summary) if summary else _file_values(store, gid)
+    return write_intake(intervals_id, values, intervals, apply=apply) if values else {}
 
 
 def _refresh_gear(gid: str, activity: dict, garmin: Any, store: Store) -> None:
@@ -285,7 +316,7 @@ def _complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin:
 
 
 def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, apply: bool) -> dict:
-    """Intake fields for past activities from the archived Garmin summaries: no Garmin request.
+    """Intake and sweat fields for past activities from the archived Garmin summaries: no Garmin request.
 
     The Intervals activity is the one the bridge enriched or uploaded, else the one whose
     external id names the Garmin activity (a bare number only from the official sync).
@@ -304,6 +335,7 @@ def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, app
             found.append((day, gid, values))
     metrics = {"with_intake": len(found), "written": 0, "already": 0, "unmatched": 0}
     months: dict[str, list[dict]] = {}
+    items = intervals.custom_items() if found else []      # read once: which fields exist, an own sweat field
     for day, gid, values in found:
         intervals_id = store.activity_intervals_id(gid)
         if not intervals_id:
@@ -321,7 +353,7 @@ def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, app
         if not intervals_id:
             metrics["unmatched"] += 1
             continue
-        written = write_intake(intervals_id, values, intervals, apply=apply)
+        written = write_intake(intervals_id, values, intervals, apply=apply, items=items)
         metrics["written" if written else "already"] += 1
         if apply:
             store.set_meta(f"intake:{gid}", json.dumps(values, sort_keys=True))

@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.12.5 — 2026-10-31
+
+Food and drink entered on the device reach Intervals right after the activity, and every
+activity gets its sweat loss, fluid balance and sweat rate.
+
+### Added
+
+- **Sweat loss, fluid balance and sweat rate per activity**: three more activity fields the
+  bridge creates – `GarminSweatLoss` (Garmin's estimate, ml), `GarminFluidBalance` (drunk minus
+  sweated, ml) and `GarminSweatRate` (ml per hour of timer time). A field of your own that reads
+  the sweat loss from the file (session field 178) is kept and gets no twin.
+  `backfill --scope activities --from DATE --intake --apply` fills the past from the archive,
+  no Garmin request.
+
+### Changed
+
+- **Food and drink entered on the device are written at once.** An Edge asks for them right
+  after the ride, and they are in the original file (session fields 177 and 179): the bridge
+  writes them as soon as it has the original, not half a day later. What you log later in the
+  app still comes with the summary read twelve hours after the start, into the fields still
+  empty.
+
 ## 0.12.4 — 2026-10-31
 
 A day with 0 steps no longer fails in Intervals; every alert names the bridge's version.

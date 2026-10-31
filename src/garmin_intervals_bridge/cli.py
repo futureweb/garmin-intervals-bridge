@@ -171,9 +171,10 @@ def build_parser() -> argparse.ArgumentParser:
                                "HRV, Health Snapshots ...) into wellness-files/; one Garmin request per day, no "
                                "Intervals")
     backfill.add_argument("--intake", action="store_true",
-                          help="Activities: fluid (ml) and food (kcal) logged in Garmin into the activity fields "
-                               "GarminFluidIntake / GarminCaloriesConsumed, from the archived summaries; no Garmin "
-                               "request")
+                          help="Activities: fluid (ml) and food (kcal) logged in Garmin, its sweat loss estimate "
+                               "and from them fluid balance and sweat rate into the activity fields "
+                               "GarminFluidIntake / GarminCaloriesConsumed / GarminSweatLoss / GarminFluidBalance / "
+                               "GarminSweatRate, from the archived summaries; no Garmin request")
     backfill.add_argument("--swap", action="store_true",
                           help="Activities: put each original into Garmin's copy in Intervals (in place: id, notes, "
                                "edited intervals, typed values stay; nothing deleted) instead of only completing it")
