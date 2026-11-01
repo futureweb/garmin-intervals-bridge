@@ -422,7 +422,7 @@ minutes in rest, low, medium and high stress, stacked as in Garmin Connect, the 
 activities and the time Garmin could not measure on top in grey, and the day's maximum):
 
 <p align="center">
-<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/chart-stress-levels.png" alt="Stress levels chart: the minutes in rest, low, medium and high stress stacked per day, the day's maximum as a line" width="900">
+<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/chart-stress-levels.png" alt="Stress levels chart: the minutes in rest, low, medium and high stress stacked per day, activity and unmeasured time in grey on top, the day's maximum as a line" width="900">
 </p>
 
 Each is built from the fields the bridge
