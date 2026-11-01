@@ -218,6 +218,13 @@ def _port(name: str) -> int | None:
     return int(value)
 
 
+def _web_address(name: str) -> str | None:
+    value = _text(name)
+    if value and not value.startswith(("http://", "https://")):
+        raise ValueError(f"{name} must be a web address, e.g. http://127.0.0.1:8766/sync")
+    return value
+
+
 # A Home Assistant add-on hands its form to the container as /data/options.json.
 OPTIONS = {"garmin_source": "GARMIN_SOURCE", "garmin_personal_api_key": "GARMIN_PERSONAL_API_KEY",
            "garmin_personal_api_key_expires": "GARMIN_PERSONAL_API_KEY_EXPIRES",
@@ -226,6 +233,7 @@ OPTIONS = {"garmin_source": "GARMIN_SOURCE", "garmin_personal_api_key": "GARMIN_
            "update_check": "BRIDGE_UPDATE_CHECK", "intervals_notes": "BRIDGE_INTERVALS_NOTES",
            "ui_password": "BRIDGE_UI_PASSWORD", "alert_email": "BRIDGE_ALERT_EMAIL",
            "smtp_password": "BRIDGE_SMTP_PASSWORD", "ntfy_url": "BRIDGE_NTFY_URL", "mode": "BRIDGE_MODE",
+           "notify_url": "BRIDGE_NOTIFY_URL",
            "swap": "BRIDGE_SWAP", "swap_method": "BRIDGE_SWAP_METHOD",
            "poll_hours": "BRIDGE_POLL_HOURS", "poll_seconds": "BRIDGE_POLL_SECONDS",
            "backup_hours": "BRIDGE_BACKUP_HOURS", "poll_quiet_seconds": "BRIDGE_POLL_QUIET_SECONDS",
@@ -332,6 +340,7 @@ class Settings:
     smtp_from: str | None = None
     ntfy_url: str | None = field(default=None, repr=False)        # the topic is the secret
     ntfy_token: str | None = field(default=None, repr=False)
+    notify_url: str | None = None                                 # a tool next to the bridge: new activities
     swap: bool = False
     swap_method: str = "replace"
     swap_hours: int = 48
@@ -398,6 +407,7 @@ class Settings:
             smtp_from=_text("BRIDGE_SMTP_FROM"),
             ntfy_url=_text("BRIDGE_NTFY_URL"),
             ntfy_token=_text("BRIDGE_NTFY_TOKEN"),
+            notify_url=_web_address("BRIDGE_NOTIFY_URL"),
             poll_seconds=_positive_int("BRIDGE_POLL_SECONDS", 60, 24 * 3600) if _text("BRIDGE_POLL_SECONDS") else None,
             poll_hours=poll_hours(os.getenv("BRIDGE_POLL_HOURS", "")),
             poll_quiet_seconds=(_positive_int("BRIDGE_POLL_QUIET_SECONDS", 60, 24 * 3600)

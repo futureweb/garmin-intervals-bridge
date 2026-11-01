@@ -15,8 +15,9 @@ folder, log), readable by you – or by the bridge's own service user – only.
 data there. Besides that, only when you set them up: your own mail server and/or an ntfy
 server for alerts – a push message carries a headline only; an e-mail also the details
 (which activity or day, the error) – and once a day pypi.org to look for a newer version
-(no personal data; `BRIDGE_UPDATE_CHECK=false` turns it off). No analytics, no telemetry,
-no third parties.
+(no personal data; `BRIDGE_UPDATE_CHECK=false` turns it off). With `BRIDGE_NOTIFY_URL` set, the
+tool at that address hears how many new activities there are, nothing more. No analytics, no
+telemetry, no third parties.
 
 **What it deletes:** nothing – except, when you switch swap mode on with the `upload`
 method, Garmin's filtered copy of a new activity in Intervals, once your original is in as

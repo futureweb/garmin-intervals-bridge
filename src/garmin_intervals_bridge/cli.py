@@ -29,6 +29,7 @@ from .gear import save_config as save_gear_config
 from .gear import sync_recent as sync_gear_recent
 from .health import liveness, probe
 from .intervals import IntervalsClient, rate_limited, request_error, transient
+from .notify import notify
 from .personal import KEY_ALONE, PersonalGarminSource, PersonalKeyNeeded, validated_key
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import activity_step, garmin_source, remember_direct_profile, source_status
@@ -380,6 +381,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                     results["wellness"] = sync_wellness(settings, garmin, intervals, store, apply=apply)
                 results["garmin_requests"] = garmin.requests
                 store.record_run("sync", results, started=now)
+                notify(settings, results)
                 if mode == "upload" and (results["activities"].get("uploaded") or results["activities"].get(
                         "would_upload")):
                     polling.note_new(store, now)
@@ -409,6 +411,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                     result["wellness"] = wellness_check(settings, garmin, intervals, store, apply=apply)
                 store.record_run("watch", {"apply": apply, "mode": mode, "garmin_requests": garmin.requests, **result},
                                  started=now)
+                notify(settings, result)
                 if result.get("uploaded") or result.get("would_upload"):
                     polling.note_new(store, now)
                     log.info("Garmin poll: %d uploaded, %d would upload", result["uploaded"], result["would_upload"])
@@ -423,6 +426,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                     result["wellness"] = wellness
                 store.record_run("watch", {"apply": apply, "garmin_requests": garmin.requests - before, **result},
                                  started=now)
+                notify(settings, result)
                 if result.get("new"):
                     log.info("Poll: %d new, %d enriched, %d planned", result["new"], result["enriched"],
                              result["planned"])
@@ -985,6 +989,7 @@ def main(argv: list[str] | None = None) -> int:
                     if wellness.get("intervals_checks") or wellness.get("days_from_archive"):
                         record["wellness"] = wellness
                     store.record_run("watch", record, started=started)
+                    notify(settings, record)
                     print(json.dumps({"apply": args.apply, "watch": result, "wellness": wellness}, indent=2))
                     return 0
                 if args.cmd == "backfill":
@@ -1075,6 +1080,7 @@ def main(argv: list[str] | None = None) -> int:
                             force=args.force_wellness)
                     results["garmin_requests"] = garmin.requests
                     store.record_run("sync", results)
+                    notify(settings, results)
                     print(json.dumps(results, indent=2))
                     return 0
             except GarminLoginNeeded:

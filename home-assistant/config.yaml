@@ -1,5 +1,5 @@
 name: Garmin Intervals Bridge
-version: "0.12.8"
+version: "0.12.9"
 slug: garmin_intervals_bridge
 description: Your complete Garmin data in Intervals.icu – or a backup of it, kept in Home Assistant
 url: https://github.com/futureweb/garmin-intervals-bridge
@@ -49,3 +49,4 @@ schema:
   alert_email: email?
   smtp_password: password?
   ntfy_url: url?
+  notify_url: url?

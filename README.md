@@ -67,6 +67,11 @@ every custom activity field and stream, every native and `Garmin…` wellness fi
 names and units of your own definitions. Install with `uvx futureweb-intervals-mcp@1.0.0b1`,
 from Docker Hub or as a Claude Desktop bundle; [more below](#use-it-with-an-ai-coach-mcp).
 
+**For the mountains:** [intervals-summits](https://github.com/futureweb/intervals-summits) finds the summits, huts and
+passes on your activities, from any source and all your history, writes them into activity fields
+and builds your own summit log. It runs next to the bridge with the same settings; with
+`BRIDGE_NOTIFY_URL` the bridge tells it when there is something new.
+
 ## What gets synced
 
 | | Activities (enrich mode) | Daily wellness |
@@ -77,7 +82,7 @@ from Docker Hub or as a Claude Desktop bundle; [more below](#use-it-with-an-ai-c
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.8. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.9. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -649,6 +654,7 @@ win. Relative paths in a settings file count from its folder.
 | `BRIDGE_SMTP_PASSWORD` | | Password to send from that mailbox (often an app password) |
 | `BRIDGE_SMTP_HOST`, `_PORT`, `_USER`, `_FROM` | known for common providers; `587`; the address | Another mail server (465 = SSL, otherwise STARTTLS) |
 | `BRIDGE_NTFY_URL`, `BRIDGE_NTFY_TOKEN` | | Alerts as push messages (ntfy topic URL; a token for a protected server) |
+| `BRIDGE_NOTIFY_URL` | | A tool next to the bridge that wants to know about new activities: one small POST (a count, no data) after a run that saw or brought some. For [intervals-summits](https://github.com/futureweb/intervals-summits): `http://127.0.0.1:8766/sync` |
 | `BRIDGE_BACKUP_HOURS` | `12` | Backup mode: hours between runs (1–168); a day's wellness is taken once it is final either way |
 | `BRIDGE_MODE` | `enrich` | What `run` does without `--mode`: `enrich`, `upload` or `backup` (Garmin only, no Intervals) |
 | `BRIDGE_POLL_SECONDS` | `300` (upload mode `600`) | Seconds between the looks for new activities, of `run` (`--poll-seconds` wins) and of the `watch` timer; the fastest pace, in the adaptive mode too ([How often it looks](#how-often-it-looks)) |

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.9 — 2026-11-01
+
+The bridge can tell a tool next to it about new activities.
+
+### Added
+
+- **`BRIDGE_NOTIFY_URL`** (Home Assistant: *Notify URL*): after a run that saw new activities in
+  Intervals – from any source – or uploaded or enriched some, the bridge sends one small POST
+  there: a count, no activity data, no key. Made for
+  [intervals-summits](https://github.com/futureweb/intervals-summits), which then finds the summits
+  of a new activity right away and stops asking Intervals every 15 minutes itself
+  (`http://127.0.0.1:8766/sync`; in Home Assistant the hostname is on the Intervals Summits app's
+  *Info* tab). A tool that is down never holds the bridge up.
+
 ## 0.12.8 — 2026-10-31
 
 An activity uploaded to Garmin Connect as GPX or TCX is skipped, no longer retried for good.
