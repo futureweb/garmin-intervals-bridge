@@ -184,10 +184,20 @@ def test_a_new_chart_is_a_copy_of_its_library_chart_and_links_the_forum():
 
 def test_stress_levels_chart_stacks_the_four_levels_and_keeps_the_maximum_apart():
     codes = ("GarminStressRestMinutes", "GarminStressLowMinutes", "GarminStressMediumMinutes",
-             "GarminStressHighMinutes", "GarminStressMax")
+             "GarminStressHighMinutes", "GarminStressActivityMinutes", "GarminStressUnmeasuredMinutes",
+             "GarminStressMax")
     chart = next(c for c in plan_charts(items(*codes))["create"] if c["name"] == "Garmin Bridge: Stress levels")
     plots = chart["content"]["plots"]
     assert [p["field"] for p in plots] == list(codes)
-    assert {p["stack"] for p in plots[:4]} == {"stress"} and plots[4]["stack"] == ""
-    assert {p["scale"] for p in plots[:4]} == {"minutes"} and plots[4]["scale"] == "score"
+    assert {p["stack"] for p in plots[:6]} == {"stress"} and plots[6]["stack"] == ""
+    assert {p["scale"] for p in plots[:6]} == {"minutes"} and plots[6]["scale"] == "score"
     assert chart["from_id"] == 1304847               # a copy of the library chart, like the others
+
+
+def test_a_stress_levels_chart_of_ours_gets_the_grey_parts_when_their_fields_appear():
+    four = ("GarminStressRestMinutes", "GarminStressLowMinutes", "GarminStressMediumMinutes",
+            "GarminStressHighMinutes", "GarminStressMax")
+    ours = bridge_chart("Garmin Bridge: Stress levels", *four)          # made by 0.12.11 / 0.12.12
+    plan = plan_charts(items(*four, "GarminStressActivityMinutes", "GarminStressUnmeasuredMinutes") + [ours])
+    update = next(c for c in plan["update"] if c["name"] == "Garmin Bridge: Stress levels")
+    assert update["_gained_fields"] == ["GarminStressActivityMinutes", "GarminStressUnmeasuredMinutes"]

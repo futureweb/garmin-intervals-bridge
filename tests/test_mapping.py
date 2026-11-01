@@ -8,7 +8,7 @@ def sample():
         "stats": {"totalSteps": 9001, "restingHeartRate": 49, "bodyBatteryHighestValue": 91,
                   "bodyBatteryLowestValue": 19, "averageStressLevel": 38, "maxStressLevel": 99,
                   "restStressDuration": 30060, "lowStressDuration": 28380, "mediumStressDuration": 7800,
-                  "highStressDuration": 8220, "activityStressDuration": 3840,
+                  "highStressDuration": 8220, "activityStressDuration": 3840, "uncategorizedStressDuration": 3480,
                   "activeKilocalories": 455, "totalKilocalories": 2355, "dailyStepGoal": 10000},
         "hrv": {"hrvSummary": {"lastNightAvg": 40, "lastNight5MinHigh": 78,
                                "weeklyAvg": 38}},
@@ -31,7 +31,8 @@ def test_wellness_maps_scales_without_conflation():
     assert nat["steps"] == 9001
     assert "stress" not in nat  # Garmin 0..100 != Intervals 0..4
     assert custom["GarminStressAvg"] == 38 and custom["GarminStressMax"] == 99
-    assert [custom[f"GarminStress{level}Minutes"] for level in ("Rest", "Low", "Medium", "High")] == [501, 473, 130, 137]
+    levels = ("Rest", "Low", "Medium", "High", "Activity", "Unmeasured")
+    assert [custom[f"GarminStress{level}Minutes"] for level in levels] == [501, 473, 130, 137, 64, 58]
     assert custom["GarminEnduranceScore"] == 5320
     assert custom["GarminHillScore"] == 73
     assert custom["GarminRecoveryTimeMinutes"] == 1440

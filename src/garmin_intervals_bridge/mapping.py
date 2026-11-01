@@ -40,6 +40,8 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminStressLowMinutes": CustomField("Garmin Low Stress", "min"),
     "GarminStressMediumMinutes": CustomField("Garmin Medium Stress", "min"),
     "GarminStressHighMinutes": CustomField("Garmin High Stress", "min"),
+    "GarminStressActivityMinutes": CustomField("Garmin Activity Time (stress)", "min"),     # no stress measured
+    "GarminStressUnmeasuredMinutes": CustomField("Garmin Unmeasured Time (stress)", "min"),
     "GarminActiveCalories": CustomField("Garmin Active Calories", "kcal"),
     "GarminTotalCalories": CustomField("Garmin Total Calories", "kcal"),       # BMR + active, Garmin's daily burn
     "GarminCarbsKcal": CustomField("Garmin Carbs Energy", "kcal"),             # grams x 4 (Atwater), for energy share
@@ -342,11 +344,14 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
         if "GarminStressAvg" in custom:                  # a day with stress data: no zeros for one without
             put(custom, "GarminStressMax", choose(stats, ("maxStressLevel",), high=100), high=100)
-            # the time in Garmin Connect's four levels (seconds there; activity and unmeasured time left out)
+            # the time in Garmin Connect's four levels, and the time it measured no stress: in activities,
+            # or too much movement to tell (seconds there; the six add up to the time the device was worn)
             for code, key in (("GarminStressRestMinutes", "restStressDuration"),
                               ("GarminStressLowMinutes", "lowStressDuration"),
                               ("GarminStressMediumMinutes", "mediumStressDuration"),
-                              ("GarminStressHighMinutes", "highStressDuration")):
+                              ("GarminStressHighMinutes", "highStressDuration"),
+                              ("GarminStressActivityMinutes", "activityStressDuration"),
+                              ("GarminStressUnmeasuredMinutes", "uncategorizedStressDuration")):
                 seconds = choose(stats, (key,), high=86400)
                 if seconds is not None:
                     put(custom, code, round(seconds / 60), high=1440)

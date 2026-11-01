@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.12.13 — 2026-11-01
+
+The stress levels chart shows the whole day, as Garmin Connect does.
+
+### Added
+
+- **`GarminStressActivityMinutes` and `GarminStressUnmeasuredMinutes`:** the time in activities and
+  the time Garmin could not measure stress (too much movement), next to the four levels. The six add
+  up to the time the device was worn, so a day with a long hike no longer looks like a short day.
+- **The *Stress levels* chart** stacks them in grey on top of rest, low, medium and high. A chart the
+  bridge made gets them with the next `setup-charts --apply` (or the web page's *Charts*).
+
+### Upgrading
+
+The fields come with the next finished day. For the past, from the archive and without a Garmin
+request: `backfill --scope wellness --from 2026-01-01 --from-archive --apply`, or on the web page
+*Actions → The past → Wellness from the archive*; then `setup-charts --apply` adds the grey parts
+to your chart.
+
 ## 0.12.12 — 2026-11-01
 
 The *Stress levels* chart is in Intervals' chart library.

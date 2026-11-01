@@ -72,12 +72,12 @@ CHARTS: list[dict[str, Any]] = [
     },
     {
         "name": "Garmin Bridge: Stress levels",
-        "title": "Rest / low / medium / high stress (minutes), the day's maximum",
+        "title": "Rest / low / medium / high stress, activity and unmeasured (minutes), the day's maximum",
         "y": "Minutes",
         "y2": "Max",
         "height": 180,
         "plots": [
-            # stacked like Garmin Connect's day: rest, low, medium, high; the maximum on its own axis
+            # stacked like Garmin Connect's day: rest, low, medium, high, then grey; the maximum on its own axis
             ("custom", "GarminStressRestMinutes", "Rest", "bars", "none", None, "#2E86DECC", "#2E86DEFF", "stress",
              "minutes"),
             ("custom", "GarminStressLowMinutes", "Low", "bars", "none", None, "#F6C343CC", "#F6C343FF", "stress",
@@ -86,6 +86,11 @@ CHARTS: list[dict[str, Any]] = [
              "minutes"),
             ("custom", "GarminStressHighMinutes", "High", "bars", "none", None, "#D9480FCC", "#D9480FFF", "stress",
              "minutes"),
+            # the rest of the day in grey, as Garmin Connect draws it: the bar reaches the time worn
+            ("custom", "GarminStressActivityMinutes", "Activity", "bars", "none", None, "#9E9E9ECC", "#9E9E9EFF",
+             "stress", "minutes"),
+            ("custom", "GarminStressUnmeasuredMinutes", "Unmeas.", "bars", "none", None, "#D5D5D5CC", "#D5D5D5FF",
+             "stress", "minutes"),
             ("custom", "GarminStressMax", "Max", "line", "none", None, "#55555500", "#555555FF", "", "score"),
         ],
     },
