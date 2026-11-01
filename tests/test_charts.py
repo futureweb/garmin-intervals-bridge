@@ -190,4 +190,4 @@ def test_stress_levels_chart_stacks_the_four_levels_and_keeps_the_maximum_apart(
     assert [p["field"] for p in plots] == list(codes)
     assert {p["stack"] for p in plots[:4]} == {"stress"} and plots[4]["stack"] == ""
     assert {p["scale"] for p in plots[:4]} == {"minutes"} and plots[4]["scale"] == "score"
-    assert "from_id" not in chart                    # not in the chart library (yet)
+    assert chart["from_id"] == 1304847               # a copy of the library chart, like the others

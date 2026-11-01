@@ -356,6 +356,7 @@ LIBRARY_IDS = {
     "Garmin Bridge: Readiness & recovery": 1268942,
     "Garmin Bridge: Sleep stages": 1268943,
     "Garmin Bridge: Stress & Body Battery": 1268944,
+    "Garmin Bridge: Stress levels": 1304847,
     "Garmin Bridge: Nutrition intake vs. burn": 1268945,
     "Garmin Bridge: Energy balance (weekly)": 1269015,
     "Garmin Bridge: Energy balance (monthly)": 1269016,

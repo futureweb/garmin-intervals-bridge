@@ -82,7 +82,7 @@ and builds your own summit log. It runs next to the bridge with the same setting
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.11. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.12. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -410,17 +410,22 @@ both side by side. It never touches `TrainingAdvice`; see
 
 ## Charts
 
-Twenty of the bridge's fitness charts are published in Intervals' chart
+The bridge's twenty-one fitness charts are published in Intervals' chart
 library: Fitness page → a tab → *custom charts* → search for **Garmin
 Bridge** and tick what you want: readiness & recovery, sleep stages, sleep
 score & sleeping HR, SpO₂ & respiration, stress & Body Battery, HRV detail,
 nutrition intake vs. burn, macro energy, energy balance per week and month
 with weight, endurance & hill scores, VO₂max & fitness age, race
 predictions, intensity minutes & sweat loss, hydration, steps, body
-composition, skin temperature, Health Snapshot. The newest, **stress levels** (the
-day's minutes in rest, low, medium and high stress, stacked as in Garmin Connect, with the
-day's maximum), is not in the library yet: `setup-charts --apply` or the web page's
-*Charts* creates it. Each is built from the fields the bridge
+composition, skin temperature, Health Snapshot, and **stress levels** (the day's
+minutes in rest, low, medium and high stress, stacked as in Garmin Connect, with the day's
+maximum):
+
+<p align="center">
+<img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/chart-stress-levels.png" alt="Stress levels chart: the minutes in rest, low, medium and high stress stacked per day, the day's maximum as a line" width="900">
+</p>
+
+Each is built from the fields the bridge
 writes, with one axis per unit and values that hold until the next
 measurement carried across the days in between.
 

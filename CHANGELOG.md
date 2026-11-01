@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.12 — 2026-11-01
+
+The *Stress levels* chart is in Intervals' chart library.
+
+### Changed
+
+- **`setup-charts` makes *Garmin Bridge: Stress levels* a copy of the library chart,** like the
+  other twenty. You can also add it yourself: Fitness page → a tab → *custom charts* → search for
+  **Garmin Bridge**.
+
 ## 0.12.11 — 2026-11-01
 
 Stress the way Garmin Connect shows it: the time in each level, and the maximum.
