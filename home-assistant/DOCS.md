@@ -49,7 +49,7 @@ The page's *Log* shows the bridge's log with date and time.
 | Poll hours / interval / quiet interval | look for new activities less often, only during the day, or slower at night |
 | Adaptive polling (beta) | learns when your activities usually end and checks often only then – fewer requests for Intervals.icu |
 | Alert e-mail / Push messages (ntfy) | when Garmin wants a new sign-in or something has been failing for a day |
-| Notify URL | a tool that wants to know about new activities, e.g. the Intervals Summits app: `http://<its hostname>:8766/sync` (hostname on its *Info* tab) |
+| Notify URL | tools that want to know about new activities and wellness data (several comma-separated), e.g. the Intervals Summits app: `http://<its hostname>:8766/sync` (hostname on its *Info* tab) |
 | Time zone | empty = Home Assistant's |
 
 Everything else, the backfill of the past and what each value means:

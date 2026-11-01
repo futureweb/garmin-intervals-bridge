@@ -218,10 +218,13 @@ def _port(name: str) -> int | None:
     return int(value)
 
 
-def _web_address(name: str) -> str | None:
+def _web_addresses(name: str) -> str | None:
+    """One web address or several, comma-separated."""
     value = _text(name)
-    if value and not value.startswith(("http://", "https://")):
-        raise ValueError(f"{name} must be a web address, e.g. http://127.0.0.1:8766/sync")
+    for url in re.split(r"[,\s]+", value or ""):
+        if url and not url.startswith(("http://", "https://")):
+            raise ValueError(f"{name} must be web addresses, e.g. http://127.0.0.1:8766/sync "
+                             "(several: comma-separated)")
     return value
 
 
@@ -407,7 +410,7 @@ class Settings:
             smtp_from=_text("BRIDGE_SMTP_FROM"),
             ntfy_url=_text("BRIDGE_NTFY_URL"),
             ntfy_token=_text("BRIDGE_NTFY_TOKEN"),
-            notify_url=_web_address("BRIDGE_NOTIFY_URL"),
+            notify_url=_web_addresses("BRIDGE_NOTIFY_URL"),
             poll_seconds=_positive_int("BRIDGE_POLL_SECONDS", 60, 24 * 3600) if _text("BRIDGE_POLL_SECONDS") else None,
             poll_hours=poll_hours(os.getenv("BRIDGE_POLL_HOURS", "")),
             poll_quiet_seconds=(_positive_int("BRIDGE_POLL_QUIET_SECONDS", 60, 24 * 3600)

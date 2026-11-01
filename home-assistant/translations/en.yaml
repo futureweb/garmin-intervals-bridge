@@ -76,4 +76,4 @@ configuration:
     description: https://ntfy.sh/a-long-name-only-you-know – the free ntfy app shows a message when the bridge needs you.
   notify_url:
     name: Notify URL
-    description: Optional. A tool that wants to know about new activities, e.g. the Intervals Summits app – http://<its hostname from its Info tab>:8766/sync.
+    description: Optional. Tools that want to know about new activities and wellness (several comma-separated), e.g. the Intervals Summits app – http://<its hostname from its Info tab>:8766/sync.

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.10 — 2026-11-01
+
+`BRIDGE_NOTIFY_URL` also reports new wellness data, to several addresses.
+
+### Added
+
+- **A `wellness` event** (thanks kilka): after a run that wrote wellness values – the night's sleep,
+  HRV, Body Battery … – the bridge posts `{"event": "wellness", "days": ["2026-11-01"]}`, so a tool
+  of yours can start when there is something new instead of polling Intervals. New activities post
+  `{"event": "activities", "new": 2}` as before. Each with `source` and `version`, no values, no key.
+- **Several addresses** in `BRIDGE_NOTIFY_URL`, comma-separated; each gets every event.
+
 ## 0.12.9 — 2026-11-01
 
 The bridge can tell a tool next to it about new activities.

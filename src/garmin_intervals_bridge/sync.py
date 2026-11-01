@@ -886,6 +886,7 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         if apply:
             intervals.write_wellness(day, changes)
             metrics["writes"] += 1
+            metrics.setdefault("written_days", []).append(day.isoformat())     # BRIDGE_NOTIFY_URL
             if day >= current:          # ours only what went into an empty field (no snapshot correction)
                 kept.update({k: changes[k] for k in PROVISIONAL_NATIVE if k in changes and existing.get(k) is None})
     if apply and store is not None:
