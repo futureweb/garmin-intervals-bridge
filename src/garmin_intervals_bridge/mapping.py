@@ -35,6 +35,11 @@ CUSTOM_FIELDS: dict[str, CustomField] = {
     "GarminHillStrength": CustomField("Garmin Hill Strength", None, 100),
     "GarminHillEndurance": CustomField("Garmin Hill Endurance", None, 100),
     "GarminStressAvg": CustomField("Garmin Stress Average", None, 100),
+    "GarminStressMax": CustomField("Garmin Stress Max", None, 100),
+    "GarminStressRestMinutes": CustomField("Garmin Rest Stress", "min"),       # the day in Garmin's four levels
+    "GarminStressLowMinutes": CustomField("Garmin Low Stress", "min"),
+    "GarminStressMediumMinutes": CustomField("Garmin Medium Stress", "min"),
+    "GarminStressHighMinutes": CustomField("Garmin High Stress", "min"),
     "GarminActiveCalories": CustomField("Garmin Active Calories", "kcal"),
     "GarminTotalCalories": CustomField("Garmin Total Calories", "kcal"),       # BMR + active, Garmin's daily burn
     "GarminCarbsKcal": CustomField("Garmin Carbs Energy", "kcal"),             # grams x 4 (Atwater), for energy share
@@ -335,6 +340,16 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
                 put(custom, code, round(native[native_key] * factor), low=1, high=30000)
         put(custom, "GarminStepsGoal", choose(stats, ("dailyStepGoal",), high=100000), high=100000)
         put(custom, "GarminStressAvg", choose(stats, ("averageStressLevel",), high=100), high=100)
+        if "GarminStressAvg" in custom:                  # a day with stress data: no zeros for one without
+            put(custom, "GarminStressMax", choose(stats, ("maxStressLevel",), high=100), high=100)
+            # the time in Garmin Connect's four levels (seconds there; activity and unmeasured time left out)
+            for code, key in (("GarminStressRestMinutes", "restStressDuration"),
+                              ("GarminStressLowMinutes", "lowStressDuration"),
+                              ("GarminStressMediumMinutes", "mediumStressDuration"),
+                              ("GarminStressHighMinutes", "highStressDuration")):
+                seconds = choose(stats, (key,), high=86400)
+                if seconds is not None:
+                    put(custom, code, round(seconds / 60), high=1440)
         put(custom, "GarminActiveCalories", choose(stats, ("activeKilocalories",), high=30000), high=30000)
         put(custom, "GarminTotalCalories", choose(stats, ("totalKilocalories",), low=1, high=30000), low=1, high=30000)
         # Daily energy balance, for weekly / monthly totals in a chart. Only when food was logged.

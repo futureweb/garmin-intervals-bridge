@@ -6,7 +6,9 @@ from garmin_intervals_bridge.mapping import CUSTOM_FIELDS, map_wellness, merge_w
 def sample():
     return {"data": {
         "stats": {"totalSteps": 9001, "restingHeartRate": 49, "bodyBatteryHighestValue": 91,
-                  "bodyBatteryLowestValue": 19, "averageStressLevel": 38,
+                  "bodyBatteryLowestValue": 19, "averageStressLevel": 38, "maxStressLevel": 99,
+                  "restStressDuration": 30060, "lowStressDuration": 28380, "mediumStressDuration": 7800,
+                  "highStressDuration": 8220, "activityStressDuration": 3840,
                   "activeKilocalories": 455, "totalKilocalories": 2355, "dailyStepGoal": 10000},
         "hrv": {"hrvSummary": {"lastNightAvg": 40, "lastNight5MinHigh": 78,
                                "weeklyAvg": 38}},
@@ -28,7 +30,8 @@ def test_wellness_maps_scales_without_conflation():
     assert nat["hrv"] == 40
     assert nat["steps"] == 9001
     assert "stress" not in nat  # Garmin 0..100 != Intervals 0..4
-    assert custom["GarminStressAvg"] == 38
+    assert custom["GarminStressAvg"] == 38 and custom["GarminStressMax"] == 99
+    assert [custom[f"GarminStress{level}Minutes"] for level in ("Rest", "Low", "Medium", "High")] == [501, 473, 130, 137]
     assert custom["GarminEnduranceScore"] == 5320
     assert custom["GarminHillScore"] == 73
     assert custom["GarminRecoveryTimeMinutes"] == 1440
@@ -228,3 +231,13 @@ def test_chronic_load_ratio_and_optimal_range_of_a_finished_day():
     assert map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]["GarminAcuteLoad"] == 459
     src["data"]["daily_training_status"] = {"latestTrainingStatusData": {"1": entry("2026-10-06", 486, True)}}
     assert "GarminChronicLoad" not in map_wellness(src, date(2026, 10, 7), date(2026, 10, 8))[1]
+
+
+def test_stress_levels_only_on_a_day_with_stress_data():
+    data = sample()
+    data["data"]["stats"].update({"averageStressLevel": None, "maxStressLevel": -1,
+                                  "restStressDuration": 0, "lowStressDuration": 0})
+    _, custom = map_wellness(data, date(2026, 10, 7), date(2026, 10, 8))
+    assert not any(code.startswith("GarminStress") for code in custom)
+    _, today = map_wellness(sample(), date(2026, 10, 8), date(2026, 10, 8))     # the running day: no totals yet
+    assert "GarminStressRestMinutes" not in today and "GarminStressMax" not in today

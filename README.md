@@ -16,7 +16,7 @@
   MFA. Together with the sign-in the bridge uses both, and nothing is missing –
   [which data comes from where](https://github.com/futureweb/garmin-intervals-bridge#which-data-comes-from-where).
 - **And more** — your Garmin gear (bikes, shoes, skis) on the activities, ImReady4's daily
-  training advice, 20 ready-made charts, a web page, a note or push message when it needs
+  training advice, 21 ready-made charts, a web page, a note or push message when it needs
   you. It runs quietly in the background on your own computer, NAS or server.
 - **Not on Intervals?** [Backup mode](https://github.com/futureweb/garmin-intervals-bridge/blob/main/docs/BACKUP.md) keeps all your Garmin data
   – original activity files, every day's wellness, the watch's own files – in a folder of yours.
@@ -36,7 +36,7 @@
 </p>
 <p align="center">
 <img src="https://raw.githubusercontent.com/futureweb/garmin-intervals-bridge/main/docs/images/fitness-charts.png" alt="Fitness page with Garmin Bridge charts: sleep stages, stress and Body Battery, kcal consumed vs. burned" width="900"><br>
-<sub>Three of the twenty charts from the chart library: sleep stages, stress & Body Battery, intake vs. total burn.</sub>
+<sub>Three of the charts from the chart library: sleep stages, stress & Body Battery, intake vs. total burn.</sub>
 </p>
 
 Since the end of September 2026 the file Garmin hands to partners is not
@@ -53,7 +53,7 @@ This bridge is a small self-hosted service that:
 - fetches the **original FIT** through Garmin's official Personal API or with your Garmin Connect sign-in, byte-identical to the browser export;
 - finds the activity the **official sync already created** in Intervals.icu — the sync stays on, nothing is duplicated, deleted or recomputed;
 - adds exactly **what Garmin stripped**, into the custom fields and streams *you* have configured (Stamina curve, Recovery Time, VO₂max, Performance Condition, Sweat Loss, Training Effect …);
-- fills the **daily wellness values the official sync does not deliver**: night SpO₂, respiration, sleeping heart rate, Body Battery, HRV details, sleep stages, stress, readiness, floors, scale data — and your **logged nutrition** (kcal, carbs, protein, fat);
+- fills the **daily wellness values the official sync does not deliver**: night SpO₂, respiration, sleeping heart rate, Body Battery, HRV details, sleep stages, stress (average, maximum, time per level), readiness, floors, scale data — and your **logged nutrition** (kcal, carbs, protein, fat);
 - can **backfill the past** (on the reference account SpO₂ had silently stopped arriving in mid-2025);
 - reacts within minutes of the official import (it asks Intervals every 5 minutes – or, [adaptive](#how-often-it-looks), mostly around the hours you usually finish an activity), with Garmin contacted only when there is something new.
 
@@ -78,11 +78,11 @@ and builds your own summit log. It runs next to the bridge with the same setting
 | --- | --- | --- |
 | **Source** | Original FIT from Garmin Connect | Garmin's daily endpoints (up to 30 of them) |
 | **Target** | Your Intervals custom activity fields and custom streams, defined by you, read from your own definitions | Native Intervals wellness fields first, private `Garmin…` custom fields for the rest |
-| **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, fluid and food logged with fluid balance and sweat rate, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/quality/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute and chronic load and their ratio, stress, intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
+| **Examples** | Stamina / Potential Stamina streams, Recovery Time, VO₂max, Performance Condition, Sweat Loss, fluid and food logged with fluid balance and sweat rate, Aerobic/Anaerobic Effect, Stamina at start/end, EPOC, Training Load, grade-adjusted speed | SpO₂, respiration, sleeping HR, resting HR, HRV (+5-min high, 7-day avg), sleep seconds/score/quality/stages, Body Battery max/min/charged/drained, training readiness, recovery time, acute and chronic load and their ratio, stress (average, max, minutes in rest/low/medium/high), intensity minutes, floors, steps, hydration, sweat loss, weight, body fat, kcal consumed, total and active burn, carbohydrates, protein, fat (g and kcal), endurance & hill scores, fitness age, race predictions, VO₂max (run/bike) |
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.10. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.11. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -410,14 +410,17 @@ both side by side. It never touches `TrainingAdvice`; see
 
 ## Charts
 
-The bridge's twenty fitness charts are published in Intervals' chart
+Twenty of the bridge's fitness charts are published in Intervals' chart
 library: Fitness page → a tab → *custom charts* → search for **Garmin
 Bridge** and tick what you want: readiness & recovery, sleep stages, sleep
 score & sleeping HR, SpO₂ & respiration, stress & Body Battery, HRV detail,
 nutrition intake vs. burn, macro energy, energy balance per week and month
 with weight, endurance & hill scores, VO₂max & fitness age, race
 predictions, intensity minutes & sweat loss, hydration, steps, body
-composition, skin temperature, Health Snapshot. Each is built from the fields the bridge
+composition, skin temperature, Health Snapshot. The newest, **stress levels** (the
+day's minutes in rest, low, medium and high stress, stacked as in Garmin Connect, with the
+day's maximum), is not in the library yet: `setup-charts --apply` or the web page's
+*Charts* creates it. Each is built from the fields the bridge
 writes, with one axis per unit and values that hold until the next
 measurement carried across the days in between.
 

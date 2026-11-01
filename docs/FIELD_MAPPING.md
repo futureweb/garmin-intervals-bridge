@@ -133,6 +133,7 @@ definitions with the same code are reused, never changed.
 | `GarminSleepDeepMinutes`, `…REMMinutes`, `…LightMinutes`, `…AwakeMinutes` | sleep stages / 60 | both | ✓ |
 | `GarminSleepStressAvg`, `GarminSkinTempDeviationC` | sleep | both | stress ✓, skin temperature – |
 | `GarminStressAvg`, `GarminActiveCalories`, `GarminTotalCalories`, `GarminIntensityModerateMinutes`, `GarminIntensityVigorousMinutes` | `stats` | both | ✓ |
+| `GarminStressMax`, `GarminStressRestMinutes`, `…LowMinutes`, `…MediumMinutes`, `…HighMinutes` | `stats.maxStressLevel`; `stats.rest/low/medium/highStressDuration` / 60: the day in Garmin Connect's four stress levels (activity and unmeasured time left out); finished days with a stress average only | both | ✓ |
 | `GarminEnduranceScore`, `GarminHillScore`, `GarminHillStrength`, `GarminHillEndurance` | scores | both | – |
 | `GarminFitnessAge` | fitness age | both | ✓ |
 | `GarminPredicted5KSeconds`, `…10KSeconds`, `…HalfSeconds`, `…MarathonSeconds` | race predictions | both | – |

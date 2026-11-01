@@ -64,7 +64,7 @@ def test_setup_charts_dry_run_posts_nothing_and_apply_posts_clean_bodies():
     out = setup_charts(f, apply=True)
     assert [c["name"] for c in out["created"]] == names
     assert "_missing_fields" not in f.posted[0] and len(f.posted[0]["content"]["plots"]) == 2
-    assert len(CHARTS) == 20
+    assert len(CHARTS) == 21
 
 
 def test_own_charts_are_completed_when_fields_appear_and_foreign_ones_untouched():
@@ -180,3 +180,14 @@ def test_a_new_chart_is_a_copy_of_its_library_chart_and_links_the_forum():
     assert BRIDGE_MARK.endswith("https://forum.intervals.icu/t/132863")
     assert is_bridge_item({"description": "Created by garmin-intervals-bridge for the values it syncs: "
                                           "https://github.com/futureweb/garmin-intervals-bridge"})   # older charts too
+
+
+def test_stress_levels_chart_stacks_the_four_levels_and_keeps_the_maximum_apart():
+    codes = ("GarminStressRestMinutes", "GarminStressLowMinutes", "GarminStressMediumMinutes",
+             "GarminStressHighMinutes", "GarminStressMax")
+    chart = next(c for c in plan_charts(items(*codes))["create"] if c["name"] == "Garmin Bridge: Stress levels")
+    plots = chart["content"]["plots"]
+    assert [p["field"] for p in plots] == list(codes)
+    assert {p["stack"] for p in plots[:4]} == {"stress"} and plots[4]["stack"] == ""
+    assert {p["scale"] for p in plots[:4]} == {"minutes"} and plots[4]["scale"] == "score"
+    assert "from_id" not in chart                    # not in the chart library (yet)

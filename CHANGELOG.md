@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.11 — 2026-11-01
+
+Stress the way Garmin Connect shows it: the time in each level, and the maximum.
+
+### Added
+
+- **Five stress fields** (thanks Helmut001): `GarminStressRestMinutes`, `GarminStressLowMinutes`,
+  `GarminStressMediumMinutes`, `GarminStressHighMinutes` – the day's minutes in rest, low, medium
+  and high stress – and `GarminStressMax`, next to the average the bridge already wrote. Finished
+  days only, like the average; a day without stress data gets none of them.
+- **Chart *Garmin Bridge: Stress levels*:** the four levels stacked per day as in Garmin Connect,
+  the day's maximum as a line on its own axis. Created with `setup-charts --apply` or the web
+  page's *Charts*; it is not in the chart library yet.
+
+### Upgrading
+
+The fields come with the next finished day. For the past, from the archive and without a Garmin
+request: `backfill --scope wellness --from 2026-01-01 --from-archive --apply`, or on the web page
+*Actions → The past → Wellness from the archive*.
+
 ## 0.12.10 — 2026-11-01
 
 `BRIDGE_NOTIFY_URL` also reports new wellness data, to several addresses.

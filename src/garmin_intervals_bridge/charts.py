@@ -71,6 +71,25 @@ CHARTS: list[dict[str, Any]] = [
         ],
     },
     {
+        "name": "Garmin Bridge: Stress levels",
+        "title": "Rest / low / medium / high stress (minutes), the day's maximum",
+        "y": "Minutes",
+        "y2": "Max",
+        "height": 180,
+        "plots": [
+            # stacked like Garmin Connect's day: rest, low, medium, high; the maximum on its own axis
+            ("custom", "GarminStressRestMinutes", "Rest", "bars", "none", None, "#2E86DECC", "#2E86DEFF", "stress",
+             "minutes"),
+            ("custom", "GarminStressLowMinutes", "Low", "bars", "none", None, "#F6C343CC", "#F6C343FF", "stress",
+             "minutes"),
+            ("custom", "GarminStressMediumMinutes", "Medium", "bars", "none", None, "#F08A24CC", "#F08A24FF", "stress",
+             "minutes"),
+            ("custom", "GarminStressHighMinutes", "High", "bars", "none", None, "#D9480FCC", "#D9480FFF", "stress",
+             "minutes"),
+            ("custom", "GarminStressMax", "Max", "line", "none", None, "#55555500", "#555555FF", "", "score"),
+        ],
+    },
+    {
         "name": "Garmin Bridge: Nutrition intake vs. burn",
         "aliases": ("Nutrition: intake vs. burn (Garmin)",),
         "title": "kcal consumed (logged in Garmin) vs. Garmin's total daily burn (BMR + active); active part as bars",

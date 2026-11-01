@@ -14,7 +14,7 @@ Where the bridge stands and where it goes. Ideas and reports:
 - **Wellness:** the values the official integration misses, read once the watch has synced;
   the device's own wellness files and Health Snapshots; backfills of the past.
 - **More:** gear from Garmin onto the activities, ImReady4's training advice and an
-  experimental HRV-trend advice, 20 charts, a complete local archive – or *backup* mode
+  experimental HRV-trend advice, 21 charts, a complete local archive – or *backup* mode
   without Intervals at all.
 - **Garmin, two ways in:** Garmin's official Personal API with a key, the Garmin Connect
   sign-in, or both (hybrid: each takes its part; an expired sign-in doesn't stop the key's part,
