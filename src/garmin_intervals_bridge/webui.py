@@ -993,7 +993,8 @@ class UI:
             f'<label>From <input type="date" name="start" required max="{today}"></label>'
             f'<label>To <input type="date" name="end" value="{today}" max="{today}"></label>'
             '<label><input type="checkbox" name="swap" value="1"> Activities: swap – the original file into Garmin\'s '
-            'copy (same activity, nothing deleted), so Intervals computes everything itself</label>'),
+            'copy, or into your own upload of the same recording (same activity, nothing deleted), so Intervals '
+            'computes everything itself</label>'),
             "Show what it will do")
         return f'<section><h2>The past</h2>{done}<p>{what}</p>{form}</section>'
 

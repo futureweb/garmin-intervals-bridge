@@ -740,6 +740,18 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
                                     method="replace" if swap else None)
                 if swapped:
                     result = {"outcome": "swapped", "intervals_id": swapped}
+            elif copy is None and swap:
+                # a backfill with --swap: an upload of your own of this recording takes the original too
+                from .swap import own_upload_pair
+                upload, reason = own_upload_pair(activity, remote, activities)
+                if reason:
+                    metrics["swap_kept"] = metrics.get("swap_kept", 0) + 1
+                    log.info("Swap: no upload of yours takes the original of %s: %s", gid, reason)
+                elif upload is not None:
+                    swapped = _try_swap(settings, gid, str(upload["id"]), garmin, intervals, store, metrics,
+                                        apply=apply, method="replace", own=True)
+                    if swapped:
+                        result = {"outcome": "swapped", "intervals_id": swapped}
             if result is None:
                 result = enrich_activity(gid, garmin, intervals, store, apply=apply,
                                          remote_candidates=remote, mappings=mappings, garmin_activity=activity)
@@ -1429,14 +1441,17 @@ def kcal_balance(intervals: Any, start: date, end: date, *, apply: bool) -> dict
 
 
 def _try_swap(settings: Any, gid: str, iid: str, garmin: Any, intervals: Any, store: Store, metrics: dict, *,
-              apply: bool, method: str | None = None) -> str | None:
+              apply: bool, method: str | None = None, own: bool = False) -> str | None:
     """Swap mode: the original for Garmin's copy – into the same activity (replace) or as a new
-    one of your own (upload). The Intervals id the activity has now when the swap took it (or
-    planned it); None when the copy stays and is completed as usual."""
-    from .swap import replace_activity, swap_activity
+    one of your own (upload); `own`: into an upload of your own, in place. The Intervals id the
+    activity has now when the swap took it (or planned it); None when the copy stays and is
+    completed as usual."""
+    from .swap import replace_activity, replace_own_upload, swap_activity
     method = method or getattr(settings, "swap_method", "replace")
     try:
-        if method == "replace":
+        if own:
+            result = replace_own_upload(gid, iid, garmin, intervals, store, apply=apply)
+        elif method == "replace":
             result = replace_activity(gid, iid, garmin, intervals, store, apply=apply)
         else:
             result = swap_activity(gid, iid, garmin, intervals, store, apply=apply,
@@ -1456,10 +1471,12 @@ def _try_swap(settings: Any, gid: str, iid: str, garmin: Any, intervals: Any, st
     metrics[f"swap_{outcome}"] = metrics.get(f"swap_{outcome}", 0) + 1
     if outcome in ("kept", "same"):
         if outcome == "kept":
-            log.info("Swap: %s stays Garmin's copy: %s", iid, result["reason"])
+            log.info("Swap: %s stays %s: %s", iid, "as it is" if own else "Garmin's copy", result["reason"])
         return None
     if outcome == "planned":
-        if method == "replace":
+        if own:
+            log.info("DRY-RUN would put the original of %s into your upload %s (%s)", gid, iid, result["checked"])
+        elif method == "replace":
             log.info("DRY-RUN would put the original of %s into Garmin's copy %s", gid, iid)
         else:
             log.info("DRY-RUN would swap %s: Garmin's copy %s for the original (carrying %s)", gid, iid,

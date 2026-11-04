@@ -50,33 +50,32 @@ def match_activity(garmin: dict, remote: list[dict]) -> dict | None:
     decision; never guesses.
     """
     gid = str(garmin.get("activityId", ""))
-    start = parse_utc(garmin.get("startTimeGMT"), garmin_gmt=True)
-    duration = garmin.get("duration")
-    if not gid.isdecimal() or start is None:
+    if not gid.isdecimal() or parse_utc(garmin.get("startTimeGMT"), garmin_gmt=True) is None:
         return None
     exact = exact_match(remote, gid)
     if exact is not None:
         return exact
-    if not isinstance(duration, (int, float)):
-        return None
-    close = []
-    for item in remote:
-        if not isinstance(item, dict) or not item.get("id"):
-            continue
-        if str(item.get("source") or "").upper() != "GARMIN_CONNECT":
-            continue
-        if garmin_id_from(item.get("external_id")) not in (None, gid):
-            continue                                   # it names its own recording, another one
-        remote_start = parse_utc(item.get("start_date"))
-        if remote_start is None or abs((remote_start - start).total_seconds()) > START_TOLERANCE_SECONDS:
-            continue
-        # Garmin's `duration` is timer time: compare with moving and elapsed time, either may agree.
-        remote_durations = [item.get(k) for k in ("moving_time", "elapsed_time")
-                            if isinstance(item.get(k), (int, float))]
-        allowed = max(DURATION_TOLERANCE_SECONDS, DURATION_TOLERANCE * float(duration))
-        if remote_durations and any(abs(float(r) - float(duration)) <= allowed for r in remote_durations):
-            close.append(item)
+    close = [item for item in remote
+             if isinstance(item, dict) and item.get("id")
+             and str(item.get("source") or "").upper() == "GARMIN_CONNECT"
+             and garmin_id_from(item.get("external_id")) in (None, gid)   # else it names another recording
+             and agrees(garmin, item)]
     return close[0] if len(close) == 1 else None
+
+
+def agrees(garmin: dict, item: dict) -> bool:
+    """A Garmin activity (as Garmin lists it) and an Intervals one start and last alike."""
+    start = parse_utc(garmin.get("startTimeGMT"), garmin_gmt=True)
+    duration = garmin.get("duration")
+    remote_start = parse_utc(item.get("start_date"))
+    if start is None or remote_start is None or not isinstance(duration, (int, float)):
+        return False
+    if abs((remote_start - start).total_seconds()) > START_TOLERANCE_SECONDS:
+        return False
+    # Garmin's `duration` is timer time: compare with moving and elapsed time, either may agree.
+    remote_durations = [item.get(k) for k in ("moving_time", "elapsed_time") if isinstance(item.get(k), (int, float))]
+    allowed = max(DURATION_TOLERANCE_SECONDS, DURATION_TOLERANCE * float(duration))
+    return any(abs(float(r) - float(duration)) <= allowed for r in remote_durations)
 
 
 def _field_sets(messages: dict[str, list[dict]]) -> dict[str, set[str]]:

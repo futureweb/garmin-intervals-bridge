@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.14 — 2026-11-04
+
+The original also goes into your own uploads of the same recording – a Strava archive, say.
+
+### Added
+
+- **Swap into your own uploads** (thanks Jeroen_Doesburg): `swap <id or link>` and
+  `backfill --scope activities --from DATE --swap` put Garmin's original into an upload of your own
+  (`source: UPLOAD`), in place: the same activity keeps its id, name, description, tags, gear and
+  RPE; nothing is deleted. The bridge pairs it by start and duration, one to one only, and replaces
+  only the same recording: the FIT Intervals holds must name the same device and creation time. A
+  GPX or TCX, which cannot tell, only with `swap` by hand after the dry run. The automatic swap
+  leaves your uploads alone.
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant
+app. Nothing to change. For an archive of your own: `backfill --scope activities --from DATE --swap`
+shows what it would do, `--apply` does it.
+
 ## 0.12.13 — 2026-11-01
 
 The stress levels chart shows the whole day, as Garmin Connect does.

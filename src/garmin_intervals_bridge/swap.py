@@ -30,6 +30,14 @@ Two ways (BRIDGE_SWAP_METHOD):
   - a delete tried again later only while Intervals still lists both activities
   - one swap at a time (a lock shared by the watch, the full runs and `swap` by hand)
   - the original stays in the local archive either way
+
+Your own uploads (source UPLOAD – a Strava archive, files you uploaded by hand) take the original
+too, in place only (replace): `swap <id>` and `backfill --swap`, never the automatic swap. No
+Garmin id names them, so they are paired by start and duration, and only one to one: one upload,
+one Garmin activity, no import of Garmin's own beside them. And the file Intervals holds must be
+the same recording – its FIT names the same device and creation time. A file that cannot tell
+(a GPX, say) only by hand, after the dry run. Other platforms' imports (Strava's) Intervals does
+not let anyone change.
 """
 from __future__ import annotations
 
@@ -37,10 +45,11 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
-from .enrich import garmin_id_from
-from .fit import extract_original_fit, sha256
+from .enrich import agrees, garmin_id_from
+from .fit import InvalidFIT, NotFIT, decode_fit, extract_original_fit, sha256
 from .intervals import refused
 from .store import single_instance
+from .times import parse_utc
 
 log = logging.getLogger(__name__)
 
@@ -165,6 +174,119 @@ def replace_activity(gid: str, iid: str, garmin: Any, intervals: Any, store: Any
         return {**plan, "outcome": "same", "reason": "Intervals found the file unchanged"}
     log.info("Replaced %s: Garmin's copy %s now holds the original (same activity)", gid, iid)
     return {**plan, "outcome": "replaced"}
+
+
+def is_own_upload(item: dict) -> bool:
+    return str(item.get("source") or "").upper() == "UPLOAD"
+
+
+def _names(item: dict) -> str | None:
+    """The Garmin id an upload's external id names for sure (`garmin:<id>`, Garmin's export
+    `<id>_ACTIVITY.fit`); a bare number may be any platform's id."""
+    external = str(item.get("external_id") or "").strip()
+    return None if external.isdecimal() else garmin_id_from(external)
+
+
+def own_upload_pair(activity: dict, remote: list[dict], listed: list[dict]) -> tuple[dict | None, str | None]:
+    """Your own upload of this Garmin recording among `remote` (Intervals around its day), checked
+    against `listed` (Garmin around its day): (the upload, None), or (None, why not – None when
+    there is no upload like it at all). Never guesses."""
+    gid = str(activity.get("activityId"))
+    mine = [item for item in remote if is_own_upload(item) and item.get("id") and _names(item) in (None, gid)]
+    uploads = [item for item in mine if _names(item) == gid] or [item for item in mine if agrees(activity, item)]
+    if not uploads:
+        return None, None
+    if any(str(item.get("source") or "").upper() == "GARMIN_CONNECT"
+           and (garmin_id_from(item.get("external_id")) == gid or agrees(activity, item)) for item in remote):
+        return None, "Garmin's own import of it is in Intervals too: swap that one"
+    if len(uploads) > 1:
+        return None, f"{len(uploads)} of your uploads start and last like it"
+    others = [a for a in listed if str(a.get("activityId")) != gid and a.get("manualActivity") is not True]
+    if _names(uploads[0]) is None and any(agrees(other, uploads[0]) for other in others):
+        return None, "another Garmin activity starts and lasts like it too (two recordings of one session?)"
+    return uploads[0], None
+
+
+FILE_ID = ("manufacturer", "product", "serial_number", "time_created")
+
+
+def same_recording(original: bytes, held: bytes) -> bool | None:
+    """Do both FITs come from one recording – the same device and creation time in their file id?
+    None when they cannot tell (no creation time in one of them)."""
+    ids = []
+    for data in (original, held):
+        found = (decode_fit(data, checked=True)[0].get("file_id") or [{}])[0]
+        ids.append({k: found.get(k) for k in FILE_ID if found.get(k) is not None})
+    if not all("time_created" in i for i in ids):
+        return None
+    return all(ids[0][k] == ids[1][k] for k in FILE_ID if k in ids[0] and k in ids[1])
+
+
+def replace_own_upload(gid: str, iid: str, garmin: Any, intervals: Any, store: Any, *, apply: bool,
+                       by_hand: bool = False) -> dict:
+    """The original into an upload of your own (POST /activity/{id}/file): the same activity,
+    nothing deleted. Only into the same recording; a file that cannot tell (no FIT) only `by_hand`.
+    Outcomes: kept (with the reason), same, planned, replaced. Leaves the bridge's records of
+    Garmin's copies alone (the partner file, the enrichment)."""
+    copy = intervals.activity(iid)
+    if not is_own_upload(copy):
+        return {"outcome": "kept", "intervals_id": iid,
+                "reason": f"not your own upload (source {copy.get('source') or 'unknown'})"}
+    path = store.fit_path(gid)
+    if not path.is_file():
+        store.atomic_save(path, garmin.original_fit(gid))
+    original = path.read_bytes()
+    try:
+        held = extract_original_fit(intervals.activity_file(iid))
+    except (InvalidFIT, NotFIT):
+        held = None                                    # a GPX or TCX, or a broken FIT
+    if held is not None and sha256(held) == sha256(original):
+        return {"outcome": "same", "intervals_id": iid, "reason": "Intervals has the original already"}
+    same = same_recording(original, held) if held is not None else None
+    if same is False:
+        return {"outcome": "kept", "intervals_id": iid,
+                "reason": "its file is another recording (another device or creation time in the FIT)"}
+    if same is None and not by_hand:
+        return {"outcome": "kept", "intervals_id": iid, "reason": "its file cannot tell whether it is this "
+                f"recording (no FIT): check `swap {iid}` and swap it by hand"}
+    plan = {"outcome": "planned", "intervals_id": iid, "garmin_id": gid, "method": "replace", "own_upload": True,
+            "checked": "the same recording (the FIT's device and creation time)" if same else
+                       "start and duration only: make sure it is this recording"}
+    if not apply:
+        return plan
+    with single_instance(store.base, ("swap",)):
+        done = intervals.replace_file(iid, path, keep_intervals=bool(copy.get("icu_intervals_edited")))
+    if done is None:
+        return {**plan, "outcome": "same", "reason": "Intervals found the file unchanged"}
+    log.info("Replaced %s: your upload %s now holds the original (same activity)", gid, iid)
+    return {**plan, "outcome": "replaced"}
+
+
+def swap_own_upload_by_hand(iid: str, item: dict, garmin: Any, intervals: Any, store: Any, *, apply: bool) -> dict:
+    """`swap <id>` on an upload of your own: its Garmin recording found by start and duration
+    (or the Garmin id it names), then the original into it."""
+    gid = _names(item)
+    start = parse_utc(item.get("start_date"))
+    if start is None:
+        return {"outcome": "kept", "intervals_id": iid, "reason": "it has no start time"}
+    day = start.date()
+    listed = [a for a in garmin.activities(day - timedelta(days=1), day + timedelta(days=1))
+              if a.get("manualActivity") is not True]
+    if gid is None:
+        alike = [a for a in listed if agrees(a, item)]
+        if len(alike) != 1:
+            return {"outcome": "kept", "intervals_id": iid, "reason": "no Garmin activity starts and lasts like it"
+                    if not alike else f"{len(alike)} Garmin activities start and last like it (two recordings?)"}
+        activity = alike[0]
+    else:
+        activity = next((a for a in listed if str(a.get("activityId")) == gid), {"activityId": gid})
+    remote = intervals.activities(day - timedelta(days=1), day + timedelta(days=1),
+                                  fields=["id", "external_id", "source", "start_date", "moving_time", "elapsed_time"])
+    upload, reason = own_upload_pair(activity, remote, listed)
+    if upload is None or str(upload.get("id")) != iid:
+        return {"outcome": "kept", "intervals_id": iid, "garmin_id": str(activity["activityId"]),
+                "reason": reason or "Intervals pairs another upload with that Garmin activity"}
+    return replace_own_upload(str(activity["activityId"]), iid, garmin, intervals, store, apply=apply, by_hand=True)
 
 
 def swap_activity(gid: str, iid: str, garmin: Any, intervals: Any, store: Any, *, apply: bool,

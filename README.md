@@ -82,7 +82,7 @@ and builds your own summit log. It runs next to the bridge with the same setting
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.13. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.14. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -202,7 +202,7 @@ run is exactly what `--apply` would send.
 | `autostart [--status \| --remove \| --dry-run]` | Run `run --apply` in the background at every login (Windows Task Scheduler, macOS LaunchAgent, Linux systemd user service); again = restart. |
 | `ui [--port 8765] [--no-browser]` | The bridge's web page in your browser: status in plain words, Garmin sign-in with MFA, settings, gear and chart actions, the log. See [The web page](#the-web-page). |
 | `backup [--from DATE [--to DATE]] [--scope …]` | Back up Garmin into the data folder, no Intervals needed: without `--from` what backup mode does every `BRIDGE_BACKUP_HOURS`, with `--from` the past. Runs next to a running bridge. |
-| `swap <id or link> [--method replace\|upload] [--apply]` | The original into Garmin's filtered copy of one activity, also an older one (see [Modes](#modes), *swap*). |
+| `swap <id or link> [--method replace\|upload] [--apply]` | The original into Garmin's filtered copy of one activity, also an older one, or into an upload of your own of the same recording (see [Modes](#modes), *swap*). |
 | `notify-test` | Send a test e-mail / push message to the alert channels that are set up. |
 | `login` | Interactive Garmin sign-in (email, password, MFA). Only session tokens are stored. |
 | `personal-check` | Check the configured Personal API key and report HTTP statuses and token metadata without secrets. See [Personal API](docs/PERSONAL_API.md). |
@@ -212,7 +212,7 @@ run is exactly what `--apply` would send.
 | `enrich <id or link> [--apply]` | One activity again, compared with what Intervals holds now – after Intervals' *Reprocess file*, or a new custom field or stream. Works next to a running bridge; `--activity-id <garmin id>` instead names the Garmin side. |
 | `watch [--apply]` | Poll Intervals once (~450 bytes); enrich activities seen for the first time. |
 | `sync [--scope all\|activities\|wellness] [--mode enrich\|upload] [--apply]` | Scheduled run over the last days. |
-| `backfill --scope wellness\|activities --from DATE [--to DATE] [--apply]` | Paced, resumable run over the past; with `--swap` the originals go into Garmin's copies (in place). |
+| `backfill --scope wellness\|activities --from DATE [--to DATE] [--apply]` | Paced, resumable run over the past; with `--swap` the originals go into Garmin's copies, and into your own uploads of the same recordings (in place). |
 | `setup-fields [--apply]` | Create the private custom wellness fields the mapping uses. |
 | `setup-charts [--apply]` | Create (and later complete) private fitness charts for the synced values. |
 | `gear [--prefer intervals\|evidence\|garmin] [--map G=I] [--create] [--apply]` | Put Garmin's gear (bikes, shoes, skis …) on the Intervals activities, from the archive; see [Gear](#gear). |
@@ -273,6 +273,16 @@ Garmin). Two methods, `BRIDGE_SWAP_METHOD`:
 
 `swap <id or link> [--method replace|upload] [--apply]` does it for one activity by hand,
 also an older one.
+
+**Your own uploads** (`source: UPLOAD` – a Strava archive, files you uploaded by hand) take the
+original too, always in place (`replace`), with `swap <id or link>` and with
+`backfill --scope activities --from DATE --swap`, never automatically. No Garmin id names them, so
+the bridge pairs them by start (±2 min) and duration, and only one to one: one upload, one Garmin
+activity, and no import of Garmin's own of it beside them. The file Intervals holds must be the
+same recording – its FIT names the same device and creation time; a FIT of another device (an
+Edge, a Wahoo, Zwift on the same ride) is never replaced. A file that cannot tell (a GPX or TCX)
+only by hand, after the dry run. Activities Intervals got through its Strava connection cannot be
+changed by anyone (`source: STRAVA`).
 
 ## Wellness
 

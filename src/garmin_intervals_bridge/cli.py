@@ -95,7 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
     swap = sub.add_parser("swap", help="Garmin's filtered copy of one activity for its original: into the same "
                                        "activity (replace, default) or as a new one of your own with the copy "
                                        "deleted (upload) – dry run unless --apply; BRIDGE_SWAP=true does it for "
-                                       "every new one")
+                                       "every new one. An upload of your own (a Strava archive, say) takes its "
+                                       "original in place, found by start and duration")
     swap.add_argument("activity", help="The Intervals activity: its id (i12345678) or its link")
     swap.add_argument("--method", choices=["replace", "upload"],
                       help="replace = the original into the same activity (default: BRIDGE_SWAP_METHOD); upload = "
@@ -178,7 +179,8 @@ def build_parser() -> argparse.ArgumentParser:
                                "GarminSweatRate, from the archived summaries; no Garmin request")
     backfill.add_argument("--swap", action="store_true",
                           help="Activities: put each original into Garmin's copy in Intervals (in place: id, notes, "
-                               "edited intervals, typed values stay; nothing deleted) instead of only completing it")
+                               "edited intervals, typed values stay; nothing deleted) instead of only completing it; "
+                               "into an upload of your own of the same recording too (its FIT tells)")
     backfill.add_argument("--archive-only", action="store_true",
                           help="Activities: download the original FIT files that are not on disk yet and "
                                "leave Intervals alone (a local mirror of every recording)")
@@ -898,8 +900,14 @@ def main(argv: list[str] | None = None) -> int:
                     print(json.dumps(plan, indent=2, default=str))
                     return 0
                 if args.cmd == "swap":
-                    from .swap import replace_activity, swap_activity
+                    from .swap import is_own_upload, replace_activity, swap_activity, swap_own_upload_by_hand
                     intervals = IntervalsClient(settings.intervals_api_key, settings.intervals_athlete_id)
+                    iid = intervals_id_from(args.activity)
+                    item = intervals.activity(iid)
+                    if is_own_upload(item):                        # in place only: nothing of yours deleted
+                        out = swap_own_upload_by_hand(iid, item, garmin, intervals, store, apply=args.apply)
+                        print(json.dumps(out, indent=2, default=str))
+                        return 0 if out["outcome"] in ("planned", "replaced", "same") else 1
                     gid, iid = resolve_one(intervals, args.activity)
                     if (args.method or settings.swap_method) == "replace":
                         out = replace_activity(gid, iid, garmin, intervals, store, apply=args.apply)

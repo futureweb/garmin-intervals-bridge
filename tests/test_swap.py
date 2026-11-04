@@ -8,7 +8,14 @@ from test_fit import build_fit
 from test_sync_enrich import GarminFake, IntervalsFake
 
 from garmin_intervals_bridge.store import Store
-from garmin_intervals_bridge.swap import replace_activity, retry_deletes, swap_activity
+from garmin_intervals_bridge.swap import (
+    own_upload_pair,
+    replace_activity,
+    replace_own_upload,
+    retry_deletes,
+    swap_activity,
+    swap_own_upload_by_hand,
+)
 from garmin_intervals_bridge.sync import watch_once
 
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc)
@@ -398,3 +405,104 @@ def test_the_swap_method_setting(monkeypatch):
     monkeypatch.setenv("BRIDGE_SWAP_METHOD", "delete")
     with pytest.raises(ValueError, match="BRIDGE_SWAP_METHOD"):
         config.Settings.from_env()
+
+
+# ---- your own uploads (a Strava archive): the original in place, paired one to one ----
+
+RIDE = {"activityId": 42, "startTimeGMT": "2026-01-08 08:00:00", "duration": 3600}
+UPLOAD = {"id": "i7", "source": "UPLOAD", "external_id": "16012345678.fit.gz",
+          "start_date": "2026-01-08T08:00:30Z", "elapsed_time": 3610}
+
+
+def fit_of(serial):
+    """A recording of another device: another serial number in its file id."""
+    from garmin_fit_sdk import Encoder
+    from test_fit import MESG
+    enc = Encoder()
+    enc.write_mesg({"mesg_num": MESG["FILE_ID"], "type": "activity", "manufacturer": "garmin",
+                    "product": 4315, "serial_number": serial, "time_created": 1000000000})
+    enc.write_mesg({"mesg_num": MESG["RECORD"], "timestamp": 1000000000, "heart_rate": 120})
+    return enc.close()
+
+
+class OwnUploads(SwapIntervals):
+    """i7: an upload of your own from a Strava archive – no Garmin id, Garmin's (filtered) recording inside."""
+
+    def __init__(self):
+        super().__init__()
+        self.activity_obj.update({**UPLOAD, "paired_event_id": None, "name": "Lunch Ride", "icu_rpe": 6})
+        self.listed = [dict(UPLOAD)]
+
+    def activities(self, start, end, fields=None, limit=None):
+        return self.listed
+
+
+def test_an_own_upload_of_the_same_recording_takes_the_original_in_place(tmp_path):
+    st, i = Store(tmp_path), OwnUploads()
+    plan = replace_own_upload("42", "i7", GarminFake(), i, st, apply=False)
+    assert plan["outcome"] == "planned" and "same recording" in plan["checked"] and i.calls == []
+    out = replace_own_upload("42", "i7", GarminFake(), i, st, apply=True)
+    assert out["outcome"] == "replaced" and i.calls == [("replace", "i7", "42.fit", False, True)]
+    assert _uploads(i) == [] and not any(str(c).startswith("delete") for c in i.calls)   # nothing deleted
+    assert not st.partner_path("42").exists() and st.enrichment("42") is None   # Garmin's copies' records alone
+    st.close()
+
+
+def test_an_own_upload_of_another_recording_or_without_a_fit_stays(tmp_path):
+    st, i = Store(tmp_path), OwnUploads()
+    i.activity_file = lambda iid: fit_of(serial=999)                  # another device: an Edge, a Wahoo
+    assert "another recording" in replace_own_upload("42", "i7", GarminFake(), i, st, apply=True)["reason"]
+    i.activity_file = lambda iid: b"<?xml version='1.0'?><gpx></gpx>"   # a GPX cannot tell
+    assert "swap it by hand" in replace_own_upload("42", "i7", GarminFake(), i, st, apply=True)["reason"]
+    plan = replace_own_upload("42", "i7", GarminFake(), i, st, apply=False, by_hand=True)
+    assert plan["outcome"] == "planned" and "start and duration only" in plan["checked"]
+    i.activity_obj["source"] = "STRAVA"                               # Strava's import: Intervals refuses changes
+    assert "not your own upload" in replace_own_upload("42", "i7", GarminFake(), i, st, apply=True)["reason"]
+    assert i.calls == []
+    st.close()
+
+
+def test_an_own_upload_is_paired_one_to_one_or_not_at_all():
+    assert own_upload_pair(RIDE, [UPLOAD], [RIDE]) == (UPLOAD, None)
+    assert own_upload_pair(RIDE, [], [RIDE]) == (None, None)
+    assert own_upload_pair(RIDE, [dict(UPLOAD, start_date="2026-01-08T08:10:00Z")], [RIDE]) == (None, None)
+    assert own_upload_pair(RIDE, [dict(UPLOAD, external_id="garmin:43")], [RIDE]) == (None, None)
+    bare = dict(UPLOAD, external_id="43")                              # a bare number: any platform's id
+    assert own_upload_pair(RIDE, [bare], [RIDE]) == (bare, None)
+    assert "2 of your uploads" in own_upload_pair(RIDE, [UPLOAD, dict(UPLOAD, id="i8")], [RIDE])[1]
+    garmins = {"id": "i9", "source": "GARMIN_CONNECT", "external_id": "42", "start_date": UPLOAD["start_date"]}
+    assert "Garmin's own import" in own_upload_pair(RIDE, [UPLOAD, garmins], [RIDE])[1]
+    edge = dict(RIDE, activityId=43)                                  # a watch and an Edge on the same ride
+    assert "two recordings" in own_upload_pair(RIDE, [UPLOAD], [RIDE, edge])[1]
+
+
+def test_swap_by_hand_finds_the_garmin_recording_of_an_own_upload(tmp_path):
+    st, g, i = Store(tmp_path), GarminFake(), OwnUploads()
+    g.acts = [RIDE]
+    out = swap_own_upload_by_hand("i7", i.activity("i7"), g, i, st, apply=True)
+    assert out["outcome"] == "replaced" and out["garmin_id"] == "42" and "same recording" in out["checked"]
+    g.acts = [RIDE, dict(RIDE, activityId=43)]
+    out = swap_own_upload_by_hand("i7", i.activity("i7"), g, i, st, apply=True)
+    assert out["outcome"] == "kept" and "2 Garmin activities" in out["reason"]
+    g.acts = []
+    assert "no Garmin activity" in swap_own_upload_by_hand("i7", i.activity("i7"), g, i, st, apply=True)["reason"]
+    assert len(i.calls) == 1
+    st.close()
+
+
+def test_a_backfill_with_swap_takes_own_uploads_too_and_only_then(tmp_path, monkeypatch):
+    from garmin_intervals_bridge import sync
+    done = []
+    monkeypatch.setattr("garmin_intervals_bridge.swap.replace_own_upload",
+                        lambda gid, iid, *a, **k: done.append((gid, iid)) or {"outcome": "replaced", "intervals_id": iid})
+    garmin = GarminFake()
+    garmin.acts = [RIDE]
+    settings = SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), swap=True, swap_hours=48,
+                               swap_method="upload", activity_days=4)
+    st = Store(tmp_path)
+    window = (date(2026, 1, 1), date(2026, 1, 31))
+    m = sync.sync_enrich(settings, garmin, OwnUploads(), st, apply=True, date_range=window)
+    assert done == [] and m["unmatched"] == 1                         # without --swap: left alone
+    m = sync.sync_enrich(settings, garmin, OwnUploads(), st, apply=True, date_range=window, swap=True)
+    assert done == [("42", "i7")] and m["swap_replaced"] == 1
+    st.close()
