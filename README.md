@@ -82,7 +82,7 @@ and builds your own summit log. It runs next to the bridge with the same setting
 | **Rule** | Only what the partner copy lacks; aligned by timestamp; idempotent | Only empty values; locked days skipped; today's running totals wait until tomorrow, today's resting HR is the night's until then |
 | **Archive** | Original + partner copy of every activity, Garmin's summary, weather, gear, splits | Raw JSON of every endpoint and the watch's original wellness files (Health Snapshots included), every day |
 
-Version 0.12.14. Verified end to end on one account (fenix 8, Edge 1040); what changed
+Version 0.12.15. Verified end to end on one account (fenix 8, Edge 1040); what changed
 when is in the [CHANGELOG](CHANGELOG.md), where it goes next in the
 [roadmap](docs/ROADMAP.md).
 
@@ -291,7 +291,11 @@ respiration, SpO₂, hydration, scale, nutrition, intensity minutes, scores,
 predictions, fitness age, lactate threshold, …) are fetched per day; every
 raw response is archived as JSON. Values are written to Intervals only where
 the day has nothing yet, locked days are skipped, and running totals of the
-current day wait for tomorrow.
+current day wait for tomorrow. A resting HR or weight Intervals only carries
+over from another day (shown in the calendar, empty in the day's wellness
+dialog) counts as nothing; before 0.12.15 the bridge took it for the day's
+own, and `backfill --scope wellness --from DATE --from-archive --apply` fills
+those days from the archive.
 
 **When Garmin is asked: on evidence, not on a clock.** Today's values come
 from nine endpoints (sleep, HRV, Training Readiness, scale and Garmin's

@@ -22,6 +22,12 @@ log = logging.getLogger(__name__)
 RETRY_AFTER_CAP_SECONDS = 30
 WRITE_RETRIES = 3                  # a wellness PUT answered with 429 is sent again after the wait
 
+# A day-scoped wellness GET fills a day without a resting HR or weight of its own with one carried
+# over from another day and flags it (seen on the live API 2026-11-04: `restingHR` 54 with
+# `tempRestingHR` true, while the date-range GET and Intervals' wellness dialog show the field empty).
+# A carried value is not the day's: the bridge reads it as empty, so Garmin's value can fill it.
+CARRIED_FLAGS = {"tempRestingHR": "restingHR", "tempWeight": "weight"}
+
 
 def _seconds(value: Any) -> float | None:
     """A Retry-After header: seconds, or an HTTP date."""
@@ -204,6 +210,9 @@ class IntervalsClient:
         obj = response.json()
         if not isinstance(obj, dict):
             raise ValueError("Intervals wellness API returned invalid response")
+        for flag, field in CARRIED_FLAGS.items():
+            if obj.get(flag) is True:
+                obj[field] = None                 # carried over from another day (CARRIED_FLAGS)
         return obj
 
     def wellness_range(self, oldest: date, newest: date, cols: list[str] | None = None) -> list[dict]:

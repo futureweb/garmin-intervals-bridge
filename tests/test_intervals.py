@@ -53,6 +53,117 @@ def test_api_auth_and_paths():
     assert req["json"] == {"readiness": 44}
 
 
+def test_a_carried_resting_hr_or_weight_reads_as_empty():
+    """The day GET fills a day without a resting HR or weight of its own from another day and flags
+    it; the bridge must still fill the day with Garmin's value, and keep a value of the day's own."""
+    from garmin_intervals_bridge.mapping import merge_wellness
+
+    class Day(FakeSession):
+        def __init__(self, record):
+            super().__init__()
+            self.record = record
+
+        def get(self, url, **kwargs):
+            return Response(dict(self.record))
+
+    carried = {"id": "2025-09-01", "restingHR": 42, "tempRestingHR": True, "weight": 68.7, "tempWeight": True,
+               "hrv": 49}
+    record = IntervalsClient("secret", session=Day(carried)).wellness(date(2025, 9, 1))
+    assert record["restingHR"] is None and record["weight"] is None and record["hrv"] == 49
+    assert merge_wellness(record, {"restingHR": 48, "weight": 68.2, "hrv": 50}, {}) == {"restingHR": 48,
+                                                                                         "weight": 68.2}
+    own = {"id": "2026-11-03", "restingHR": 50, "tempRestingHR": False, "weight": 82.5}     # no tempWeight: kept
+    record = IntervalsClient("secret", session=Day(own)).wellness(date(2026, 11, 3))
+    assert record["restingHR"] == 50 and record["weight"] == 82.5
+    assert merge_wellness(record, {"restingHR": 48, "weight": 82.0}, {}) == {}
+    mixed = {"id": "2025-09-02", "restingHR": 42, "tempRestingHR": True, "weight": 68.7, "tempWeight": False}
+    record = IntervalsClient("secret", session=Day(mixed)).wellness(date(2025, 9, 2))
+    assert record["restingHR"] is None and record["weight"] == 68.7
+    mixed = {"id": "2025-09-03", "restingHR": 47, "tempRestingHR": False, "weight": 68.7, "tempWeight": True}
+    record = IntervalsClient("secret", session=Day(mixed)).wellness(date(2025, 9, 3))
+    assert record["restingHR"] == 47 and record["weight"] is None
+
+
+def test_a_backfill_fills_a_carried_resting_hr_with_garmin_s(tmp_path):
+    """End to end through the real client: the day's PUT carries Garmin's resting HR, not the weight
+    the day holds of its own."""
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from test_mapping import sample
+
+    from garmin_intervals_bridge.store import Store
+    from garmin_intervals_bridge.sync import sync_wellness
+
+    class Day(FakeSession):
+        def get(self, url, **kwargs):
+            self.calls.append(("GET", url, kwargs))
+            return Response({"id": "2026-10-07", "restingHR": 42, "tempRestingHR": True,
+                             "weight": 70.0, "tempWeight": False})
+
+    class Garmin:
+        def snapshot(self, day, endpoints=None):
+            return sample()
+
+    fake, store = Day(), Store(tmp_path)
+    settings = SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), activity_days=3,
+                               wellness_days=3, wellness_refresh_hours=8)
+    sync_wellness(settings, Garmin(), IntervalsClient("secret", session=fake), store, apply=True,
+                  days=[date(2026, 10, 7)], today=date(2026, 10, 8))
+    puts = [req["json"] for method, url, req in fake.calls if method == "PUT" and "/wellness/" in url]
+    assert len(puts) == 1 and puts[0]["restingHR"] == 49 and "weight" not in puts[0]
+    store.close()
+
+
+def test_a_backfill_fills_consecutive_days_though_intervals_carries_each_value_on(tmp_path):
+    """Intervals carries a resting HR it is given on to the following days without one (flagged
+    `tempRestingHR`); a backfill over consecutive days still writes Garmin's value on each day."""
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from zoneinfo import ZoneInfo
+
+    from test_mapping import sample
+
+    from garmin_intervals_bridge.store import Store
+    from garmin_intervals_bridge.sync import sync_wellness
+
+    class Carrying(FakeSession):
+        def __init__(self):
+            super().__init__()
+            self.stored = {}
+
+        def request(self, method, url, **kwargs):
+            if method == "PUT" and "/wellness/" in url:
+                self.stored[url.rsplit("/", 1)[1]] = kwargs["json"].get("restingHR")
+            return super().request(method, url, **kwargs)
+
+        def get(self, url, **kwargs):
+            day = date.fromisoformat(url.rsplit("/", 1)[1])
+            record = {"id": day.isoformat(), "restingHR": None, "tempRestingHR": False}
+            if self.stored.get(day.isoformat()) is not None:
+                record["restingHR"] = self.stored[day.isoformat()]
+                return Response(record)
+            for back in range(1, 31):
+                carried = self.stored.get((day - timedelta(days=back)).isoformat())
+                if carried is not None:
+                    record.update(restingHR=carried, tempRestingHR=True)
+                    break
+            return Response(record)
+
+    class Garmin:
+        def snapshot(self, day, endpoints=None):
+            return sample()
+
+    fake, store = Carrying(), Store(tmp_path)
+    settings = SimpleNamespace(data_dir=tmp_path, timezone=ZoneInfo("Europe/Vienna"), activity_days=3,
+                               wellness_days=3, wellness_refresh_hours=8)
+    days = [date(2025, 9, 3), date(2025, 9, 4), date(2025, 9, 5)]
+    sync_wellness(settings, Garmin(), IntervalsClient("secret", session=fake), store, apply=True,
+                  days=days, today=date(2026, 10, 8))
+    assert fake.stored == {"2025-09-03": 49, "2025-09-04": 49, "2025-09-05": 49}
+    store.close()
+
+
 def test_private_custom_item_provision_idempotence():
     fake = FakeSession()
     fake.items = [{"type": "INPUT_FIELD", "content": {"code": "BodyBatteryMax", "type": "numeric"}}]

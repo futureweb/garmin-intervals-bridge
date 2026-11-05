@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.12.15 — 2026-11-05
+
+Resting HR and weight on days where Intervals only shows a value carried over from another day.
+
+### Fixed
+
+- **Resting HR and weight were left out on days without a value of their own** (thanks
+  Jeroen_Doesburg, who tracked it down): Intervals fills such a day with a value carried over from
+  another day and flags it (`tempRestingHR`, `tempWeight`) – shown in the calendar and the charts,
+  empty in the day's wellness dialog. The bridge took that value for the day's own and never wrote
+  Garmin's. A carried value now counts as empty; a value of the day's own, typed in or synced, is
+  still never touched. On the running day the night's resting HR now goes in as intended, and the
+  check whether the watch synced after midnight no longer reacts to a carried value. A backfill
+  over consecutive days fills each of them, although Intervals carries every value it is given on
+  to the next days without one (before, only the first day of such a run got its resting HR).
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant
+app. For the past: `backfill --scope wellness --from DATE --from-archive` shows what Garmin's
+values in the bridge's archive would fill, without a single Garmin request; `--apply` writes them.
+Days the bridge never read: the same without `--from-archive` (it asks Garmin, day by day).
+
 ## 0.12.14 — 2026-11-04
 
 The original also goes into your own uploads of the same recording – a Strava archive, say.
