@@ -279,6 +279,43 @@ def test_summary_fallback_reads_garmins_summary_values_above_zero():
     assert summary_fallback(None) == {} and summary_fallback({"summaryDTO": {}}) == {}
 
 
+def test_summary_fallback_turns_the_training_effect_label_into_the_files_number():
+    from garmin_intervals_bridge.enrich import summary_fallback
+    names = ["RECOVERY", "AEROBIC_BASE", "TEMPO", "LACTATE_THRESHOLD", "VO2MAX", "ANAEROBIC_CAPACITY", "SPEED"]
+    for number, name in enumerate(names, start=1):          # as the device writes session field 188
+        assert summary_fallback({"summaryDTO": {"trainingEffectLabel": name}}) == {"session:188": float(number)}
+    for other in ("UNKNOWN", "NO_BENEFIT", "", "aerobic_base", 2, None, True):
+        assert summary_fallback({"summaryDTO": {"trainingEffectLabel": other}}) == {}
+
+
+def test_session_fields_written_as_message_18_are_the_same_source():
+    from garmin_intervals_bridge.enrich import summary_sources
+    m = load_field_mappings([{"type": "ACTIVITY_FIELD", "content": {"code": "TE", "fit_session_field": "18.188",
+                                                                     "type": "select", "options": [{"value": 2}]}}])
+    assert m.scalars[0].source == "session:188"
+    assert plan_scalars({"session": [{188: 2}]}, {}, m)["writes"] == {"TE": 2.0}     # the file's label, as before
+    assert summary_sources({"session": [{}]}, m) == {"session:188"}                  # and the summary's when absent
+
+
+def test_the_label_fills_the_select_field_only_with_one_of_its_options():
+    m = load_field_mappings(ITEMS)                          # TrainingEffectSelect offers 1, 2 and 3
+    lacking = {"session": [{178: 900}]}                                    # an Edge 510: no effect, no label
+    plan = plan_scalars(lacking, {"TrainingEffectSelect": None}, m, {"session": [{}]},
+                        fallback={"session:188": 2.0})
+    assert plan["writes"]["TrainingEffectSelect"] == 2.0 and plan["from_garmin_summary"] == ["TrainingEffectSelect"]
+    plan = plan_scalars(lacking, {"TrainingEffectSelect": None}, m, {"session": [{}]},
+                        fallback={"session:188": 5.0})                     # VO2 Max: not offered
+    assert "TrainingEffectSelect" not in plan["writes"] and plan["rejected_for_select"] == {"TrainingEffectSelect": 5.0}
+    carrying = {"session": [{188: 3}]}                                     # the file's own label wins
+    old_device = {"session": [{"total_training_effect": 2.9}]}            # effect without label: not from the summary
+    plan = plan_scalars(old_device, {"TrainingEffectSelect": None}, m, {"session": [{}]},
+                        fallback={"session:188": 2.0})
+    assert "TrainingEffectSelect" not in plan["writes"] and "TrainingEffectSelect" not in plan["summary_fields"]
+    plan = plan_scalars(carrying, {"TrainingEffectSelect": None}, m, {"session": [{}]},
+                        fallback={"session:188": 2.0})
+    assert plan["writes"]["TrainingEffectSelect"] == 3.0 and plan["from_garmin_summary"] == []
+
+
 def test_summary_fills_only_what_the_original_lacks():
     from garmin_intervals_bridge.enrich import summary_sources
     m = load_field_mappings(ITEMS)
@@ -287,7 +324,9 @@ def test_summary_fills_only_what_the_original_lacks():
     plan = plan_scalars(lacking, {"AerobicEffect": None, "Sweatloss": None}, m, {"session": [{}]},
                         fallback=fallback)
     assert plan["writes"]["AerobicEffect"] == 3.4 and plan["from_garmin_summary"] == ["AerobicEffect"]
-    assert summary_sources(lacking, m) == {"session:total_training_effect"}
+    assert summary_sources(lacking, m) == {"session:total_training_effect", "session:188"}   # label too
+    old_device = {"session": [{"total_training_effect": 2.9}]}           # effect, no label (a Forerunner 620)
+    assert summary_sources(old_device, m) == set()                         # Garmin has no label for it either
     carrying = {"session": [{"total_training_effect": 2.9}]}              # the file's own value wins
     plan = plan_scalars(carrying, {"AerobicEffect": None}, m, {"session": [{}]}, fallback=fallback)
     assert plan["writes"]["AerobicEffect"] == 2.9 and plan["from_garmin_summary"] == []
@@ -312,12 +351,15 @@ def test_waiting_fields_and_fields_with_a_conversion():
     from garmin_intervals_bridge.enrich import FieldMappings, ScalarMapping
     m = load_field_mappings(ITEMS)
     lacking = {"session": [{}]}
-    waiting = plan_scalars(lacking, {"AerobicEffect": None}, m, {"session": [{}]})
+    label = {"TrainingEffectSelect": 2.0}                                 # typed in: the label waits for nothing
+    waiting = plan_scalars(lacking, {"AerobicEffect": None, **label}, m, {"session": [{}]})
     assert waiting["summary_fields"] == ["AerobicEffect"] and "AerobicEffect" in waiting["absent_in_original"]
-    typed = plan_scalars(lacking, {"AerobicEffect": 2.0}, m, {"session": [{}]})
+    typed = plan_scalars(lacking, {"AerobicEffect": 2.0, **label}, m, {"session": [{}]})
     assert typed["summary_fields"] == []                                  # someone else's value: nothing to wait for
-    mine = plan_scalars(lacking, {"AerobicEffect": 2.0}, m, {"session": [{}]}, own={"AerobicEffect": 2.0})
+    mine = plan_scalars(lacking, {"AerobicEffect": 2.0, **label}, m, {"session": [{}]}, own={"AerobicEffect": 2.0})
     assert mine["summary_fields"] == ["AerobicEffect"]                    # the bridge's own: may be corrected
+    empty = plan_scalars(lacking, {"AerobicEffect": None}, m, {"session": [{}]})
+    assert empty["summary_fields"] == ["AerobicEffect", "TrainingEffectSelect"]   # no effect, no label: both wait
     scaled = FieldMappings(scalars=[ScalarMapping("TEx10", "session:total_training_effect", (("*", 10.0),))])
     plan = plan_scalars(lacking, {"TEx10": None}, scaled, {"session": [{}]},
                         fallback={"session:total_training_effect": 3.4})

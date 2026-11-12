@@ -258,7 +258,8 @@ TE_ITEMS = ITEMS + [
     {"type": "ACTIVITY_FIELD", "content": {"code": "TrainingLoad", "fit_session_field": "training_load_peak"}},
 ]
 SUMMARY = {"summaryDTO": {"trainingEffect": 3.4000000953674316, "anaerobicTrainingEffect": 1.2999999523162842,
-                          "activityTrainingLoad": 87.5, "startTimeGMT": "2026-10-07 08:00:00"}}
+                          "activityTrainingLoad": 87.5, "trainingEffectLabel": "AEROBIC_BASE",
+                          "startTimeGMT": "2026-10-07 08:00:00"}}
 
 
 def edge510(tmp_path, summary=SUMMARY):
@@ -268,7 +269,8 @@ def edge510(tmp_path, summary=SUMMARY):
     g.activity = lambda gid: (setattr(g, "details", g.details + 1) or {**act, **(summary or {})})
     i.custom_items = lambda: TE_ITEMS
     i.activity_obj = {"id": "i42", "stream_types": ["time"], "AerobicEffect": None, "AnaerobicEffect": 0.0,
-                      "TrainingLoad": None, "Sweatloss": None, "start_date": "2026-10-07T08:00:00Z"}
+                      "TrainingLoad": None, "Sweatloss": None, "TrainingEffectSelect": None,
+                      "start_date": "2026-10-07T08:00:00Z"}
     return st, g, i
 
 
@@ -277,10 +279,21 @@ def test_a_device_without_training_effect_gets_it_from_garmins_summary(tmp_path)
     st, g, i = edge510(tmp_path)
     m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
     # enriched before the summary was archived: the fields wait; the settled pass fills them
-    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
-    assert m["fields_written"] == 3 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "TrainingEffectSelect": 2.0, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert m["fields_written"] == 4 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
     again = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
     assert len(i.updates) == 1 and again["fields_written"] == 0           # nothing twice
+    st.close()
+
+
+def test_the_training_effect_label_comes_from_garmins_summary_too(tmp_path):
+    # ITEMS carry TrainingEffectSelect (session field 188, a select offering 1, 2 and 3); the file has no 188
+    st, g, i = edge510(tmp_path, {"summaryDTO": {**SUMMARY["summaryDTO"], "trainingEffectLabel": "TEMPO"}})
+    i.activity_obj["TrainingEffectSelect"] = None
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5,
+                                  "TrainingEffectSelect": 3.0})]
+    assert m["fields_written"] == 4
     st.close()
 
 
@@ -291,7 +304,7 @@ def test_the_fields_wait_until_the_activity_has_settled(tmp_path):
     from garmin_intervals_bridge.sync import complete_summary_fields
     st, g, i = edge510(tmp_path)
     plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
-    assert plan["fields"]["summary_pending"] == ["AerobicEffect", "AnaerobicEffect", "TrainingLoad"]
+    assert plan["fields"]["summary_pending"] == ["AerobicEffect", "TrainingEffectSelect", "AnaerobicEffect", "TrainingLoad"]
     assert st.get_meta(SUMMARY_PENDING_KEY + "42") and g.details == 0      # no summary yet, none asked for
     act, metrics = g.acts[0], {}
     complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
@@ -300,8 +313,8 @@ def test_the_fields_wait_until_the_activity_has_settled(tmp_path):
     complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
                             now=datetime(2026, 10, 7, 21, 0, tzinfo=timezone.utc))
     assert g.details == 1 and st.activity_json_path("42").is_file()        # asked once, archived
-    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
-    assert metrics["fields_written"] == 3 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "TrainingEffectSelect": 2.0, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert metrics["fields_written"] == 4 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
     complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
                             now=datetime(2026, 10, 8, 21, 0, tzinfo=timezone.utc))
     assert g.details == 1 and len(i.updates) == 1                          # done: not again
@@ -326,10 +339,10 @@ def test_one_activity_on_request_asks_garmin_for_the_summary(tmp_path):
     st, g, i = edge510(tmp_path)
     dry = enrich_activity("42", g, i, st, apply=False, intervals_id="i42", recheck=True)
     assert dry["outcome"] == "planned" and dry["fields"]["from_garmin_summary"] == [
-        "AerobicEffect", "AnaerobicEffect", "TrainingLoad"] and g.details == 1 and i.updates == []
+        "AerobicEffect", "TrainingEffectSelect", "AnaerobicEffect", "TrainingLoad"] and g.details == 1 and i.updates == []
     done = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
     assert done["outcome"] == "enriched" and g.details == 1                # the summary asked for is archived
-    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "TrainingEffectSelect": 2.0, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
     assert not st.get_meta(SUMMARY_PENDING_KEY + "42")
     st.close()
 
@@ -369,7 +382,7 @@ def test_a_failed_write_keeps_the_mark_for_the_next_run(tmp_path):
     assert st.get_meta(SUMMARY_PENDING_KEY + "42")                        # not lost
     i.update_activity = good
     assert complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True, now=at(14))
-    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "TrainingEffectSelect": 2.0, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
     assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
     st.close()
 
@@ -379,8 +392,8 @@ def test_one_activity_on_request_asks_again_when_the_archive_lacks_the_values(tm
     st, g, i = edge510(tmp_path)
     st.save_activity_json("42", {**g.acts[0], "summaryDTO": {"startTimeGMT": "2026-10-07 08:00:00"}})  # settled, empty
     plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
-    assert g.details == 1 and plan["fields"]["from_garmin_summary"] == ["AerobicEffect", "AnaerobicEffect",
-                                                                        "TrainingLoad"]
+    assert g.details == 1 and plan["fields"]["from_garmin_summary"] == ["AerobicEffect", "TrainingEffectSelect",
+                                                                        "AnaerobicEffect", "TrainingLoad"]
     st.close()
 
 
@@ -415,7 +428,7 @@ def test_marked_activities_outside_the_scan_window_are_completed_by_their_mark(t
     _complete_marked_summaries(g, i, st, metrics, {"42"}, apply=True, now=at(13))
     assert i.updates == []                                                 # listed: the scan does it
     _complete_marked_summaries(g, i, st, metrics, set(), apply=True, now=at(13))
-    assert len(i.updates) == 1 and metrics["fields_written"] == 3
+    assert len(i.updates) == 1 and metrics["fields_written"] == 4
     assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
     st.close()
 

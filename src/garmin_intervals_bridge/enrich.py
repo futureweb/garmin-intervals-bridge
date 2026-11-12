@@ -231,8 +231,9 @@ class FieldMappings:
     unsupported: dict[str, str] = field(default_factory=dict)   # code -> why
 
 
-LOOKUP_VERSION = 3              # raised when the bridge finds more in the same definitions (2: 3.37 by name,
-                                # 3: Training Effect and load from Garmin's summary when the file has none)
+LOOKUP_VERSION = 4              # raised when the bridge finds more in the same definitions (2: 3.37 by name,
+                                # 3: Training Effect and load from Garmin's summary when the file has none,
+                                # 4: the Training Effect label from it too)
 
 
 def mapping_signature(mappings: FieldMappings) -> str:
@@ -316,7 +317,9 @@ def load_field_mappings(custom_items: list[dict]) -> FieldMappings:
                 continue
             convert, zero_is_null = parsed
             src = str(src).strip()
-            if re.fullmatch(r"\d+\.\d+", src):
+            if re.fullmatch(r"18\.\d+", src):
+                source = f"session:{src[3:]}"     # message 18 is the session: "18.188" reads what "188" reads
+            elif re.fullmatch(r"\d+\.\d+", src):
                 source = f"mesg:{src}"
             elif src.isdecimal():
                 source = f"session:{src}"
@@ -408,7 +411,20 @@ SUMMARY_FALLBACK = {
     "session:total_training_effect": "trainingEffect",
     "session:total_anaerobic_training_effect": "anaerobicTrainingEffect",
     "session:training_load_peak": "activityTrainingLoad",
+    "session:188": "trainingEffectLabel",
 }
+# The Training Effect label (Recovery, Base, Tempo …): the file carries a number in session field 188,
+# Garmin's summary a name. Checked against the files of 350 activities that carry both: each name
+# stands for exactly one number. Any other name ("UNKNOWN") fills nothing.
+SUMMARY_LABELS = {
+    "trainingEffectLabel": {"RECOVERY": 1, "AEROBIC_BASE": 2, "TEMPO": 3, "LACTATE_THRESHOLD": 4,
+                            "VO2MAX": 5, "ANAEROBIC_CAPACITY": 6, "SPEED": 7},
+}
+# The label only for a file without a Training Effect of its own (an Edge 510: Garmin Connect computes
+# effect and label afterwards). A device that writes the effect but no label – a Forerunner 620 – gets
+# none from Garmin either: the summaries of 156 such activities (2014-2017) carry no label at all, so
+# asking for them would only cost requests.
+SUMMARY_ONLY_WITHOUT = {"session:188": "session:total_training_effect"}
 SUMMARY_PENDING_KEY = "enrich:summary-pending:"     # + Garmin id: fields waiting for Garmin's settled summary
 
 
@@ -420,16 +436,25 @@ def summary_fallback(summary: dict | None) -> dict[str, float]:
     out: dict[str, float] = {}
     for source, key in SUMMARY_FALLBACK.items():
         value = dto.get(key)
+        if key in SUMMARY_LABELS:
+            value = SUMMARY_LABELS[key].get(value) if isinstance(value, str) else None
         if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and 0 < value < 1e9:
             out[source] = round(float(value), 4)
     return out
 
 
+def _summary_may_fill(messages: dict[str, list[dict]], m: ScalarMapping) -> bool:
+    """A SUMMARY_FALLBACK field the original lacks, read without a conversion (and, for the label,
+    in a file without a Training Effect of its own)."""
+    if m.source not in SUMMARY_FALLBACK or m.convert or _lookup(messages, m.source) is not None:
+        return False
+    other = SUMMARY_ONLY_WITHOUT.get(m.source)
+    return other is None or _lookup(messages, other) is None
+
+
 def summary_sources(messages: dict[str, list[dict]], mappings: FieldMappings) -> set[str]:
-    """Sources of the athlete's fields Garmin's summary could fill: a SUMMARY_FALLBACK field the
-    original lacks, read without a conversion."""
-    return {m.source for m in mappings.scalars
-            if m.source in SUMMARY_FALLBACK and not m.convert and _lookup(messages, m.source) is None}
+    """Sources of the athlete's fields Garmin's summary could fill (see _summary_may_fill)."""
+    return {m.source for m in mappings.scalars if _summary_may_fill(messages, m)}
 
 
 def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings,
@@ -459,7 +484,7 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
     for m in mappings.scalars:
         raw = _lookup(messages, m.source)
         summary = False
-        if raw is None and m.source in SUMMARY_FALLBACK and not m.convert:
+        if raw is None and _summary_may_fill(messages, m):
             held = activity.get(m.code)
             mine = own is not None and m.code in own and _same_value(held, own[m.code])
             if held is None or _placeholder(held) or mine:

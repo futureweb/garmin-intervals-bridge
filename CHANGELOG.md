@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.12.17 — 2026-11-12
+
+The Training Effect label for devices that write none into their file.
+
+### Added
+
+- **The Training Effect label from Garmin's summary** (thanks JEFFREY_OHARA, who asked for it right
+  after 0.12.16): for a device that writes no Training Effect into its file, an Edge 510 say, the
+  label (Recovery, Base, Tempo, Threshold, VO2 Max, Anaerobic, Sprint) now comes from Garmin's summary
+  like the effects and the load. It fills a field that reads session field 188 without a conversion;
+  Garmin's names map one to one onto the numbers the devices write there (checked against 350 files
+  that carry both). A select field takes only one of its own options, `UNKNOWN` fills nothing, and
+  the file's own label always comes first. A device that writes the effect but no label (a Forerunner
+  620) is left alone: Garmin has no label for those activities either.
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant
+app. Activities of the last days are looked at again by themselves. Older ones: `enrich <id or
+link> --apply` (on the web page: Actions → One activity again).
+
 ## 0.12.16 — 2026-11-12
 
 Training Effect and load for devices that write none into their file.

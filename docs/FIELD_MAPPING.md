@@ -50,6 +50,14 @@ for a value from the file: an empty field is filled, and so is a 0 Intervals sto
 Garmin's copy lacks the field, or a value the bridge wrote there itself; any other value stays. The
 file's own value always comes first.
 
+The Training Effect label (Recovery, Base, Tempo, Threshold, VO2 Max, Anaerobic, Sprint) comes from
+the summary too, for a field that reads session field 188 (`188` or `18.188`) – where the device
+writes the label as a number – without a conversion. Garmin's summary names it (`trainingEffectLabel`): `RECOVERY` 1,
+`AEROBIC_BASE` 2, `TEMPO` 3, `LACTATE_THRESHOLD` 4, `VO2MAX` 5, `ANAEROBIC_CAPACITY` 6, `SPEED` 7
+(checked against 350 files that carry both); any other name fills nothing, and a select field takes
+only one of its own options. This only for a file without a Training Effect of its own: a device that
+writes the effect but no label, a Forerunner 620 say, gets none from Garmin either.
+
 In enrich mode a new activity's summary counts as final in the next activity scan of a scheduled run
 at least twelve hours after the start (for an activity the scan still lists, the same look that reads
 its fluid and food). An activity the scan no longer lists by then is done by its mark, a few per run,
