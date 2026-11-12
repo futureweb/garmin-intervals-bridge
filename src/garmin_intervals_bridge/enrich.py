@@ -12,7 +12,9 @@ import hashlib
 import json
 import logging
 import re
+import time
 from dataclasses import asdict, dataclass, field
+from datetime import datetime
 from typing import Any
 
 from .fit import decode_fit, sha256
@@ -229,7 +231,8 @@ class FieldMappings:
     unsupported: dict[str, str] = field(default_factory=dict)   # code -> why
 
 
-LOOKUP_VERSION = 2              # raised when the bridge finds more in the same definitions (2: 3.37 by name)
+LOOKUP_VERSION = 3              # raised when the bridge finds more in the same definitions (2: 3.37 by name,
+                                # 3: Training Effect and load from Garmin's summary when the file has none)
 
 
 def mapping_signature(mappings: FieldMappings) -> str:
@@ -397,8 +400,41 @@ def _placeholder(value: Any) -> bool:
     return str(value).strip() in ("0", "0.0", "NaN")
 
 
+# Garmin's own summary of an activity (`summaryDTO`) carries these session fields too, in the same units
+# (checked against the device files of 378 activities). A device that does not write them into its
+# file – an Edge 510 – still has them in Garmin Connect, which computes them afterwards; for such an
+# activity the summary fills the athlete's field. Only fields without a conversion, only values above 0.
+SUMMARY_FALLBACK = {
+    "session:total_training_effect": "trainingEffect",
+    "session:total_anaerobic_training_effect": "anaerobicTrainingEffect",
+    "session:training_load_peak": "activityTrainingLoad",
+}
+SUMMARY_PENDING_KEY = "enrich:summary-pending:"     # + Garmin id: fields waiting for Garmin's settled summary
+
+
+def summary_fallback(summary: dict | None) -> dict[str, float]:
+    """What Garmin's summary has for the SUMMARY_FALLBACK fields, by mapping source."""
+    if not isinstance(summary, dict):
+        return {}
+    dto = summary.get("summaryDTO") if isinstance(summary.get("summaryDTO"), dict) else summary
+    out: dict[str, float] = {}
+    for source, key in SUMMARY_FALLBACK.items():
+        value = dto.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and 0 < value < 1e9:
+            out[source] = round(float(value), 4)
+    return out
+
+
+def summary_sources(messages: dict[str, list[dict]], mappings: FieldMappings) -> set[str]:
+    """Sources of the athlete's fields Garmin's summary could fill: a SUMMARY_FALLBACK field the
+    original lacks, read without a conversion."""
+    return {m.source for m in mappings.scalars
+            if m.source in SUMMARY_FALLBACK and not m.convert and _lookup(messages, m.source) is None}
+
+
 def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: FieldMappings,
-                 partner_messages: dict[str, list[dict]] | None = None, own: dict | None = None) -> dict:
+                 partner_messages: dict[str, list[dict]] | None = None, own: dict | None = None,
+                 fallback: dict[str, float] | None = None) -> dict:
     """Fields to PUT on the activity: mapped, present in the original, and either empty in
     Intervals or demonstrably filled from a filtered file.
 
@@ -408,14 +444,28 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
     replaced – and so is the value the bridge itself wrote last time (`own`), when
     the original now says something else. Any other value may be the athlete's own
     and stays; without a partner copy, existing values are left alone.
+
+    `fallback` (source -> value, from Garmin's summary) stands in for a SUMMARY_FALLBACK field the
+    original lacks, under the same rules. Such fields are listed as `summary_fields` unless Intervals
+    holds a value of someone else's there: Garmin's settled summary may still fill or correct them.
     """
     writes: dict[str, Any] = {}
+    from_summary: list[str] = []
+    summary_fields: list[str] = []
     kept: dict[str, Any] = {}
     replaced: dict[str, dict] = {}
     rejected: dict[str, Any] = {}
     absent: list[str] = []
     for m in mappings.scalars:
         raw = _lookup(messages, m.source)
+        summary = False
+        if raw is None and m.source in SUMMARY_FALLBACK and not m.convert:
+            held = activity.get(m.code)
+            mine = own is not None and m.code in own and _same_value(held, own[m.code])
+            if held is None or _placeholder(held) or mine:
+                summary_fields.append(m.code)
+            if fallback and m.source in fallback:
+                raw, summary = fallback[m.source], True
         if raw is None or (m.zero_is_null and raw == 0):
             absent.append(m.code)
             continue
@@ -437,8 +487,11 @@ def plan_scalars(messages: dict[str, list[dict]], activity: dict, mappings: Fiel
                 continue
             replaced[m.code] = {"old": existing, "new": value}
         writes[m.code] = value
+        if summary:
+            from_summary.append(m.code)
     return {"writes": writes, "kept_existing": kept, "replaced_filtered": replaced,
-            "rejected_for_select": rejected, "absent_in_original": absent}
+            "rejected_for_select": rejected, "absent_in_original": absent,
+            "from_garmin_summary": from_summary, "summary_fields": summary_fields}
 
 
 def align_stream(records: list[dict], time_stream: list, record_field: str | int,
@@ -561,13 +614,103 @@ def resolve_one(intervals: Any, reference: str) -> tuple[str, str]:
     return garmin_id, intervals_id
 
 
+SUMMARY_SETTLE_HOURS = 12      # as sync.INTAKE_SETTLE_HOURS: half a day after the start, Garmin's summary is final
+SUMMARY_PENDING_DAYS = 14      # a marker this long after the start is given up
+
+
+def read_summary(store: Any, gid: str) -> tuple[dict | None, float | None]:
+    """The archived summary of an activity and when its oldest part was saved. Garmin's own and the
+    Personal API's (`<id>.personal.json`, kept next to it) are merged, the newer one's values first,
+    so a key one of them lacks still comes from the other; the merge counts as final only when every
+    part does."""
+    docs: list[tuple[float, dict]] = []
+    path = store.activity_json_path(gid)
+    for candidate in (path, path.with_suffix(".personal.json")):
+        try:
+            if candidate.is_file():
+                data = json.loads(candidate.read_text())
+                if isinstance(data, dict):
+                    docs.append((candidate.stat().st_mtime, data))
+        except (OSError, ValueError):
+            continue
+    if not docs:
+        return None, None
+    docs.sort(key=lambda item: item[0])
+    merged: dict = {}
+    dto: dict = {}
+    for _, data in docs:                                  # older first: the newer one's values win
+        merged.update({k: v for k, v in data.items() if v is not None and k != "summaryDTO"})
+        if isinstance(data.get("summaryDTO"), dict):
+            dto.update({k: v for k, v in data["summaryDTO"].items() if v is not None})
+    if dto:
+        merged["summaryDTO"] = dto
+    return merged, docs[0][0]
+
+
+def summary_start(summary: dict | None) -> datetime | None:
+    if not isinstance(summary, dict):
+        return None
+    dto = summary.get("summaryDTO") if isinstance(summary.get("summaryDTO"), dict) else {}
+    return parse_utc(summary.get("startTimeGMT") or dto.get("startTimeGMT"), garmin_gmt=True)
+
+
+def settled(start: datetime | None, when: float | None) -> bool:
+    """Was a summary saved (or fetched) at `when` late enough to be final?"""
+    return start is not None and when is not None and when >= start.timestamp() + SUMMARY_SETTLE_HOURS * 3600
+
+
+def _summary_fallback(gid: str, garmin: Any, store: Any, sources: set[str], summary: dict | None, *,
+                      ask: bool, start: datetime | None) -> tuple[dict[str, float], bool, datetime | None]:
+    """Garmin's summary values for `sources`, whether they are final, and the activity's start
+    (`start` as known – Intervals', else Garmin's list – before the summary's own).
+
+    A summary handed over (the settled pass) is final. Otherwise the archived one counts; one
+    activity on request (`ask`) asks Garmin again unless the archive is final and has every value."""
+    if not sources:
+        return {}, True, start
+    if summary is not None:
+        values = {k: v for k, v in summary_fallback(summary).items() if k in sources}
+        return values, True, start or summary_start(summary)
+    summary, saved = read_summary(store, gid)
+    start = start or summary_start(summary)
+    values, final = summary_fallback(summary), settled(start, saved)
+    if ask and not (final and sources <= set(values)):
+        from .garmin import GarminBlocked
+        try:
+            fetched = garmin.activity(gid)
+        except GarminBlocked:
+            raise
+        except Exception as exc:          # the file's own values still go in; the summary can wait
+            log.warning("Garmin's summary of %s could not be read (%s); Training Effect and load from it "
+                        "are left for later", gid, type(exc).__name__)
+        else:
+            if isinstance(fetched, dict):
+                store.save_activity_json(gid, fetched)
+                start = start or summary_start(fetched)
+                values, final = summary_fallback(fetched), settled(start, time.time())
+    return {k: v for k, v in values.items() if k in sources}, final, start
+
+
+def _note_summary_pending(store: Any, gid: str, intervals_id: str, fields: list[str], final: bool,
+                          start: datetime | None) -> None:
+    """After a successful pass: fields Garmin's settled summary may still fill or correct are marked
+    for the run after the activity settles; a final pass removes the mark."""
+    key = SUMMARY_PENDING_KEY + gid
+    if fields and not final and start is not None:
+        store.set_meta(key, json.dumps({"intervals_id": intervals_id, "start": start.isoformat(),
+                                        "fields": sorted(fields)}))
+    elif store.get_meta(key) is not None:
+        store.delete_meta(key, time.time() + 1)
+
+
 OWN_KEY = "enrich:written:"          # + Garmin id: the field values the bridge wrote, to tell them from typed ones
 
 
 def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply: bool,
                     remote_candidates: list[dict] | None = None, intervals_id: str | None = None,
                     mappings: FieldMappings | None = None, refresh_own: bool = False,
-                    recheck: bool = False, garmin_activity: dict | None = None) -> dict:
+                    recheck: bool = False, garmin_activity: dict | None = None,
+                    summary: dict | None = None) -> dict:
     """Download (or reuse) the original, find the Intervals activity, plan, optionally write.
 
     Returns the plan plus an `outcome`:
@@ -583,6 +726,10 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
 
     `garmin_activity` (start and duration, as Garmin lists it) lets a look-alike among
     `remote_candidates` count when no external id names the activity.
+
+    `summary` is Garmin's settled summary of the activity (the run after INTAKE_SETTLE_HOURS
+    passes it). Without it the archived one is used; one activity on request (`recheck`) asks
+    Garmin again when the archived one lacks a value the original does not carry either.
     """
     from .fit import decode_fit, extract_original_fit, sha256  # local import keeps fit optional for tests
 
@@ -635,8 +782,16 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
     refresh = (set(previous["streams"]) if (refresh_own and previous and previous["intervals_id"] == intervals_id)
                else None)
     same = bool(previous) and previous["intervals_id"] == intervals_id
-    own = json.loads(store.get_meta(OWN_KEY + gid) or "{}") if same else {}     # what the bridge wrote there
-    scalars = plan_scalars(messages, remote, mappings, partner_messages, own=own)
+    # what the bridge wrote there: bound to the activity, so a pass that failed half way still knows it
+    stored_own = json.loads(store.get_meta(OWN_KEY + gid) or "{}")
+    own_for = stored_own.pop("_intervals_id", None)
+    own = stored_own if (own_for == intervals_id if own_for is not None else same) else {}
+    known_start = (parse_utc(remote.get("start_date"))
+                   or parse_utc((garmin_activity or {}).get("startTimeGMT"), garmin_gmt=True))
+    fallback, final, start = _summary_fallback(gid, garmin, store, summary_sources(messages, mappings), summary,
+                                               ask=recheck, start=known_start)
+    scalars = plan_scalars(messages, remote, mappings, partner_messages, own=own, fallback=fallback)
+    scalars["summary_pending"] = [] if final else scalars["summary_fields"]
     streams = plan_streams(messages, remote, time_stream, mappings, refresh=refresh)
     check = origin_check(messages.get("record", []), time_stream, remote_streams)
     if streams["writes"] and check["ok"] is False:
@@ -667,6 +822,7 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
         if apply:
             store.record_enrichment(gid, intervals_id, digest, previous["fields"] if previous else [],
                                     previous["streams"] if previous else [], mapping=signature)
+            _note_summary_pending(store, gid, intervals_id, scalars["summary_fields"], final, start)
         return plan
     if not apply:
         plan["outcome"] = "planned"
@@ -674,13 +830,15 @@ def enrich_activity(gid: str, garmin: Any, intervals: Any, store: Any, *, apply:
     result: dict = {}
     if scalars["writes"]:
         result["fields"] = intervals.update_activity(intervals_id, scalars["writes"]) is not None
-        store.set_meta(OWN_KEY + gid, json.dumps({**own, **scalars["writes"]}, sort_keys=True, default=str))
+        store.set_meta(OWN_KEY + gid, json.dumps({**own, **scalars["writes"], "_intervals_id": intervals_id},
+                                                 sort_keys=True, default=str))
     if streams["writes"]:
         body = [{k: v for k, v in w.items() if k != "_stats"} for w in streams["writes"]]
         result["streams"] = intervals.put_streams(intervals_id, body)
     fields_written = sorted(set(scalars["writes"]) | set(previous["fields"] if previous else []))
     streams_written = sorted({w["type"] for w in streams["writes"]} | set(previous["streams"] if previous else []))
     store.record_enrichment(gid, intervals_id, digest, fields_written, streams_written, mapping=signature)
+    _note_summary_pending(store, gid, intervals_id, scalars["summary_fields"], final, start)
     plan["result"] = result
     plan["outcome"] = "enriched"
     return plan

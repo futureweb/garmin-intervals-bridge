@@ -1,3 +1,4 @@
+import json
 from datetime import date
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -247,4 +248,308 @@ def test_a_failed_gpx_upload_outside_the_window_ends_its_retries(tmp_path):
     _retry_overdue(g, i, st, metrics, set(), None, apply=True)
     assert metrics == {"failed": 0, "not_fit": 1} and st.failed_activities() == []
     assert st.activity_status("42") == "skipped"
+    st.close()
+
+
+# --- Training Effect and load from Garmin's summary (an Edge 510 writes none into its file) ----------
+
+TE_ITEMS = ITEMS + [
+    {"type": "ACTIVITY_FIELD", "content": {"code": "AnaerobicEffect", "fit_session_field": "total_anaerobic_training_effect"}},
+    {"type": "ACTIVITY_FIELD", "content": {"code": "TrainingLoad", "fit_session_field": "training_load_peak"}},
+]
+SUMMARY = {"summaryDTO": {"trainingEffect": 3.4000000953674316, "anaerobicTrainingEffect": 1.2999999523162842,
+                          "activityTrainingLoad": 87.5, "startTimeGMT": "2026-10-07 08:00:00"}}
+
+
+def edge510(tmp_path, summary=SUMMARY):
+    st, g, i = Store(tmp_path), GarminFake(), IntervalsFake()
+    g.original_fit = lambda gid: (setattr(g, "downloads", g.downloads + 1) or build_fit(records=3, training_effect=None))
+    act = g.acts[0]
+    g.activity = lambda gid: (setattr(g, "details", g.details + 1) or {**act, **(summary or {})})
+    i.custom_items = lambda: TE_ITEMS
+    i.activity_obj = {"id": "i42", "stream_types": ["time"], "AerobicEffect": None, "AnaerobicEffect": 0.0,
+                      "TrainingLoad": None, "Sweatloss": None, "start_date": "2026-10-07T08:00:00Z"}
+    return st, g, i
+
+
+def test_a_device_without_training_effect_gets_it_from_garmins_summary(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY
+    st, g, i = edge510(tmp_path)
+    m = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    # enriched before the summary was archived: the fields wait; the settled pass fills them
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert m["fields_written"] == 3 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    again = sync_enrich(settings(tmp_path), g, i, st, apply=True, today=date(2026, 10, 8))
+    assert len(i.updates) == 1 and again["fields_written"] == 0           # nothing twice
+    st.close()
+
+
+def test_the_fields_wait_until_the_activity_has_settled(tmp_path):
+    from datetime import datetime, timezone
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    st, g, i = edge510(tmp_path)
+    plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    assert plan["fields"]["summary_pending"] == ["AerobicEffect", "AnaerobicEffect", "TrainingLoad"]
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") and g.details == 0      # no summary yet, none asked for
+    act, metrics = g.acts[0], {}
+    complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
+                            now=datetime(2026, 10, 7, 12, 0, tzinfo=timezone.utc))
+    assert i.updates == [] and g.details == 0                               # four hours after: still waiting
+    complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
+                            now=datetime(2026, 10, 7, 21, 0, tzinfo=timezone.utc))
+    assert g.details == 1 and st.activity_json_path("42").is_file()        # asked once, archived
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert metrics["fields_written"] == 3 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    complete_summary_fields("42", act, "i42", g, i, st, metrics, apply=True,
+                            now=datetime(2026, 10, 8, 21, 0, tzinfo=timezone.utc))
+    assert g.details == 1 and len(i.updates) == 1                          # done: not again
+    st.close()
+
+
+def test_a_summary_without_the_values_ends_the_wait(tmp_path):
+    from datetime import datetime, timezone
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    st, g, i = edge510(tmp_path, summary={"summaryDTO": {"trainingEffectLabel": "UNKNOWN"}})
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True,
+                            now=datetime(2026, 10, 7, 21, 0, tzinfo=timezone.utc))
+    assert i.updates == [] and not st.get_meta(SUMMARY_PENDING_KEY + "42") and g.details == 1
+    st.close()
+
+
+def test_one_activity_on_request_asks_garmin_for_the_summary(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    st, g, i = edge510(tmp_path)
+    dry = enrich_activity("42", g, i, st, apply=False, intervals_id="i42", recheck=True)
+    assert dry["outcome"] == "planned" and dry["fields"]["from_garmin_summary"] == [
+        "AerobicEffect", "AnaerobicEffect", "TrainingLoad"] and g.details == 1 and i.updates == []
+    done = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    assert done["outcome"] == "enriched" and g.details == 1                # the summary asked for is archived
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    st.close()
+
+
+def test_a_device_with_training_effect_never_needs_the_summary(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    st, g, i = Store(tmp_path), GarminFake(), IntervalsFake()
+    i.custom_items = lambda: TE_ITEMS[:-1]          # the fake device file carries both effects, no load
+    plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    assert g.details == 0 and plan["fields"]["from_garmin_summary"] == []
+    assert plan["fields"]["writes"]["AerobicEffect"] == 3.2 and not st.get_meta(SUMMARY_PENDING_KEY + "42")
+    st.close()
+
+
+def test_the_summary_settles_when_the_intake_does():
+    from garmin_intervals_bridge.enrich import SUMMARY_SETTLE_HOURS
+    from garmin_intervals_bridge.sync import INTAKE_SETTLE_HOURS
+    assert SUMMARY_SETTLE_HOURS == INTAKE_SETTLE_HOURS
+
+
+def at(hours_after_start):
+    from datetime import datetime, timedelta, timezone
+    return datetime(2026, 10, 7, 8, 0, tzinfo=timezone.utc) + timedelta(hours=hours_after_start)
+
+
+def test_a_failed_write_keeps_the_mark_for_the_next_run(tmp_path):
+    import pytest
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    st, g, i = edge510(tmp_path)
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    good = i.update_activity
+    i.update_activity = lambda iid, fields: (_ for _ in ()).throw(RuntimeError("HTTP 502"))
+    with pytest.raises(RuntimeError):
+        complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True, now=at(13))
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42")                        # not lost
+    i.update_activity = good
+    assert complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True, now=at(14))
+    assert i.updates == [("i42", {"AerobicEffect": 3.4, "AnaerobicEffect": 1.3, "TrainingLoad": 87.5})]
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
+    st.close()
+
+
+def test_one_activity_on_request_asks_again_when_the_archive_lacks_the_values(tmp_path):
+    from garmin_intervals_bridge.enrich import enrich_activity
+    st, g, i = edge510(tmp_path)
+    st.save_activity_json("42", {**g.acts[0], "summaryDTO": {"startTimeGMT": "2026-10-07 08:00:00"}})  # settled, empty
+    plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    assert g.details == 1 and plan["fields"]["from_garmin_summary"] == ["AerobicEffect", "AnaerobicEffect",
+                                                                        "TrainingLoad"]
+    st.close()
+
+
+def test_an_early_summary_fills_at_once_and_the_settled_one_corrects(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=1)
+    gmt = start.strftime("%Y-%m-%d %H:%M:%S")
+    early = {"summaryDTO": {"trainingEffect": 3.0, "startTimeGMT": gmt}}
+    st, g, i = edge510(tmp_path, summary=early)
+    g.acts[0]["startTimeGMT"] = gmt
+    i.activity_obj["start_date"] = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+    plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    assert i.updates == [("i42", {"AerobicEffect": 3.0})] and plan["fields"]["summary_pending"]
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42")                        # fetched an hour after the start
+    later = {"summaryDTO": {"trainingEffect": 3.6, "anaerobicTrainingEffect": 1.0, "startTimeGMT": gmt}}
+    g.activity = lambda gid: (setattr(g, "details", g.details + 1) or {**g.acts[0], **later})
+    complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True, now=start + timedelta(hours=13))
+    assert g.details == 2 and i.updates[-1] == ("i42", {"AerobicEffect": 3.6, "AnaerobicEffect": 1.0})
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
+    st.close()
+
+
+def test_marked_activities_outside_the_scan_window_are_completed_by_their_mark(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import _complete_marked_summaries
+    st, g, i = edge510(tmp_path)
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    metrics = {}
+    _complete_marked_summaries(g, i, st, metrics, {"42"}, apply=True, now=at(13))
+    assert i.updates == []                                                 # listed: the scan does it
+    _complete_marked_summaries(g, i, st, metrics, set(), apply=True, now=at(13))
+    assert len(i.updates) == 1 and metrics["fields_written"] == 3
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
+    st.close()
+
+
+def test_a_mark_too_old_is_given_up(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import _complete_marked_summaries
+    st, g, i = edge510(tmp_path)
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    _complete_marked_summaries(g, i, st, {}, set(), apply=True, now=at(15 * 24))
+    assert i.updates == [] and g.details == 0 and st.get_meta(SUMMARY_PENDING_KEY + "42") is None
+    st.close()
+
+
+def test_the_start_intervals_knows_comes_before_the_summarys(tmp_path):
+    from datetime import datetime, timedelta, timezone
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    old_gmt = (now - timedelta(hours=25)).strftime("%Y-%m-%d %H:%M:%S")
+    st, g, i = edge510(tmp_path, summary={"summaryDTO": {"trainingEffect": 3.0, "startTimeGMT": old_gmt}})
+    i.activity_obj["start_date"] = (now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    mark = json.loads(st.get_meta(SUMMARY_PENDING_KEY + "42"))           # an hour old by Intervals: not final
+    assert mark["start"].startswith((now - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"))
+    st.close()
+
+
+def test_a_value_written_by_a_pass_that_failed_half_way_is_still_the_bridges(tmp_path):
+    import pytest
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    st, g, i = edge510(tmp_path, summary={"summaryDTO": {"trainingEffect": 3.0}})
+    i.activity_obj["start_date"] = None
+    good = i.put_streams
+    i.put_streams = lambda iid, body: (_ for _ in ()).throw(RuntimeError("HTTP 502"))
+    plans = []
+    orig_plan = __import__("garmin_intervals_bridge.enrich", fromlist=["plan_streams"]).plan_streams
+
+    def with_stream(*args, **kw):                      # a stream to write, so the pass fails after the fields
+        out = orig_plan(*args, **kw)
+        out["writes"] = [{"type": "Stamina", "data": [1, 2, 3], "_stats": {}}]
+        plans.append(out)
+        return out
+    import garmin_intervals_bridge.enrich as en
+    en.plan_streams, saved = with_stream, en.plan_streams
+    try:
+        with pytest.raises(RuntimeError):
+            enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+        assert i.updates == [("i42", {"AerobicEffect": 3.0})] and st.enrichment("42") is None
+        i.put_streams = good
+        g.activity = lambda gid: {**g.acts[0], "summaryDTO": {"trainingEffect": 3.6}}
+        st.save_activity_json("42", g.activity("42"))
+        plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    finally:
+        en.plan_streams = saved
+    assert plan["fields"]["writes"] == {"AerobicEffect": 3.6}           # its own value: corrected
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
+    st.close()
+
+
+def test_a_swap_retargets_the_mark(tmp_path):
+    from garmin_intervals_bridge.enrich import enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    st, g, i = edge510(tmp_path)
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")
+    st.db.execute("DELETE FROM enrichment WHERE garmin_id='42'")          # an upload swap: a new activity
+    st.record_activity("42", "uploaded", intervals_id="i99")
+    asked = []
+    real = i.activity
+    i.activity = lambda iid: (asked.append(iid) or real(iid))
+    complete_summary_fields("42", {}, None, g, i, st, {}, apply=True, now=at(13))
+    assert asked and set(asked) == {"i99"} and i.updates[-1][0] == "i99"
+    st.close()
+
+
+def test_failing_marks_take_turns_and_old_ones_are_dropped_even_when_listed(tmp_path):
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY
+    from garmin_intervals_bridge.sync import _complete_marked_summaries
+    st, g, i = edge510(tmp_path)
+    for n in range(1, 7):
+        st.set_meta(f"{SUMMARY_PENDING_KEY}{n}", json.dumps({"intervals_id": f"i{n}",
+                                                            "start": "2026-10-07T08:00:00+00:00", "fields": ["X"]}))
+    st.set_meta(f"{SUMMARY_PENDING_KEY}99", json.dumps({"intervals_id": "i99", "start": "2026-09-01T08:00:00+00:00"}))
+    tried = []
+
+    def complete(gid, *a, **kw):
+        tried.append(gid)
+        raise RuntimeError("HTTP 404")
+    import garmin_intervals_bridge.sync as sync
+    sync.complete_summary_fields, saved = complete, sync.complete_summary_fields
+    try:
+        _complete_marked_summaries(g, i, st, {}, {"99"}, apply=True, now=at(13))
+        assert len(tried) == 5 and st.get_meta(f"{SUMMARY_PENDING_KEY}99") is None   # too old: gone though listed
+        first = set(tried)
+        tried.clear()
+        _complete_marked_summaries(g, i, st, {}, set(), apply=True, now=at(14))
+        assert tried == [(set("123456") - first).pop()]                    # the waiting one; the failed rest later
+        tried.clear()
+        _complete_marked_summaries(g, i, st, {}, set(), apply=True, now=at(20))
+        assert len(tried) == 5
+    finally:
+        sync.complete_summary_fields = saved
+    st.close()
+
+
+def test_after_a_swap_the_old_activitys_values_are_not_the_bridges(tmp_path):
+    from garmin_intervals_bridge.enrich import enrich_activity
+    st, g, i = edge510(tmp_path, summary={"summaryDTO": {"trainingEffect": 3.0}})
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42", recheck=True)
+    assert i.updates[-1] == ("i42", {"AerobicEffect": 3.0})                 # the bridge's 3.0 on the old activity
+    g.activity = lambda gid: {**g.acts[0], "summaryDTO": {"trainingEffect": 3.6}}
+    i.activity_obj = {**i.activity_obj, "id": "i99", "AerobicEffect": 3.0}     # a new activity, 3.0 typed in
+    for _ in range(2):                                                     # the second pass knows i99 as "same"
+        plan = enrich_activity("42", g, i, st, apply=True, intervals_id="i99", recheck=True)
+        assert plan["fields"]["kept_existing"]["AerobicEffect"] == 3.0
+        assert "AerobicEffect" not in plan["fields"]["writes"]
+    st.close()
+
+
+def test_an_early_part_of_the_archive_is_not_final_because_a_later_part_is(tmp_path):
+    import os
+
+    from garmin_intervals_bridge.enrich import SUMMARY_PENDING_KEY, enrich_activity
+    from garmin_intervals_bridge.sync import complete_summary_fields
+    st, g, i = edge510(tmp_path, summary={"summaryDTO": {"trainingEffect": 3.6, "activityTrainingLoad": 100.0}})
+    enrich_activity("42", g, i, st, apply=True, intervals_id="i42")       # marked
+    st.save_activity_json("42", {"summaryDTO": {"trainingEffect": 3.0, "activityTrainingLoad": 80.0}})
+    personal = st.activity_json_path("42").with_suffix(".personal.json")
+    personal.write_text('{"summaryDTO": {"anaerobicTrainingEffect": 1.3}}')
+    os.utime(st.activity_json_path("42"), (at(1).timestamp(),) * 2)       # an hour after the start
+    os.utime(personal, (at(13).timestamp(),) * 2)                           # thirteen hours after
+    complete_summary_fields("42", g.acts[0], "i42", g, i, st, {}, apply=True, now=at(14))
+    assert g.details == 1                                                  # asked again: not final
+    assert i.updates[-1] == ("i42", {"AerobicEffect": 3.6, "TrainingLoad": 100.0})
+    assert st.get_meta(SUMMARY_PENDING_KEY + "42") is None
     st.close()

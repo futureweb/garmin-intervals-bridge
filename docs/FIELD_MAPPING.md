@@ -38,6 +38,25 @@ streams carry the Garmin-internal IDs (message 140, session fields 178 and
 205–207, record fields 137/138); adding them to your account is all it
 takes for the bridge to fill them.
 
+### Training Effect and load from Garmin's summary
+
+Some devices write no Training Effect and no training load into their file – an Edge 510, say –
+and Garmin Connect computes them afterwards. For a field that reads `total_training_effect`,
+`total_anaerobic_training_effect` or `training_load_peak` without a conversion (a script that only
+turns 0 into "no value" is fine), the bridge then takes Garmin's own summary of the activity:
+`trainingEffect`, `anaerobicTrainingEffect` and `activityTrainingLoad`, in the same units as the
+session fields. Only when the original lacks the field, and only values above 0. The rules are those
+for a value from the file: an empty field is filled, and so is a 0 Intervals stored for it while
+Garmin's copy lacks the field, or a value the bridge wrote there itself; any other value stays. The
+file's own value always comes first.
+
+In enrich mode a new activity's summary counts as final in the next activity scan of a scheduled run
+at least twelve hours after the start (for an activity the scan still lists, the same look that reads
+its fluid and food). An activity the scan no longer lists by then is done by its mark, a few per run,
+the longest waiting first. A value from an earlier summary goes in at once and is corrected then if
+Garmin changed it. `enrich <id or link>` asks Garmin for the summary right away unless the archived
+one is final and has every value.
+
 ### Fluid and food logged for an activity
 
 Garmin keeps what you logged during or after an activity in its activity

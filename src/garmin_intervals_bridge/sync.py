@@ -10,7 +10,18 @@ from typing import Any
 
 from . import hrvtrend, imready4
 from .config import Settings
-from .enrich import enrich_activity, exact_match, load_field_mappings, match_activity
+from .enrich import (
+    SUMMARY_PENDING_DAYS,
+    SUMMARY_PENDING_KEY,
+    enrich_activity,
+    exact_match,
+    load_field_mappings,
+    match_activity,
+    read_summary,
+)
+from .enrich import (
+    settled as summary_settled,
+)
 from .fit import NOT_FIT_SUFFIXES, InvalidFIT, NotFIT, decode_fit, sha256, validate_fit, wellness_bundle_index
 from .garmin import ESSENTIAL_ENDPOINTS, EXTRA_KEYS, GarminBlocked
 from .intake import fit_intake_values, intake_values, write_intake
@@ -331,6 +342,96 @@ def _complete_intake(gid: str, activity: dict, intervals_id: str | None, garmin:
         if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
             raise
         log.warning("Intake of %s not written: %s; next run tries again", gid, _error_name(exc))
+    try:
+        complete_summary_fields(gid, activity, intervals_id, garmin, intervals, store, metrics, apply=apply)
+    except GarminBlocked:
+        raise
+    except Exception as exc:
+        if rate_limited(exc) is not None:
+            raise
+        log.warning("Training Effect and load of %s from Garmin's summary not written: %s; next run tries again",
+                    gid, _error_name(exc))
+
+
+def _mark(value: str | None) -> dict:
+    try:
+        mark = json.loads(value) if value else {}
+    except ValueError:
+        return {}
+    return mark if isinstance(mark, dict) else {}
+
+
+def complete_summary_fields(gid: str, activity: dict, intervals_id: str | None, garmin: Any, intervals: Any,
+                            store: Store, metrics: dict, *, apply: bool, now: datetime | None = None) -> bool:
+    """Training Effect and load the device's file does not carry, from Garmin's settled summary: once the
+    activity is twelve hours old, when its enrichment marked such fields (an Edge 510 writes none;
+    Garmin Connect computes them afterwards). The summary archived late enough – by the intake, say –
+    is reused, else asked for once. The mark stays until a pass went through. True when it ran."""
+    key = SUMMARY_PENDING_KEY + gid
+    mark = _mark(store.get_meta(key))
+    if not apply or not mark:
+        return False
+    # the activity the bridge knows now: a swap may have replaced the one marked
+    intervals_id = intervals_id or store.activity_intervals_id(gid) or mark.get("intervals_id")
+    started = _time(mark.get("start")) or _time(activity.get("startTimeGMT"), garmin_gmt=True)
+    current = now or datetime.now(timezone.utc)
+    if not intervals_id or started is None:
+        store.delete_meta(key, time.time() + 1)     # nothing to go on
+        return False
+    if current - started < timedelta(hours=INTAKE_SETTLE_HOURS):
+        return False
+    summary, saved = read_summary(store, gid)
+    if summary is None or not summary_settled(started, saved):
+        summary = garmin.activity(gid)
+        store.save_activity_json(gid, summary)
+    result = enrich_activity(gid, garmin, intervals, store, apply=True, intervals_id=str(intervals_id),
+                             recheck=True, summary=summary)
+    filled = (result.get("fields") or {}).get("from_garmin_summary") or []
+    if filled and result.get("outcome") == "enriched":
+        metrics["fields_written"] = metrics.get("fields_written", 0) + len(filled)
+        log.info("Garmin's summary of %s -> %s: %s", gid, intervals_id, filled)
+    return True
+
+
+SUMMARIES_BY_ID = 5              # per full run: marked activities that left the scan window
+SUMMARY_RETRY_HOURS = 6          # after a failed attempt, the others go first
+
+
+def _complete_marked_summaries(garmin: Any, intervals: Any, store: Store, metrics: dict, listed: set[str], *,
+                               apply: bool, now: datetime | None = None) -> None:
+    """Marked activities the scan no longer lists (a short scan window, an evening ride), by their mark:
+    the longest waiting first, a failed one again after SUMMARY_RETRY_HOURS. A mark older than
+    SUMMARY_PENDING_DAYS is given up."""
+    if not apply:
+        return
+    current = now or datetime.now(timezone.utc)
+    due: list[tuple[float, str, dict]] = []
+    for key, value in store.meta_items(SUMMARY_PENDING_KEY + "*"):
+        gid = key.removeprefix(SUMMARY_PENDING_KEY)
+        mark = _mark(value)
+        started = _time(mark.get("start"))
+        if started is None or current - started > timedelta(days=SUMMARY_PENDING_DAYS):
+            store.delete_meta(key, time.time() + 1)
+            log.info("Garmin's summary of %s: no longer waited for", gid)
+            continue
+        if gid in listed or current - started < timedelta(hours=INTAKE_SETTLE_HOURS):
+            continue                              # the scan does it, or not yet
+        tried = mark.get("tried")
+        if isinstance(tried, (int, float)) and current.timestamp() - tried < SUMMARY_RETRY_HOURS * 3600:
+            continue
+        due.append((float(tried or 0), gid, mark))
+    for _, gid, mark in sorted(due)[:SUMMARIES_BY_ID]:
+        try:
+            complete_summary_fields(gid, {}, None, garmin, intervals, store, metrics, apply=apply, now=current)
+        except GarminBlocked:
+            raise
+        except Exception as exc:
+            if rate_limited(exc) is not None:
+                raise
+            if store.get_meta(SUMMARY_PENDING_KEY + gid):
+                store.set_meta(SUMMARY_PENDING_KEY + gid, json.dumps({**mark, "tried": current.timestamp()}))
+            log.warning("Training Effect and load of %s from Garmin's summary not written: %s; tried again "
+                        "later", gid, _error_name(exc))
 
 
 def backfill_intake(intervals: Any, store: Store, *, start: date, end: date, apply: bool,
@@ -789,8 +890,9 @@ def sync_enrich(settings: Settings, garmin: Any, intervals: Any, store: Store, *
                      "ENRICHED" if outcome == "enriched" else "DRY-RUN would enrich",
                      gid, result["intervals_id"], fields, streams)
     if not date_range and not archive_only:
-        _retry_overdue(garmin, intervals, store, metrics, {str(a.get("activityId")) for a in activities},
-                       mappings, apply=apply)
+        listed = {str(a.get("activityId")) for a in activities}
+        _retry_overdue(garmin, intervals, store, metrics, listed, mappings, apply=apply)
+        _complete_marked_summaries(garmin, intervals, store, metrics, listed, apply=apply)
         store.set_meta("activity_scan")
         if catch_up:
             caught_up(store, "activities")             # gone through; a failed one is retried by its id

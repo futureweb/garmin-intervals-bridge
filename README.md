@@ -726,6 +726,7 @@ the page answers only Home Assistant's ingress).
 | `429` during `login` | The mobile login path was refused; the web path usually follows. Do not retry in a loop. |
 | `Another bridge instance is running (wellness)` | A backfill holds that part; the rest keeps running, and the bridge goes on with it once the backfill is done. For a backfill: another one is still working on that part. `(run)`: a background bridge runs already. |
 | Garmin values gone after *Reprocess file* in Intervals | `enrich <the activity's id or link> --apply`, or the web page's *Actions → One activity again*. |
+| Training Effect or load empty although Garmin Connect shows them | The device writes none into its file (an Edge 510, say); the bridge takes them from Garmin's summary, final in the next scheduled activity scan at least twelve hours after the start (enrich mode), or at once with `enrich <id or link> --apply`. See [docs/FIELD_MAPPING.md](docs/FIELD_MAPPING.md). |
 | `Expected exactly one FIT in archive, found 0` | Up to 0.12.7: Garmin's original of that activity is a GPX or TCX upload, not a FIT. 0.12.8 archives it and skips the activity. |
 | `outcome: unmatched` | The official import has not created the activity yet; the next run looks again. An old activity of Intervals' first Garmin import is found by start and duration – not when two copies agree (two devices on the same ride). |
 | `status` lists a *pending* upload | Upload mode: the request's outcome is unknown. Check Intervals before `reset-pending`. |

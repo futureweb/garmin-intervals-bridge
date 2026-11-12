@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.12.16 — 2026-11-12
+
+Training Effect and load for devices that write none into their file.
+
+### Added
+
+- **Training Effect and training load from Garmin's summary** (thanks JEFFREY_OHARA, whose Edge 510
+  ride showed them in Garmin Connect but not in Intervals): some devices write neither into their
+  file, and Garmin Connect computes them afterwards. For a field that reads
+  `total_training_effect`, `total_anaerobic_training_effect` or `training_load_peak` without a
+  conversion, the bridge now takes them from Garmin's own summary of the activity, in the same units
+  (checked against 378 activities whose files carry them). Only when the original lacks them, only
+  values above 0, and under the same rules as a value from the file: an empty field, a 0 Intervals
+  stored while Garmin's copy lacks the field, or a value the bridge wrote itself is filled; any other
+  value stays. In enrich mode the summary counts as final in the next activity scan of a scheduled
+  run at least twelve hours after the start; an activity that has left the scan window by then is
+  done by its mark, a few per run. `enrich <id or link>` asks Garmin for the summary at once, unless
+  the archived one is final and has every value.
+
+### Fixed
+
+- A test of the polling interval used a fixed date and failed once that date was more than 30 days
+  old (the store keeps runs for 30 days).
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant
+app. Activities of the last days are looked at again by themselves. Older ones: `enrich <id or
+link>` shows what it would write, `--apply` writes it (on the web page: *Actions → One activity
+again*).
+
 ## 0.12.15 — 2026-11-05
 
 Resting HR and weight on days where Intervals only shows a value carried over from another day.

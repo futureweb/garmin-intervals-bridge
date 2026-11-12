@@ -3,7 +3,7 @@ look-for-new-activities timing, health, retries outside the scan window."""
 
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -78,7 +78,8 @@ def test_upload_mode_counts_the_full_runs_look_and_an_upload_makes_the_hour_fast
     st = Store(tmp_path)
     s = SimpleNamespace(timezone=VIENNA, poll_seconds=600, poll_hours=((600, 1080),), poll_quiet_seconds=3600,
                         poll_mode="fixed")
-    now = datetime(2026, 10, 12, 20, 0, tzinfo=VIENNA).timestamp()           # quiet hours
+    # quiet hours, and recent: the store keeps runs for 30 days (a fixed date expired with time)
+    now = (datetime.now(VIENNA) - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0).timestamp()
     st.record_run("sync", {}, started=now - 60)
     assert polling.last_look(st, "upload") == now - 60 and polling.last_look(st, "enrich") is None
     assert not polling.due(s, st, now, 600, "upload")[0]                       # the full run just looked
