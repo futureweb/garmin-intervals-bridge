@@ -1204,10 +1204,19 @@ def _slot_due(store: Store, day: date, now: datetime, slots: tuple) -> bool:
     return True
 
 
-def _backoff(store: Store, key: str, steps: tuple, now_ts: float) -> None:
+def _backoff(store: Store, key: str, steps: tuple, now_ts: float) -> float:
+    """Postpone `key`; returns when it is due again."""
     tries = int(store.get_meta(f"{key}:tries") or 0)
     store.set_meta(f"{key}:tries", str(tries + 1))
-    store.set_meta(key, str(now_ts + steps[min(tries, len(steps) - 1)] * 60))
+    due = now_ts + steps[min(tries, len(steps) - 1)] * 60
+    store.set_meta(key, str(due))
+    return due
+
+
+def _from(due: float, now: datetime) -> str:
+    """When a postponed read comes again, for the log: "11:31", or "2026-11-17 00:31" on another day."""
+    at = datetime.fromtimestamp(due, now.tzinfo)
+    return f"{at:%H:%M}" if at.date() == now.date() else f"{at:%Y-%m-%d %H:%M}"
 
 
 def _wellness_metrics() -> dict:
@@ -1335,8 +1344,9 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         except GarminBlocked:
             raise
         except Exception as exc:
-            _backoff(store, f"wellness:files:{day}", VERIFY_BACKOFF_MINUTES, now_ts)
-            log.warning("Wellness files of %s not mirrored: %s; trying again later", day, _error_name(exc))
+            due = _backoff(store, f"wellness:files:{day}", VERIFY_BACKOFF_MINUTES, now_ts)
+            log.warning("Wellness files of %s not mirrored: %s; trying again from %s", day, _error_name(exc),
+                        _from(due, now))
             return False
         metrics["files"] += int(saved)
         return saved
@@ -1451,13 +1461,16 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             time.sleep(2)                       # recovery is paced like the historical backfill
         raw = read(day, None)
         if not raw.get("data"):
-            _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
-            log.warning("No Garmin wellness payload for %s; trying again later", day)
+            due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
+            log.warning("No Garmin wellness payload for %s; trying again from %s", day, _from(due, now))
             continue
         if raw["transient"] and int(store.get_meta(f"{retry_key}:tries") or 0) < FINAL_TRIES - 1:
-            _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
-            log.info("Final read of %s: %s failed this time; reading again later", day,
-                     ", ".join(raw["transient"]))
+            due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
+            # 16.11.2026 (Michael.0000 #182): say when - the day is written by itself then, at the latest by the
+            # last of FINAL_TRIES reads with whatever Garmin has
+            log.info("Final read of %s: %s failed this time; reading again from %s (read %d of %d, the last "
+                     "writes what Garmin has)", day, ", ".join(raw["transient"]), _from(due, now),
+                     int(store.get_meta(f"{retry_key}:tries") or 1), FINAL_TRIES)
             continue
         if raw.get("deferred"):
             store.set_meta(f"deferred:wellness:{day}", "pending")

@@ -587,6 +587,39 @@ def test_a_final_read_whose_daily_summary_failed_settles_nothing(tmp_path):
     st.close()
 
 
+def test_a_postponed_final_read_says_when_it_comes_again(tmp_path, caplog):
+    # Michael.0000 #182: "reading again later" left open whether the day would still come
+    import logging
+    st, g, i = _morning_written(tmp_path)
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if day == TODAY and endpoints is None:                  # the final read: the food log did not answer
+            raw["errors"]["nutrition"] = "HTTPError 503"
+        return raw
+    g.snapshot = snapshot
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    with caplog.at_level(logging.INFO, logger="garmin_intervals_bridge"):
+        run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+        run(tmp_path, st, g, i, at(8, 30, day=TOMORROW))
+        run(tmp_path, st, g, i, at(10, 30, day=TOMORROW))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith(f"Final read of {TODAY}")]
+    assert lines[0] == (f"Final read of {TODAY}: nutrition failed this time; reading again from 08:30 "
+                        "(read 1 of 3, the last writes what Garmin has)")
+    assert lines[1].endswith("reading again from 10:30 (read 2 of 3, the last writes what Garmin has)")
+    assert lines[2] == f"Final read of {TODAY} (device synced after the day)"   # the third read writes the day
+    assert st.get_meta(f"wellness:final:{TODAY}") == "synced"
+    st.close()
+
+
+def test_the_retry_time_names_the_day_when_it_is_not_today():
+    from garmin_intervals_bridge.sync import _from
+    now = at(23, 30)
+    assert _from(at(23, 59).timestamp(), now) == "23:59"
+    assert _from(at(0, 30, day=TOMORROW).timestamp(), now) == f"{TOMORROW} 00:30"
+
+
 def test_an_empty_field_in_a_check_does_not_end_the_bridges_claim(tmp_path):
     st, g, i = _morning_written(tmp_path)
     from garmin_intervals_bridge.sync import forget_foreign_provisional

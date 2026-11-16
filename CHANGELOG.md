@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A postponed final read of a day says when it comes again** (thanks Michael.0000, whose log only said
+  "reading again later"): when Garmin does not answer an endpoint while a finished day is read, the log
+  now names the time of the next read and which of the three reads it was, for example `reading again
+  from 11:31 (read 1 of 3, the last writes what Garmin has)`. The day still comes by itself; nothing in
+  the behaviour changed. The same for wellness files that could not be mirrored and for a day Garmin
+  sent nothing for.
+
 ## 0.12.17 — 2026-11-12
 
 The Training Effect label for devices that write none into their file.
