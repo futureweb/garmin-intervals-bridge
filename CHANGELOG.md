@@ -9,7 +9,18 @@
   now names the time of the next read and which of the three reads it was, for example `reading again
   from 11:31 (read 1 of 3, the last writes what Garmin has)`. The day still comes by itself; nothing in
   the behaviour changed. The same for wellness files that could not be mirrored and for a day Garmin
-  sent nothing for.
+  sent nothing for. The line also says how the endpoint failed, for example `nutrition (HTTPError 503)`,
+  in the backup mode too.
+
+### Fixed
+
+- **An endpoint that fails every day no longer makes every day three hours late** (thanks Michael.0000,
+  whose food log failed each day): a finished day waits for an endpoint that failed only when the failure
+  can pass. If the same endpoint still failed when the day before was finished, the day is written
+  straight away, and the log says `failed as on <the day before>; not waiting for it`. A single
+  hiccup still gets its three reads.
+- **An answer from Garmin that cannot be read is no reason to wait**: no JSON or an unexpected shape
+  comes the same way with every read, so the day is written without that endpoint and the log names it.
 
 ## 0.12.17 — 2026-11-12
 

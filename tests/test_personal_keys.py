@@ -123,6 +123,14 @@ def test_persistent_401_stops_renewal_until_explicit_check(tmp_path):
     assert not checked.failure_path.exists()
 
 
+def test_an_unreadable_nutrition_answer_is_no_reason_to_read_again(tmp_path):
+    g = source(tmp_path, token(), Response(payload=ValueError("no JSON")), Response(payload=[]))
+    raw = g.snapshot(DAY, endpoints=("stats", "nutrition"))
+    # stats: no JSON at all; nutrition: a list where a day belongs
+    assert raw["errors"] == {"stats": "PersonalDataError", "nutrition": "ValueError"}
+    assert sync.transient_errors(raw) == [] and sync.unreadable_errors(raw) == ["stats", "nutrition"]
+
+
 def test_data_403_keeps_other_wellness_and_becomes_three_day_health_finding(settings):
     store = Store(settings.data_dir)
     try:

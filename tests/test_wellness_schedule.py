@@ -605,12 +605,75 @@ def test_a_postponed_final_read_says_when_it_comes_again(tmp_path, caplog):
         run(tmp_path, st, g, i, at(8, 30, day=TOMORROW))
         run(tmp_path, st, g, i, at(10, 30, day=TOMORROW))
     lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith(f"Final read of {TODAY}")]
-    assert lines[0] == (f"Final read of {TODAY}: nutrition failed this time; reading again from 08:30 "
+    assert lines[0] == (f"Final read of {TODAY}: nutrition (HTTPError 503) failed this time; reading again from 08:30 "
                         "(read 1 of 3, the last writes what Garmin has)")
     assert lines[1].endswith("reading again from 10:30 (read 2 of 3, the last writes what Garmin has)")
     assert lines[2] == f"Final read of {TODAY} (device synced after the day)"   # the third read writes the day
     assert st.get_meta(f"wellness:final:{TODAY}") == "synced"
     st.close()
+
+
+def _final_read_failing(tmp_path, error, before=None):
+    """Yesterday's morning is written; the final read of it fails on nutrition with `error`.
+    `before`: the errors the day before that kept in its archive when it was finished."""
+    st, g, i = _morning_written(tmp_path)
+    if before is not None:
+        st.save_snapshot(YESTERDAY, {"date": YESTERDAY.isoformat(), "data": {"stats": {}}, "errors": before})
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if day == TODAY and endpoints is None:
+            raw["errors"]["nutrition"] = error
+        return raw
+    g.snapshot = snapshot
+    i.records[TOMORROW] = {"sleepSecs": 27000}
+    return st, g, i
+
+
+def _final_lines(caplog):
+    return [r.getMessage() for r in caplog.records if r.getMessage().startswith(f"Final read of {TODAY}")]
+
+
+def test_an_endpoint_that_still_failed_when_the_day_before_was_finished_holds_nothing_back(tmp_path, caplog):
+    # Michael.0000 #184: nutrition failed every day, and every day came three hours late
+    import logging
+    st, g, i = _final_read_failing(tmp_path, "HTTPError 503", before={"nutrition": "HTTPError 503"})
+    with caplog.at_level(logging.INFO, logger="garmin_intervals_bridge"):
+        run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert st.get_meta(f"wellness:final:{TODAY}") == "synced"           # written by the first read
+    assert _final_lines(caplog) == [
+        f"Final read of {TODAY}: nutrition (HTTPError 503) failed as on {YESTERDAY}; not waiting for it",
+        f"Final read of {TODAY} (device synced after the day)"]
+    st.close()
+
+
+def test_a_passing_failure_still_waits_when_the_day_before_was_fine(tmp_path):
+    st, g, i = _final_read_failing(tmp_path, "HTTPError 503", before={"hydration": "HTTPError 503"})
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert st.get_meta(f"wellness:final:{TODAY}") is None               # read again later, as before
+    st.close()
+
+
+def test_an_unreadable_answer_holds_nothing_back(tmp_path, caplog):
+    import logging
+    st, g, i = _final_read_failing(tmp_path, "PersonalDataError")
+    with caplog.at_level(logging.INFO, logger="garmin_intervals_bridge"):
+        run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
+    assert st.get_meta(f"wellness:final:{TODAY}") == "synced"
+    assert _final_lines(caplog)[0] == (f"Final read of {TODAY}: Garmin's answer for nutrition (PersonalDataError) "
+                                       "could not be read; not waiting for it, another read brings the same")
+    st.close()
+
+
+def test_which_failures_are_worth_another_read():
+    from garmin_intervals_bridge.sync import failures, transient_errors, unreadable_errors
+    raw = {"errors": {"stats": "PersonalConnectionError", "sleep": "HTTPError 503", "hrv": "HTTPError 404",
+                      "nutrition": "PersonalDataError", "fitness_age": "ValueError", "spo2": "JSONDecodeError",
+                      "lactate_threshold": "MethodNotAvailable"}}
+    assert transient_errors(raw) == ["stats", "sleep"]
+    assert unreadable_errors(raw) == ["nutrition", "fitness_age", "spo2"]
+    assert failures(raw, ["nutrition", "body_battery"]) == "nutrition (PersonalDataError), body_battery"
 
 
 def test_the_retry_time_names_the_day_when_it_is_not_today():

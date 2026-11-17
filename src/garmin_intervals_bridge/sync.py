@@ -1135,15 +1135,32 @@ def _merge_partial(previous: dict | None, raw: dict) -> dict:
     return merge_snapshot(previous, raw)
 
 
+# Garmin answered, but with something that cannot be read (no JSON, an unexpected shape): another
+# read brings the same answer, so it is no reason to wait.
+DATA_ERRORS = frozenset(("PersonalDataError", "ValueError", "JSONDecodeError"))
+
+
 def transient_errors(raw: dict) -> list[str]:
     """Endpoints that failed for a passing reason (5xx, timeout, connection) – worth another read;
-    a 4xx or a method this Garmin library lacks is no reason to wait."""
+    a 4xx, an unreadable answer or a method this Garmin library lacks is no reason to wait."""
     out = []
     for key, error in (raw.get("errors") or {}).items():
         code = re.search(r"\b([1-5]\d\d)$", str(error))
-        if str(error) != "MethodNotAvailable" and (code is None or code.group(1).startswith("5")):
+        if (str(error) != "MethodNotAvailable" and str(error).split(" ")[0] not in DATA_ERRORS
+                and (code is None or code.group(1).startswith("5"))):
             out.append(key)
     return out
+
+
+def unreadable_errors(raw: dict) -> list[str]:
+    """Endpoints whose answer could not be read."""
+    return [key for key, error in (raw.get("errors") or {}).items() if str(error).split(" ")[0] in DATA_ERRORS]
+
+
+def failures(raw: dict, keys: list[str]) -> str:
+    """'nutrition (PersonalDataError)': what failed and how, for the log."""
+    errors = raw.get("errors") or {}
+    return ", ".join(f"{key} ({errors[key]})" if errors.get(key) else key for key in keys)
 
 
 FINAL_TRIES = 3                 # a day with passing endpoint failures is final after this many reads
@@ -1319,7 +1336,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         store.save_snapshot(day, raw)
         store.mark_wellness(day)
         metrics["days_checked"] += 1
-        return {**raw, "transient": transient_errors(fresh)}
+        return {**raw, "transient": transient_errors(fresh), "unreadable": unreadable_errors(fresh)}
 
     def write(day: date, raw: dict, rewrite: set[str] | frozenset[str] | None = None) -> None:
         if rewrite and apply:
@@ -1464,14 +1481,28 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
             log.warning("No Garmin wellness payload for %s; trying again from %s", day, _from(due, now))
             continue
-        if raw["transient"] and int(store.get_meta(f"{retry_key}:tries") or 0) < FINAL_TRIES - 1:
+        # 17.11.2026 (Michael.0000 #184): what still failed when the day before was finished is no passing
+        # hiccup; waiting for it again only makes every day three hours late
+        day_before = day - timedelta(days=1)
+        before = ((store.load_snapshot(day_before) or {}).get("errors") or {}
+                  if raw["transient"] and day_before not in pending_past
+                  and store.get_meta(f"wellness:final:{day_before}") else {})
+        again = [key for key in raw["transient"] if key in before]
+        waiting = [key for key in raw["transient"] if key not in again]
+        if waiting and int(store.get_meta(f"{retry_key}:tries") or 0) < FINAL_TRIES - 1:
             due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
             # 16.11.2026 (Michael.0000 #182): say when - the day is written by itself then, at the latest by the
             # last of FINAL_TRIES reads with whatever Garmin has
             log.info("Final read of %s: %s failed this time; reading again from %s (read %d of %d, the last "
-                     "writes what Garmin has)", day, ", ".join(raw["transient"]), _from(due, now),
+                     "writes what Garmin has)", day, failures(raw, waiting), _from(due, now),
                      int(store.get_meta(f"{retry_key}:tries") or 1), FINAL_TRIES)
             continue
+        if again:
+            log.info("Final read of %s: %s failed as on %s; not waiting for it", day, failures(raw, again),
+                     day_before)
+        if raw["unreadable"]:
+            log.info("Final read of %s: Garmin's answer for %s could not be read; not waiting for it, another "
+                     "read brings the same", day, failures(raw, raw["unreadable"]))
         if raw.get("deferred"):
             store.set_meta(f"deferred:wellness:{day}", "pending")
         else:

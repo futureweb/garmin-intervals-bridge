@@ -195,6 +195,18 @@ def test_a_failed_endpoint_keeps_the_archive_and_the_read_counts_only_once_it_ca
     st.close()
 
 
+def test_the_backup_says_how_an_endpoint_failed(tmp_path, caplog):
+    import logging
+    st, g = Store(tmp_path), _FlakyGarmin()
+    vienna = ZoneInfo("Europe/Vienna")
+    g.fail_hrv = True
+    with caplog.at_level(logging.INFO, logger="garmin_intervals_bridge"):
+        backup.backup_once(SimpleNamespace(timezone=vienna), g, st, now=datetime(2026, 10, 6, 13, 0, tzinfo=vienna))
+    assert any(r.getMessage().endswith("hrv (GarminConnectConnectionError 503) failed this time; next run reads again")
+               for r in caplog.records)
+    st.close()
+
+
 def test_the_days_files_are_asked_again_after_an_error_and_after_an_early_none(tmp_path):
     from garmin_intervals_bridge.sync import files_missing
     st, g = Store(tmp_path), _FlakyGarmin()

@@ -75,8 +75,8 @@ def _activities(garmin: Any, store: Any, start: date, end: date, metrics: dict, 
 def _wellness_day(day: date, garmin: Any, store: Any, metrics: dict, endpoints: tuple[str, ...] | None,
                   files: bool) -> list[str]:
     """Read a day into the archive (an endpoint that fails keeps what the archive had); the
-    endpoints that failed for a passing reason."""
-    from .sync import _merge_partial, transient_errors
+    endpoints that failed for a passing reason, each with its error."""
+    from .sync import _merge_partial, failures, transient_errors
     fresh = garmin.snapshot(day, **({"endpoints": endpoints} if endpoints else {}))
     fresh["final"] = True
     store.save_snapshot(day, _merge_partial(store.load_snapshot(day), fresh))
@@ -88,7 +88,8 @@ def _wellness_day(day: date, garmin: Any, store: Any, metrics: dict, endpoints: 
     metrics["wellness_days"] += 1
     if files:
         _files(day, garmin, store, metrics)
-    return transient_errors(fresh)
+    passing = transient_errors(fresh)
+    return [failures(fresh, [key]) for key in passing]            # "nutrition (HTTPError 503)", for the log
 
 
 def _files(day: date, garmin: Any, store: Any, metrics: dict) -> None:
