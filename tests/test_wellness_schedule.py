@@ -666,6 +666,17 @@ def test_an_unreadable_answer_holds_nothing_back(tmp_path, caplog):
     st.close()
 
 
+def test_a_read_due_within_minutes_of_a_run_happens_in_that_run(tmp_path):
+    # Michael.0000 #186: with a run every 30 minutes, a read due seconds after one waited half an hour more
+    st, g, i = _final_read_failing(tmp_path, "HTTPError 503")
+    run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))                    # postponed until 08:30
+    run(tmp_path, st, g, i, at(8, 24, day=TOMORROW))
+    assert g.reads.count((TODAY, None)) == 1                            # six minutes early: not yet
+    run(tmp_path, st, g, i, at(8, 26, day=TOMORROW))
+    assert g.reads.count((TODAY, None)) == 2                            # four minutes early: this run
+    st.close()
+
+
 def test_which_failures_are_worth_another_read():
     from garmin_intervals_bridge.sync import failures, transient_errors, unreadable_errors
     raw = {"errors": {"stats": "PersonalConnectionError", "sleep": "HTTPError 503", "hrv": "HTTPError 404",

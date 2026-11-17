@@ -1230,6 +1230,17 @@ def _backoff(store: Store, key: str, steps: tuple, now_ts: float) -> float:
     return due
 
 
+# A postponed read due within this much of a run happens in that run. The steps are multiples of the
+# 30-minute run, so the due time lands at a run's start, and a few seconds decided whether a read came
+# with that run or half an hour later (17.11.2026, Michael.0000 #186: 1 h + 2 h took almost four).
+DUE_SLACK_SECONDS = 300
+
+
+def _due(store: Store, key: str, now_ts: float) -> bool:
+    """Whether the read postponed under `key` may happen now."""
+    return now_ts + DUE_SLACK_SECONDS >= float(store.get_meta(key) or 0)
+
+
 def _from(due: float, now: datetime) -> str:
     """When a postponed read comes again, for the log: "11:31", or "2026-11-17 00:31" on another day."""
     at = datetime.fromtimestamp(due, now.tzinfo)
@@ -1298,11 +1309,11 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     readiness_key = f"wellness:readiness:{current}"
     readiness_due = (supports(garmin, "training_readiness") and morning == "no-readiness"
                      and int(store.get_meta(f"{readiness_key}:tries") or 0) < READINESS_RETRIES
-                     and now_ts >= float(store.get_meta(readiness_key) or 0))
+                     and _due(store, readiness_key, now_ts))
     files_due = [d for d in past if supports(garmin, "wellness_files")
                  and (not store.get_meta(f"deferred:wellness:{d}") or d in resumed)
                  and store.get_meta(f"wellness:final:{d}") and files_missing(store, d)
-                 and now_ts >= float(store.get_meta(f"wellness:files:{d}") or 0)]
+                 and _due(store, f"wellness:files:{d}", now_ts)]
     unwritten = [d for d in past + [current]
                  if apply and (state := store.wellness_state(d))[0] and not state[1]
                  and (d == current and morning or store.get_meta(f"wellness:final:{d}"))]
@@ -1386,7 +1397,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     synced = official_sleep          # the official integration had the night: the device synced after midnight
 
     morning_key = f"wellness:next:{current}"
-    if not morning and now_ts >= float(store.get_meta(morning_key) or 0) and (
+    if not morning and _due(store, morning_key, now_ts) and (
             official_sleep or _slot_due(store, current, now, LATE_SLOTS if signal else FALLBACK_SLOTS)):
         # Personal sleep has no resting HR of the night: the daily summary brings today's so far
         raw = read(current, MORNING_ENDPOINTS + (("stats",) if getattr(garmin, "source", "direct") != "direct"
@@ -1452,7 +1463,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
     verify_key = f"wellness:verify:{current}"
     source = getattr(garmin, "source", "direct")
     if (source in ("direct", "hybrid") and pending_past and not synced and touched
-            and now_ts >= float(store.get_meta(verify_key) or 0)
+            and _due(store, verify_key, now_ts)
             and not (source == "hybrid" and garmin.direct_unavailable)):      # nothing to ask, no backoff
         # Something new arrived in Intervals for today; ask Garmin whether that was a device sync.
         if source == "direct":
@@ -1470,7 +1481,7 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
         anyway = now >= datetime.combine(day + timedelta(days=1), datetime.min.time(),
                                          tzinfo=tz) + timedelta(hours=FINAL_ANYWAY_HOUR)
         retry_key = f"wellness:retry:{day}"
-        if not (synced or anyway) or now_ts < float(store.get_meta(retry_key) or 0):
+        if not (synced or anyway) or not _due(store, retry_key, now_ts):
             continue
         if day in resumed:
             if getattr(garmin, "direct_unavailable", False):

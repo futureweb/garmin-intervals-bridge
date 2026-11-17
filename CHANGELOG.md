@@ -21,6 +21,10 @@
   hiccup still gets its three reads.
 - **An answer from Garmin that cannot be read is no reason to wait**: no JSON or an unexpected shape
   comes the same way with every read, so the day is written without that endpoint and the log names it.
+- **A postponed read due within five minutes of a run happens in that run**: the waits (an hour, two
+  hours) are multiples of the 30-minute run, so the due time landed at a run's start, and a few seconds
+  decided whether the read came with that run or half an hour later. Three hours of retries could take
+  almost four (thanks Michael.0000, who counted).
 
 ## 0.12.17 — 2026-11-12
 
