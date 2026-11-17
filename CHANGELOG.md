@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.18 — 2026-11-17
+
+A finished day no longer waits for an endpoint that fails the same way every day.
 
 ### Changed
 
@@ -15,10 +17,10 @@
 ### Fixed
 
 - **An endpoint that fails every day no longer makes every day three hours late** (thanks Michael.0000,
-  whose food log failed each day): a finished day waits for an endpoint that failed only when the failure
-  can pass. If the same endpoint still failed when the day before was finished, the day is written
-  straight away, and the log says `failed as on <the day before>; not waiting for it`. A single
-  hiccup still gets its three reads.
+  whose food log Garmin answered with an HTTP 500 each day): if an endpoint gets the same HTTP error at
+  a day's final read as when the day before was finished, the day is written straight away, and the log
+  says `failed as on <the day before>; not waiting for it`. A single hiccup, a connection or token
+  outage and a different error still get their three reads.
 - **An answer from Garmin that cannot be read is no reason to wait**: no JSON or an unexpected shape
   comes the same way with every read, so the day is written without that endpoint and the log names it.
 - **A postponed read due within five minutes of a run happens in that run**: the waits (an hour, two

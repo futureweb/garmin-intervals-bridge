@@ -308,7 +308,10 @@ lags behind. Recovery time, acute load, endurance and hill scores, cycling
 VO₂max, fitness age and race predictions arrive in the morning as Garmin
 sees them then; the day's final read replaces them with the evening's. A finished
 day is read in full once the device has synced after it ended, so its
-totals are complete; a night-time phone sync is enough. Without the official
+totals are complete; a night-time phone sync is enough. If Garmin fails an
+endpoint at that read, the day is read again after one and two more hours,
+and the third read writes what Garmin has; an answer that cannot be read, or
+the same HTTP error as on the day before, holds nothing back. Without the official
 wellness sync, Garmin itself is checked at a few fixed times in the morning,
 and a day that never sees a sync is read anyway at 20:00 the day after. A
 normal day costs about 80 Garmin requests, plus a few per new activity.

@@ -3,6 +3,8 @@ from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from garmin_intervals_bridge.store import Store
 from garmin_intervals_bridge.sync import MORNING_ENDPOINTS, sync_enrich, wellness_check
 
@@ -648,8 +650,12 @@ def test_an_endpoint_that_still_failed_when_the_day_before_was_finished_holds_no
     st.close()
 
 
-def test_a_passing_failure_still_waits_when_the_day_before_was_fine(tmp_path):
-    st, g, i = _final_read_failing(tmp_path, "HTTPError 503", before={"hydration": "HTTPError 503"})
+@pytest.mark.parametrize("error,before", [
+    ("HTTPError 503", {"hydration": "HTTPError 503"}),                        # the day before was fine
+    ("PersonalTransientTokenError", {"nutrition": "PersonalTransientTokenError"}),   # an outage may pass
+    ("HTTPError 503", {"nutrition": "HTTPError 500"})])                       # not the same answer
+def test_a_passing_failure_still_waits(tmp_path, error, before):
+    st, g, i = _final_read_failing(tmp_path, error, before=before)
     run(tmp_path, st, g, i, at(7, 30, day=TOMORROW))
     assert st.get_meta(f"wellness:final:{TODAY}") is None               # read again later, as before
     st.close()

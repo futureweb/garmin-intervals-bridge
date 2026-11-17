@@ -1492,13 +1492,15 @@ def wellness_check(settings: Settings, garmin: Any, intervals: Any, store: Store
             due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
             log.warning("No Garmin wellness payload for %s; trying again from %s", day, _from(due, now))
             continue
-        # 17.11.2026 (Michael.0000 #184): what still failed when the day before was finished is no passing
-        # hiccup; waiting for it again only makes every day three hours late
+        # 17.11.2026 (Michael.0000 #184, #186: nutrition "PersonalHTTPError 500" every day): the same answer
+        # as when the day before was finished is no passing hiccup; waiting for it again only makes every day
+        # three hours late. Only an answer with an HTTP status: a connection or token outage may pass.
         day_before = day - timedelta(days=1)
         before = ((store.load_snapshot(day_before) or {}).get("errors") or {}
                   if raw["transient"] and day_before not in pending_past
                   and store.get_meta(f"wellness:final:{day_before}") else {})
-        again = [key for key in raw["transient"] if key in before]
+        again = [key for key in raw["transient"] if re.search(r"\b[1-5]\d\d$", str(before.get(key, "")))
+                 and before[key] == (raw.get("errors") or {}).get(key)]
         waiting = [key for key in raw["transient"] if key not in again]
         if waiting and int(store.get_meta(f"{retry_key}:tries") or 0) < FINAL_TRIES - 1:
             due = _backoff(store, retry_key, VERIFY_BACKOFF_MINUTES, now_ts)
