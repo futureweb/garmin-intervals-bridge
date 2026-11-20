@@ -1,4 +1,5 @@
 """When the scheduled runs ask Garmin for wellness: on evidence, not on a clock."""
+import logging
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -330,6 +331,37 @@ def test_this_mornings_recovery_is_replaced_by_the_evenings_at_the_final_read(tm
     run(tmp_path, st, g, i, at(7, 30, day=tomorrow))
     assert i.records[TODAY]["GarminAcuteLoad"] == 640 and i.records[TODAY]["GarminRecoveryTimeHours"] == 48.3
     assert i.records[TODAY]["GarminTrainingReadiness"] == 77   # the morning's readiness stays
+    st.close()
+
+
+def test_the_log_tells_a_replaced_value_from_a_new_field(tmp_path, caplog):
+    st, g, i = fresh(tmp_path)
+    readings = {"morning": [{"inputContext": "AFTER_WAKEUP_RESET", "timestampLocal": f"{TODAY}T07:00:00",
+                             "score": 77, "recoveryTime": 1088, "acuteLoad": 507}]}
+    original = g.snapshot
+
+    def snapshot(day, endpoints=None):
+        raw = original(day, endpoints)
+        if "training_readiness" in raw["data"]:
+            raw["data"]["training_readiness"] = list(readings["morning"]) + readings.get(str(day), [])
+        return raw
+    g.snapshot = snapshot
+    g.sleep = True
+    i.records[TODAY] = {"sleepSecs": 28080}
+    run(tmp_path, st, g, i, at(8, 0))
+    readings[str(TODAY)] = [{"inputContext": "AFTER_POST_EXERCISE_RESET", "timestampLocal": f"{TODAY}T19:00:00",
+                             "score": 40, "recoveryTime": 2900, "acuteLoad": 640}]
+    tomorrow = TODAY + timedelta(days=1)
+    i.records[tomorrow] = {"sleepSecs": 27000}
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="garmin_intervals_bridge"):
+        run(tmp_path, st, g, i, at(7, 30, day=tomorrow))
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith(f"Wellness {TODAY}")]
+    replaced = [line for line in lines if line.startswith(f"Wellness {TODAY}: replaced ")]
+    assert replaced == [f"Wellness {TODAY}: replaced GarminAcuteLoad 507 → 640, "
+                        f"GarminRecoveryTimeHours 18.1 → 48.3, GarminRecoveryTimeMinutes 1088 → 2900"]
+    new = [line for line in lines if " new fields: " in line]
+    assert all("GarminAcuteLoad" not in line and "GarminRecoveryTime" not in line for line in new)
     st.close()
 
 

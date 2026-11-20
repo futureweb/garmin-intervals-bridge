@@ -950,6 +950,11 @@ def wellness_due(day: date, current: date, fetched: float | None, midnight: floa
     return age == 1 and now - fetched >= 2 * refresh_seconds
 
 
+def _short(value: Any) -> str:
+    """A value for the log: 40.29546436714866 as 40.3, 48.0 as 48, 12345.0 as 12345."""
+    return f"{value:.2f}".rstrip("0").rstrip(".") if isinstance(value, float) else str(value)
+
+
 def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
                         metrics: dict, *, apply: bool, rewrite: set[str] | None = None,
                         night: dict | None = None, store: Store | None = None) -> bool:
@@ -990,7 +995,15 @@ def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings,
         changes.update({field: native[field] for field in replaced})
     if changes:
         metrics["days_with_changes"] += 1
-        log.info("Wellness %s new fields: %s", day, ", ".join(sorted(changes.keys())))
+        # "new" only for what Intervals had empty; a value the bridge replaces gets its own line, else a
+        # day's final read that replaces the morning's looks like a field that had gone missing
+        empty = sorted(k for k in changes if existing.get(k) is None)
+        if empty:
+            log.info("Wellness %s new fields: %s", day, ", ".join(empty))
+        rewritten = sorted(k for k in changes if existing.get(k) is not None and k not in fixes and k not in replaced)
+        if rewritten:
+            log.info("Wellness %s: replaced %s", day,
+                     ", ".join(f"{k} {_short(existing[k])} → {_short(changes[k])}" for k in rewritten))
         missing_custom = set(custom).intersection(changes)
         if missing_custom:
             # Create only needed, nonexisting fields. The private custom-field
