@@ -6,6 +6,7 @@ import logging
 import re
 import sys
 import time
+from contextlib import contextmanager
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,47 @@ from typing import Any
 from .fit import extract_original_fit
 
 log = logging.getLogger(__name__)
+
+# The library signs in one way after the other and warns about every way that fails - "mobile+cffi
+# returned 429: ... rate limited or blocked by Garmin" and the like, even when the next way works.
+# During a sign-in with email and password those warnings wait: when the sign-in works, one quiet
+# line names the refused ways; when it fails, they all show as before.
+_SIGN_IN_WARNINGS = {"%s returned 429: %s", "%s failed: %s",
+                     "%s obtained a token the API rejected; trying next strategy"}
+
+
+class _HeldSignInWarnings(logging.Filter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.held: list[logging.LogRecord] = []
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno == logging.WARNING and record.msg in _SIGN_IN_WARNINGS:
+            self.held.append(record)
+            return False
+        return True
+
+
+@contextmanager
+def _sign_in_warnings():
+    library = logging.getLogger("garminconnect.client")
+    held = _HeldSignInWarnings()
+    library.addFilter(held)
+    try:
+        yield
+    except BaseException:
+        library.removeFilter(held)
+        for record in held.held:                      # the sign-in failed: every refusal counts
+            library.handle(record)
+        raise
+    library.removeFilter(held)
+    refused = []
+    for record in held.held:
+        name = record.args[0] if isinstance(record.args, tuple) and record.args else "a sign-in way"
+        refused.append(f"{name} ({'HTTP 429' if '429' in record.msg else 'failed'})")
+    if refused:
+        log.info("Signed in to Garmin; first tried %s - Garmin refuses those at times, nothing to do",
+                 ", ".join(dict.fromkeys(refused)))
 
 
 class GarminBlocked(RuntimeError):
@@ -222,7 +264,8 @@ class GarminSource:
         api = Garmin(email=email, password=password, retry_attempts=1,
                      prompt_mfa=lambda: input("Garmin MFA code: ").strip())
         try:
-            api.login(str(self.token_dir))
+            with _sign_in_warnings():
+                api.login(str(self.token_dir))
             self.client = api
         finally:
             password = None
@@ -238,7 +281,8 @@ class GarminSource:
         from garminconnect import Garmin
         api = Garmin(email=email, password=password, retry_attempts=1, return_on_mfa=True)
         try:
-            status, _ = api.login()
+            with _sign_in_warnings():
+                status, _ = api.login()
         except Exception as exc:
             api.password = None
             if _is_blocked(exc) or _is_transient(exc):

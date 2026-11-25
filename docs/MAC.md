@@ -126,9 +126,9 @@ start it again, or it keeps showing the old version (it says so itself from
 
 - **A note "Garmin bridge: Garmin login needed" in your Intervals
   calendar:** Garmin ended the saved session. Run
-  `venv/bin/garmin-intervals-bridge login` (or `setup`) in `~/GarminBridge`;
-  the bridge picks it up by itself within 15 minutes. Delete the note
-  whenever you like.
+  `venv/bin/garmin-intervals-bridge login` (or `setup`) in `~/GarminBridge`,
+  or sign in on the web page (`ui`); the bridge picks it up within seconds.
+  Delete the note whenever you like.
 - *"command not found"* or *"no such file"*: you are not in the bridge's
   folder; `cd ~/GarminBridge` first.
 - **Nothing happens:** `autostart --status` and the end of `bridge.log` say

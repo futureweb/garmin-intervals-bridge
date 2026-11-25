@@ -58,7 +58,7 @@ from .intervals import IntervalsClient
 from .personal import AUTH_WAIT_KEY, KEY_ALONE_MISSING, PersonalGarminSource
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import garmin_source, remember_direct_profile, source_status
-from .store import InstanceBusy, Store, single_instance
+from .store import InstanceBusy, Store, instance_running, single_instance
 from .sync import kcal_balance, restore_intake
 from .wizard import command_name
 
@@ -350,10 +350,15 @@ class UI:
             now = time.time()
             runs = store.recent_runs(24 * 14)
             last = runs[-1]["started"] if runs else None
-            alive = self.in_run or (last is not None and now - last < 35 * 60)     # the full run: every 30 min
+            recent = last is not None and now - last < 35 * 60     # the full run: every 30 min
+            # The background bridge (`run`, as autostart starts it) holds its lock for as long as it
+            # lives: running also before its first check is done - after a long pause that takes a
+            # while - and while it waits for a Garmin sign-in.
+            alive = self.in_run or recent or instance_running(settings.data_dir)
             tokens = any(settings.token_dir.glob("*.json")) if settings.token_dir.is_dir() else False
-            line = (f'<b class="ok">Running</b> &middot; last check {esc(_ago(last, now))}' if alive else
-                    f'<b class="bad">Not running</b> &middot; last check {esc(_ago(last, now))}')
+            when = "first check in progress" if alive and last is None else f"last check {esc(_ago(last, now))}"
+            line = (f'<b class="ok">Running</b> &middot; {when}' if alive else
+                    f'<b class="bad">Not running</b> &middot; {when}')
             if alive and not tokens and effective_source(settings) == "direct":
                 line = '<b class="warn">Waiting for the Garmin sign-in</b> &middot; <a href="/garmin">sign in</a>'
 

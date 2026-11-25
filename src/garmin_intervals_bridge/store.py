@@ -468,3 +468,22 @@ def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "we
                 pass
             finally:
                 lock.close()
+
+
+LOCK_GRACE_SECONDS = 2.0    # the background bridge waits this long for its "run" lock (see instance_running)
+
+
+def instance_running(data_dir: Path, scope: str = "run") -> bool:
+    """True while another process holds `scope`. The background bridge (`run`) holds "run" for as
+    long as it lives – also while it waits for a Garmin sign-in or works through a long first
+    check, when no finished run says so yet. The lock is taken for an instant and given back;
+    `run` waits LOCK_GRACE_SECONDS for it, so this look never turns a starting bridge away."""
+    if not (data_dir / f".bridge-{scope}.lock").exists():
+        return False
+    try:
+        with single_instance(data_dir, (scope,)):
+            return False
+    except InstanceBusy:
+        return True
+    except OSError:
+        return False

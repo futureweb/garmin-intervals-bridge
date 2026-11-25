@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A Garmin sign-in in another window is picked up at once** (thanks Lukasz_Pludowski): the background
+  bridge that waits for a sign-in now notices a new session within seconds - signed in on the web page
+  in its own window (`ui`), with `login` or with `setup` - instead of after its 15-minute pause.
+- **The web page sees a bridge that has not finished a check yet**: while the background bridge works
+  through its first check after a long pause, or waits for the Garmin sign-in, the page says "Running ·
+  first check in progress" or "Waiting for the Garmin sign-in" instead of "Not running · last check never".
+
+### Changed
+
+- **Refused sign-in ways are one quiet line**: the Garmin library tries one sign-in way after the other
+  and warned about each refused one ("mobile+cffi returned 429 ... rate limited or blocked by Garmin"),
+  even when the next way worked. When the sign-in works, one line now names the refused ways; when it
+  fails, all the warnings show as before.
+
 ## 0.12.19 — 2026-11-25
 
 New gear whose name only adds to an existing pair's is new gear.

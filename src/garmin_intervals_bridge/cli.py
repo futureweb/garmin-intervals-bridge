@@ -33,7 +33,7 @@ from .notify import notify
 from .personal import KEY_ALONE, PersonalGarminSource, PersonalKeyNeeded, validated_key
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import activity_step, garmin_source, remember_direct_profile, source_status
-from .store import InstanceBusy, Store, single_instance
+from .store import LOCK_GRACE_SECONDS, InstanceBusy, Store, single_instance
 from .sync import (
     backfill_intake,
     kcal_balance,
@@ -274,9 +274,12 @@ def _take_part(data_dir: Path, part: str, locks: ExitStack, log: logging.Logger,
     """Hold `part` for this command; a backfill waits up to `wait` seconds while a regular run (a
     cycle of the background bridge, a timer's run) finishes with it."""
     deadline, said = time.monotonic() + wait, False
+    # "run": the web page looks at this lock for an instant (store.instance_running) - a bridge
+    # starting in that very moment waits for it instead of reporting another instance
+    grace = LOCK_GRACE_SECONDS if part == "run" else 0
     while True:
         try:
-            locks.enter_context(single_instance(data_dir, (part,)))
+            locks.enter_context(single_instance(data_dir, (part,), timeout=grace))
             return
         except InstanceBusy:
             if time.monotonic() >= deadline:
@@ -449,8 +452,8 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
                 notices.login_needed(settings, store, intervals, datetime.now(settings.timezone).date(), apply=apply)
             pause = pause_on_rate_limit(store, exc) or 900
             next_sync = max(next_sync, time.time() + pause)
-            if iterations is None and wait_after_block(exc, seconds=pause):
-                next_sync = 0                               # signed in on the web page: go on now
+            if iterations is None and wait_after_block(exc, seconds=pause, token_dir=settings.token_dir):
+                next_sync = 0                               # signed in (on the web page or elsewhere): go on now
             continue
         except Exception as exc:
             if pause_on_rate_limit(store, exc):
@@ -514,7 +517,7 @@ def run_backup_loop(settings: Settings, store: Store, *, every_minutes: int, ite
                 notices.login_needed(settings, store, None, datetime.now(settings.timezone).date(), apply=False)
             pause = (pause_on_rate_limit(store, exc) if type(exc).__name__.startswith("Personal") else None) or 900
             if iterations is None:
-                wait_after_block(exc, seconds=pause)
+                wait_after_block(exc, seconds=pause, token_dir=settings.token_dir)
             continue
         except Exception as exc:
             if type(exc).__name__.startswith("Personal"):
@@ -555,14 +558,39 @@ def pause_on_rate_limit(store: Store, exc: BaseException) -> float | None:
     return pause
 
 
-def wait_after_block(exc: GarminBlocked, seconds: float = 900) -> bool:
-    """15 minutes of quiet after a block; True when a sign-in on the web page ended it early.
-    A rate limit (429) always waits the full time."""
+SIGN_IN_LOOK_SECONDS = 5       # while waiting for a Garmin sign-in: how often to look for a new session
+
+
+def _signed_in_since(token_dir: Path | None, since: float) -> bool:
+    """A Garmin session saved after `since` - by the web page in its own window (`ui`), by
+    `login` in a terminal or by `setup`: none of them can wake this process directly."""
+    if token_dir is None or not token_dir.is_dir():
+        return False
+    try:
+        return any(path.stat().st_mtime >= since for path in token_dir.glob("*.json"))
+    except OSError:
+        return False
+
+
+def wait_after_block(exc: GarminBlocked, seconds: float = 900, token_dir: Path | None = None) -> bool:
+    """15 minutes of quiet after a block; True when a sign-in ended it early – on the web page
+    this process serves, or a session saved by another process (the page in its own window,
+    `login`). A rate limit (429) always waits the full time."""
     if not isinstance(exc, GarminLoginNeeded):
         time.sleep(seconds)
         return False
     notices.SIGNED_IN.clear()                   # only a sign-in from now on counts
-    return notices.SIGNED_IN.wait(seconds)
+    since = time.time()
+    deadline = time.monotonic() + seconds
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return False
+        if notices.SIGNED_IN.wait(min(SIGN_IN_LOOK_SECONDS, left)):
+            return True
+        if _signed_in_since(token_dir, since):
+            logging.getLogger("bridge").info("Signed in to Garmin: going on")
+            return True
 
 
 def _log_to_file(path: Path, level: int) -> None:

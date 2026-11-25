@@ -111,8 +111,9 @@ start it again, or it keeps showing the old version (it says so itself from
 
 - **A note "Garmin bridge: Garmin login needed" in your Intervals
   calendar:** Garmin ended the saved session. Run
-  `py -m garmin_intervals_bridge login` (or `setup`); the bridge picks it up
-  by itself within 15 minutes. Delete the note whenever you like.
+  `py -m garmin_intervals_bridge login` (or `setup`), or sign in on the web
+  page (`ui`); the bridge picks it up within seconds. Delete the note whenever
+  you like.
 - **Nothing happens after logging in:** `autostart --status` and the end of
   `bridge.log` say why. *Task Scheduler* (Start menu) lists the task as
   *Garmin Intervals Bridge*, with its last run result.
