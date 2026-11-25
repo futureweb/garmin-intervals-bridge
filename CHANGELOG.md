@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.19 — 2026-11-25
+
+New gear whose name only adds to an existing pair's is new gear.
 
 ### Fixed
 
@@ -15,10 +17,15 @@
 
 ### Changed
 
-- **The log tells a replaced wellness value from a new field**: "Wellness <day> new fields:" now names only
-  what Intervals had empty; a value the day's final read replaces (recovery time, acute load, fitness age
-  ...) gets its own line with the old and the new value, e.g. `Wellness 2026-11-19: replaced
-  GarminAcuteLoad 507 → 640`.
+- **The log tells a replaced wellness value from a new field** (thanks JEFFREY_OHARA, whose log showed the
+  day's final read as "new fields"): "Wellness <day> new fields:" now names only what Intervals had empty;
+  a value the day's final read replaces (recovery time, acute load, fitness age ...) gets its own line with
+  the old and the new value, e.g. `Wellness 2026-11-19: replaced GarminAcuteLoad 507 → 640`.
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant app. Nothing
+to configure.
 
 ## 0.12.18 — 2026-11-17
 
