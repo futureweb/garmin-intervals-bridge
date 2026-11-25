@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.20 — 2026-11-25
+
+A Garmin sign-in in another window is picked up at once.
 
 ### Fixed
 
@@ -17,6 +19,11 @@
   and warned about each refused one ("mobile+cffi returned 429 ... rate limited or blocked by Garmin"),
   even when the next way worked. When the sign-in works, one line now names the refused ways; when it
   fails, all the warnings show as before.
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, pull the new image, or update the Home Assistant app. Nothing
+to configure.
 
 ## 0.12.19 — 2026-11-25
 
