@@ -377,7 +377,9 @@ garmin-intervals-bridge gear …` (it does not wait for the running bridge).
   `gear-sensors.json`).
 - **Pairs** are found by name (`Grail CF SLX 8 Di2` = `Canyon Grail CF SLX
   8 Di2`); different names are paired with `--map 'GARMIN NAME=INTERVALS
-  NAME'`. Gear Intervals does not have is listed, or created with `--create`
+  NAME'`. The same name comes first, and gear already named after one Garmin
+  gear is not handed to another: next to `SC Elite V5`, Garmin's `SC Elite V5
+  Green` is a new pair, not the old one. Gear Intervals does not have is listed, or created with `--create`
   (retired gear only with `--include-retired`).
 - **Totals:** Intervals adds each assignment to a gear's totals, but totals
   that drifted earlier (reassignments by hand) stay off, and it computes a

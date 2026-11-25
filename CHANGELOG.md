@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **New gear whose name only adds to an existing one's is new gear** (thanks DarKen): Garmin's "SC Elite V5
+  Green" was paired with Intervals' "SC Elite V5", because a name whose words are all in another's counted
+  as the same gear (so that "Grail CF SLX 8 Di2" finds "Canyon Grail CF SLX 8 Di2"). The new pair was not
+  created, and its runs went to the old pair. Now the same name comes first, and gear named exactly after
+  one Garmin gear is not handed to another by the looser match; two Garmin gear that fit the same Intervals
+  gear only loosely are listed as ambiguous instead of both taking it. A pair saved that way before is
+  decided again. Runs already written to the old pair stay as they are (Intervals' gear is kept when both
+  sides differ): change those in Intervals by hand.
+
+### Changed
+
+- **The log tells a replaced wellness value from a new field**: "Wellness <day> new fields:" now names only
+  what Intervals had empty; a value the day's final read replaces (recovery time, acute load, fitness age
+  ...) gets its own line with the old and the new value, e.g. `Wellness 2026-11-19: replaced
+  GarminAcuteLoad 507 → 640`.
+
 ## 0.12.18 — 2026-11-17
 
 A finished day no longer waits for an endpoint that fails the same way every day.

@@ -96,6 +96,50 @@ def test_names_pair_without_components_and_with_an_explicit_map():
         gear.pair_gear(ggear, INTERVALS_GEAR, ["Nonexistent=Haibike"])
 
 
+ELITE = {"uuid": "u-elite", "displayName": "SC Elite V5", "gearTypeName": "Shoes", "dateBegin": "2026-03-01T00:00:00.0",
+         "gearStatusName": "active"}
+ELITE_GREEN = {"uuid": "u-green", "displayName": "SC Elite V5 Green", "gearTypeName": "Shoes",
+               "dateBegin": "2026-11-20T00:00:00.0", "gearStatusName": "active"}
+ELITE_INTERVALS = [{"id": "s-elite", "name": "SC Elite V5", "type": "Shoes"}]
+
+
+def test_a_longer_name_is_new_gear_when_the_shorter_one_has_its_own_match():
+    # forum #193: same brand and model, only Garmin's nickname differs - the new pair is not the old one
+    ggear = {g["uuid"]: gear._garmin_gear(g) for g in (ELITE, ELITE_GREEN)}
+    pairs, why = gear.pair_gear(ggear, ELITE_INTERVALS)
+    assert pairs == {"u-elite": "s-elite"}
+    assert why == {"u-green": "not in Intervals"}
+    # a pair the looser match saved before is decided again; the old pair keeps its own
+    pairs, why = gear.pair_gear(ggear, ELITE_INTERVALS, saved={"u-elite": "s-elite", "u-green": "s-elite"})
+    assert pairs == {"u-elite": "s-elite"} and why == {"u-green": "not in Intervals"}
+    # once both are in Intervals each finds its own, also where the short name used to be ambiguous
+    both = ELITE_INTERVALS + [{"id": "s-green", "name": "SC Elite V5 Green", "type": "Shoes"}]
+    assert gear.pair_gear(ggear, both) == ({"u-elite": "s-elite", "u-green": "s-green"}, {})
+    # alone, the longer name still finds the shorter one (as "Grail" finds "Canyon Grail")
+    assert gear.pair_gear({"u-green": ggear["u-green"]}, ELITE_INTERVALS) == ({"u-green": "s-elite"}, {})
+
+
+def test_two_garmin_gear_never_share_one_intervals_gear_by_the_looser_match():
+    ggear = {u: gear._garmin_gear({"uuid": u, "displayName": n, "gearTypeName": "Shoes"})
+             for u, n in (("u-blue", "Pegasus 40 Blue"), ("u-red", "Pegasus 40 Red"))}
+    pairs, why = gear.pair_gear(ggear, [{"id": "s-peg", "name": "Pegasus 40", "type": "Shoes"}])
+    assert pairs == {}
+    assert why == {"u-blue": "ambiguous: Pegasus 40 (also fits Garmin's Pegasus 40 Red)",
+                   "u-red": "ambiguous: Pegasus 40 (also fits Garmin's Pegasus 40 Blue)"}
+
+
+def test_new_shoes_with_a_longer_name_are_created_and_get_their_run(tmp_path):
+    st = Store(tmp_path)
+    archive(st, "301", "2026-11-15", "running", [ELITE], km=10)
+    archive(st, "302", "2026-11-22", "running", [ELITE_GREEN], km=12)
+    fake = IntervalsFake([remote("i301", "301", "2026-11-15", "s-elite"), remote("i302", "302", "2026-11-22")],
+                         gear_list=[dict(g) for g in ELITE_INTERVALS])
+    plan = gear.build_plan(st, fake, create=True)
+    assert [c["payload"]["name"] for c in plan["create"]] == ["SC Elite V5 Green"]
+    assert [(a["intervals_id"], a["target"]) for a in plan["assign"]] == [("i302", "new:u-green")]
+    done = gear.apply_plan(plan, fake, recalc=False)
+    assert fake.assigned == [("i302", "g1")] and done["created"] == ["SC Elite V5 Green"]
+
 def scene(tmp_path):
     st = Store(tmp_path)
     archive(st, "101", "2023-05-01", "mountain_biking", [HAIBIKE])        # gap

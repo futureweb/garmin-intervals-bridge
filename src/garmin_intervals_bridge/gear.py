@@ -19,8 +19,9 @@ Per activity (Intervals has one gear per activity; a bike's components follow it
                garmin               Garmin's
   Intervals only                                       -> stays; nothing is ever removed
 
-Gear is paired by name (unique after normalising) or as told (`--map`); gear Intervals
-lacks is created only on request, retired gear only on top of that.
+Gear is paired as told (`--map`), by the same name (after normalising), or by a looser name
+match among gear no other Garmin gear has claimed (see pair_gear); gear Intervals lacks is
+created only on request, retired gear only on top of that.
 
 Totals: Intervals adds each assignment to a gear's totals, but totals that drifted before
 (after reassignments, or components that missed recent rides) stay off until recounted.
@@ -173,8 +174,13 @@ def pair_gear(garmin_gear: dict, intervals_gear: list[dict], explicit: list[str]
               saved: dict | None = None) -> tuple[dict[str, str], dict[str, str]]:
     """Garmin uuid -> Intervals gear id, and why the others have none.
 
-    Saved pairs (from an earlier --apply) first, then --map GARMIN=INTERVALS, then a
-    unique name match among Intervals' gear (components excluded).
+    In this order: --map GARMIN=INTERVALS, saved pairs (from an earlier --apply), the same
+    name (after normalising), and last a looser match - one name's words all in the other's,
+    so "Grail CF SLX 8 Di2" finds "Canyon Grail CF SLX 8 Di2" - among the Intervals gear
+    (components excluded) that no other Garmin gear has claimed. Gear named exactly after
+    another Garmin gear is claimed by it: with "SC Elite V5" on both sides, Garmin's
+    "SC Elite V5 Green" is new gear, not the old pair. A saved pair that hands such gear to a
+    second Garmin gear (made by the looser match before 0.12.19) is dropped and decided again.
     """
     candidates = [g for g in intervals_gear if not g.get("component")]
     known = {str(g.get("id")) for g in intervals_gear}
@@ -186,8 +192,15 @@ def pair_gear(garmin_gear: dict, intervals_gear: list[dict], explicit: list[str]
         if not any(left == uuid or _compact(left) == _compact(g["name"]) for uuid, g in garmin_gear.items()):
             raise ValueError(f"--map: no Garmin gear named {left!r}")
         rules.append((left, right))
+    exact = {uuid: [c for c in candidates if _compact(c.get("name")) == _compact(g["name"])]
+             for uuid, g in garmin_gear.items()}
+    named_after: dict[str, set[str]] = defaultdict(set)          # Intervals id -> Garmin gear with exactly its name
+    for uuid, hits in exact.items():
+        for c in hits:
+            named_after[str(c.get("id"))].add(uuid)
     pairs: dict[str, str] = {}
     why: dict[str, str] = {}
+    loose: list[str] = []
     for uuid, g in garmin_gear.items():
         rule = next((r for r in rules if r[0] == uuid or _compact(r[0]) == _compact(g["name"])), None)
         if rule:
@@ -197,15 +210,32 @@ def pair_gear(garmin_gear: dict, intervals_gear: list[dict], explicit: list[str]
                 raise ValueError(f"--map: no single Intervals gear named {rule[1]!r}")
             pairs[uuid] = str(hits[0]["id"])
             continue
-        if saved and saved.get(uuid) in known:
-            pairs[uuid] = saved[uuid]
+        target = (saved or {}).get(uuid)
+        if target in known and not (named_after.get(target, set()) - {uuid}):
+            pairs[uuid] = target
             continue
-        hits = [c for c in candidates if same_name(g["name"], c.get("name"))]
-        if len(hits) == 1:
-            pairs[uuid] = str(hits[0]["id"])
+        if len(exact[uuid]) == 1:
+            pairs[uuid] = str(exact[uuid][0]["id"])
+        elif exact[uuid]:
+            why[uuid] = "ambiguous: " + ", ".join(sorted(str(c.get("name")) for c in exact[uuid]))
         else:
-            why[uuid] = ("ambiguous: " + ", ".join(sorted(str(c.get("name")) for c in hits))) if hits \
-                else "not in Intervals"
+            loose.append(uuid)
+    # the looser match: only gear nobody has claimed, and only where it is one-to-one
+    taken = set(pairs.values()) | set(named_after)
+    hits = {uuid: [c for c in candidates if str(c.get("id")) not in taken
+                   and same_name(garmin_gear[uuid]["name"], c.get("name"))] for uuid in loose}
+    wanted = Counter(str(c.get("id")) for found in hits.values() for c in found)
+    for uuid in loose:
+        found = hits[uuid]
+        if len(found) == 1 and wanted[str(found[0].get("id"))] == 1:
+            pairs[uuid] = str(found[0]["id"])
+        elif found:
+            rivals = sorted({garmin_gear[u]["name"] for u in loose if u != uuid
+                             and any(str(c.get("id")) == str(x.get("id")) for c in hits[u] for x in found)})
+            why[uuid] = "ambiguous: " + ", ".join(sorted(str(c.get("name")) for c in found)) + (
+                f" (also fits Garmin's {', '.join(rivals)})" if rivals else "")
+        else:
+            why[uuid] = "not in Intervals"
     return pairs, why
 
 
