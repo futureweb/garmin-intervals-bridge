@@ -17,6 +17,7 @@ from __future__ import annotations
 import getpass
 import os
 import plistlib
+import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +30,30 @@ NAME = "Garmin Intervals Bridge"
 LABEL = "at.futureweb.garmin-intervals-bridge"
 UNIT = "garmin-intervals-bridge.service"
 TASK_XML = "autostart-task.xml"
+# macOS: what the bridge writes to stderr when launchd starts it - only errors (cli: BRIDGE_AUTOSTARTED), so
+# that a bridge which does not stay up says why (forum #201: "Not running", an empty log, no reason anywhere)
+ERROR_LOG = "autostart-errors.log"
+LAST_ERROR_MAX_AGE = 7 * 86400
+
+
+def error_log(env_file: Path) -> Path:
+    return env_file.resolve().parent / ERROR_LOG
+
+
+def last_error(env_file: Path, max_age: float = LAST_ERROR_MAX_AGE) -> str | None:
+    """The last line the autostarted bridge wrote to its error file, if that is recent."""
+    path = error_log(env_file)
+    try:
+        info = path.stat()
+        if time.time() - info.st_mtime > max_age:
+            return None
+        with path.open("rb") as fh:
+            fh.seek(max(0, info.st_size - 4096))
+            tail = fh.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    lines = [line.strip() for line in tail.splitlines() if line.strip()]
+    return lines[-1][:300] if lines else None
 
 
 def platform() -> str:
@@ -119,10 +144,15 @@ def plan(env_file: Path, *, mode: str = "enrich", home: Path | None = None, kind
                 "log": "Task Scheduler (taskschd.msc) lists it as '" + NAME + "'"}
     if kind == "macos":
         plist = home / "Library" / "LaunchAgents" / f"{LABEL}.plist"
-        # no StandardOutPath: the bridge writes its own log file (BRIDGE_LOG_FILE), twice would double it
+        # no StandardOutPath: the bridge writes its own log file (BRIDGE_LOG_FILE), twice would double it.
+        # StandardErrorPath: errors only (BRIDGE_AUTOSTARTED makes the bridge log just errors to stderr), and
+        # what fails before the bridge's own logging is up - so that a bridge that does not stay up says why.
         content = plistlib.dumps({"Label": LABEL, "ProgramArguments": [_python()] + arguments(env_file, mode),
                                   "WorkingDirectory": str(folder), "RunAtLoad": True,
                                   "KeepAlive": {"SuccessfulExit": False}, "ThrottleInterval": 300,
+                                  "StandardErrorPath": str(folder / ERROR_LOG),
+                                  "EnvironmentVariables": {"BRIDGE_AUTOSTARTED": "1",
+                                                           "BRIDGE_AUTOSTART_ERRORS": str(folder / ERROR_LOG)},
                                   "ProcessType": "Background"}).decode()
         domain = f"gui/{os.getuid()}" if hasattr(os, "getuid") else "gui/0"
         return {"kind": kind, "files": {str(plist): content},
@@ -299,6 +329,12 @@ def status(env_file: Path, *, runner: Runner | None = None, home: Path | None = 
     try:
         out = (runner or _run)(steps["status"])
         detail = (getattr(out, "stdout", "") or "").strip()
-        return {"kind": steps["kind"], "installed": True, "detail": "\n".join(detail.splitlines()[:12])}
+        # macOS `launchctl print`: "state = running|not running", "last exit code = 1" (further down than
+        # the twelve lines shown): what the page says when the background bridge does not stay up
+        state = re.search(r"^\s*state = (.+)$", detail, re.M)
+        last_exit = re.search(r"^\s*last exit (?:code|status) = (.+)$", detail, re.M)
+        return {"kind": steps["kind"], "installed": True, "detail": "\n".join(detail.splitlines()[:12]),
+                "state": state.group(1).strip() if state else None,
+                "last_exit": last_exit.group(1).strip() if last_exit else None}
     except Exception:
         return {"kind": steps["kind"], "installed": False, "detail": "not set up"}

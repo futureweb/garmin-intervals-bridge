@@ -129,6 +129,10 @@ start it again, or it keeps showing the old version (it says so itself from
   `venv/bin/garmin-intervals-bridge login` (or `setup`) in `~/GarminBridge`,
   or sign in on the web page (`ui`); the bridge picks it up within seconds.
   Delete the note whenever you like.
+- **The page says "Not running" although autostart is set up:** the background
+  bridge does not stay up. The page shows its exit code and last error; all of
+  it is in `~/GarminBridge/autostart-errors.log` (errors only). After an update,
+  run `venv/bin/garmin-intervals-bridge autostart` once so the agent writes it.
 - *"command not found"* or *"no such file"*: you are not in the bridge's
   folder; `cd ~/GarminBridge` first.
 - **Nothing happens:** `autostart --status` and the end of `bridge.log` say

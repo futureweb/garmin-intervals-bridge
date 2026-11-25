@@ -593,6 +593,32 @@ def wait_after_block(exc: GarminBlocked, seconds: float = 900, token_dir: Path |
             return True
 
 
+AUTOSTART_ERRORS_MAX = 1_000_000    # bytes of autostart-errors.log before a start shortens it
+AUTOSTART_ERRORS_KEEP = 65_536      # ... to its last lines
+
+
+def _autostarted_stderr() -> None:
+    """Started by the macOS autostart, whose stderr goes to a file (autostart.ERROR_LOG): only errors
+    there - the regular log is BRIDGE_LOG_FILE - and the file kept small."""
+    for handler in logging.getLogger().handlers:
+        if type(handler) is logging.StreamHandler:
+            handler.setLevel(logging.ERROR)
+    # this process only: what it starts (a backfill from the web page) logs as usual
+    os.environ.pop("BRIDGE_AUTOSTARTED", None)
+    path = os.environ.pop("BRIDGE_AUTOSTART_ERRORS", None)
+    if not path:
+        return
+    try:
+        target = Path(path)
+        if target.stat().st_size > AUTOSTART_ERRORS_MAX:
+            tail = target.read_bytes()[-AUTOSTART_ERRORS_KEEP:]
+            tail = tail[tail.find(b"\n") + 1:]                  # start at a whole line
+            target.write_bytes(b"(older lines removed)\n" + tail)
+        target.chmod(0o600)
+    except OSError:
+        pass
+
+
 def _log_to_file(path: Path, level: int) -> None:
     """Also log to a file (the autostarted bridge has no window): 5 MB, three old ones kept."""
     from logging.handlers import RotatingFileHandler
@@ -678,6 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s %(message)s")
+    if os.environ.get("BRIDGE_AUTOSTARTED") == "1":
+        _autostarted_stderr()
     log = logging.getLogger("bridge")
     try:
         if args.cmd == "compare-fit":

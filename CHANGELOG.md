@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A background bridge that does not stay up says why** (thanks Lukasz_Pludowski): on a Mac, the
+  autostart now keeps the bridge's errors in `autostart-errors.log` next to the settings file (errors
+  only, the regular log stays `BRIDGE_LOG_FILE`; shortened past 1 MB). When the page says "Not running"
+  although autostart is set up, it shows the exit code and the last error. Run `autostart` once after
+  updating so the agent writes it.
+- **No traceback when the browser leaves early**: a page closed before the bridge answered (for example
+  during a Garmin sign-in) printed a long "Broken pipe" traceback into the window; now it is ignored.
+
 ## 0.12.20 — 2026-11-25
 
 A Garmin sign-in in another window is picked up at once.

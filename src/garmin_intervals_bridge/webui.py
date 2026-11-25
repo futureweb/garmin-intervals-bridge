@@ -372,6 +372,17 @@ class UI:
                 rows.append(("Starts when you log in to this computer",
                              '<span class="ok">yes</span>' if state["installed"] else
                              '<span class="warn">no</span> &middot; set it up with <code>autostart</code>'))
+                if state["installed"] and not alive:
+                    # set up, but no background bridge: say why it does not stay up (forum #201)
+                    why = []
+                    if state.get("last_exit") and state["last_exit"] not in ("0", "(never exited)"):
+                        why.append(f"it stopped with exit code {esc(state['last_exit'])}")
+                    error = autostart.last_error(settings.env_file)
+                    if error:
+                        why.append(f"its last error: <code>{esc(error)}</code> (all of it in "
+                                   f"<code>{esc(str(autostart.error_log(settings.env_file)))}</code>)")
+                    if why:
+                        rows[0] = ("Bridge", line + " &middot; " + "; ".join(why))
             garmin_ok = store.meta_updated("garmin_last_ok")
             if store.get_meta(notices.LOGIN_NOTE_KEY) or store.get_meta(notices.WAITING_KEY):
                 garmin = '<b class="bad">sign-in needed</b> &middot; <a href="/garmin">sign in again</a>'
@@ -1513,6 +1524,13 @@ class _Server(ThreadingHTTPServer):
             super().process_request_thread(request, client_address)
         finally:
             self.slots.release()
+
+    def handle_error(self, request, client_address):
+        # the browser went away before the answer (closed the tab, gave up waiting for a sign-in):
+        # nothing to report - socketserver would print a whole traceback into the window (forum #201)
+        if isinstance(sys.exc_info()[1], (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)):
+            return
+        super().handle_error(request, client_address)
 
 
 def make_server(ui: UI) -> ThreadingHTTPServer:
