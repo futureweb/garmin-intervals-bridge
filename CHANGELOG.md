@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.21 — 2026-11-27
+
+The web page says why the background bridge does not stay up – and when it runs other code than the bridge.
 
 ### Fixed
 
@@ -18,6 +20,12 @@
   reaches the copy that runs. A bridge that was not restarted after an update is named too.
 - **`autostart` says when it moves the bridge to another install**: run from another Python or with another
   settings file than before, it names the old and the new one; `autostart --status` shows what it starts.
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, then `autostart` once (it restarts the background bridge with
+the new version; on a Mac it also sets up the error file). Or pull the new image, or update the Home Assistant
+app. Nothing to configure.
 
 ## 0.12.20 — 2026-11-25
 
