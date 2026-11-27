@@ -52,6 +52,7 @@ def test_the_background_bridge_says_what_it_runs_when_it_starts(tmp_path, monkey
 
 # ---- the commands for the bridge's copy ----
 
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX paths and shell quoting")
 def test_commands_use_the_installs_own_python_and_settings_file(_empty_home, monkeypatch):
     monkeypatch.setattr(webui.autostart, "platform", lambda: "macos")
     pip, bridge = webui.install_commands({"python": str(_empty_home / "GarminBridge" / "venv" / "bin" / "python"),
@@ -73,25 +74,28 @@ def test_on_windows_the_command_shows_output_and_runs_in_powershell(monkeypatch)
 
 def test_the_update_hint_reaches_the_bridges_copy(page, _empty_home, monkeypatch):  # noqa: F811
     monkeypatch.setattr(webui.autostart, "platform", lambda: "macos")
-    hint = page._how_to_update({"python": "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3",
-                                "env_file": str(_empty_home / ".env")})
     framework = "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3"
-    assert f"<code>{framework} -m pip install --upgrade garmin-intervals-bridge</code>" in hint
-    assert f"<code>{framework} -m garmin_intervals_bridge --env-file ~/.env autostart</code>" in hint
-    assert f"<code>{framework} -m garmin_intervals_bridge --env-file ~/.env ui</code>" in hint
+    info = {"python": framework, "env_file": str(_empty_home / ".env")}
+    pip, bridge = webui.install_commands(info)
+    assert pip == f"{framework} -m pip" and bridge.startswith(f"{framework} -m garmin_intervals_bridge --env-file ")
+    hint = page._how_to_update(info)
+    for command in (f"{pip} install --upgrade garmin-intervals-bridge", f"{bridge} autostart", f"{bridge} ui"):
+        assert f"<code>{webui.esc(command)}</code>" in hint
 
 
 # ---- the page compares ----
 
 def test_a_page_from_another_install_says_so_and_locks_its_buttons(page, env, running):  # noqa: F811
-    _bridge_says({"version": __version__, "python": "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3",
-                  "package": "/Library/Frameworks/Python.framework/Versions/3.15/lib/python3.15/site-packages/"
-                             "garmin_intervals_bridge", "env_file": str(env.resolve())})
+    info = {"version": __version__, "python": "/Library/Frameworks/Python.framework/Versions/3.15/bin/python3",
+            "package": "/Library/Frameworks/Python.framework/Versions/3.15/lib/python3.15/site-packages/"
+                       "garmin_intervals_bridge", "env_file": str(env.resolve())}
+    _bridge_says(info)
     cookie = signed_in(page)
     text = call(page, "GET", "/", cookie=cookie)[2]
     assert "This page runs from another install than the background bridge" in text
-    assert ("/Library/Frameworks/Python.framework/Versions/3.15/bin/python3 -m garmin_intervals_bridge "
-            f"--env-file {env.resolve()} ui") in text
+    bridge = webui.install_commands(info)[1]
+    assert bridge.startswith("/Library/Frameworks/Python.framework/Versions/3.15/bin/python3 -m garmin_intervals_bridge")
+    assert webui.esc(f"{bridge} ui") in text                    # the bridge's Python and settings file
     token = csrf(call(page, "GET", "/settings", cookie=cookie)[2])
     status, _, text = call(page, "POST", "/settings", {"csrf": token, "timezone": "Europe/Dublin"}, cookie=cookie)
     assert status == 200 and "Locked" in text and "Europe/Vienna" in env.read_text()       # nothing changed
@@ -147,10 +151,11 @@ def test_registered_reads_python_and_settings_back(tmp_path, _empty_home, monkey
     autostart.install(env_file, runner=Runner(fail=(["launchctl", "bootout"],)), home=_empty_home, kind="macos")
     expected = {"python": sys.executable, "env_file": str(env_file.resolve())}
     assert autostart.registered(env_file, home=_empty_home, kind="macos") == expected
-    monkeypatch.setattr(autostart.os, "geteuid", lambda: 1000, raising=False)
-    monkeypatch.setattr(autostart.shutil, "which", lambda name: "/usr/bin/systemctl")
-    autostart.install(env_file, runner=Runner(), home=_empty_home, kind="linux")
-    assert autostart.registered(env_file, home=_empty_home, kind="linux") == expected
+    if sys.platform != "win32":                       # a systemd unit on Windows: POSIX quoting, never used
+        monkeypatch.setattr(autostart.os, "geteuid", lambda: 1000, raising=False)
+        monkeypatch.setattr(autostart.shutil, "which", lambda name: "/usr/bin/systemctl")
+        autostart.install(env_file, runner=Runner(), home=_empty_home, kind="linux")
+        assert autostart.registered(env_file, home=_empty_home, kind="linux") == expected
     autostart.install(env_file, runner=Runner(), home=_empty_home, kind="windows")
     assert autostart.registered(env_file, home=_empty_home, kind="windows") == expected
 

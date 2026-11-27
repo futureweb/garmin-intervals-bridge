@@ -3,6 +3,7 @@ the log file was empty), and the page printed a traceback when the browser left 
 import logging
 import os
 import plistlib
+import sys
 import time
 from http.server import BaseHTTPRequestHandler
 from types import SimpleNamespace
@@ -62,7 +63,8 @@ def test_an_autostarted_bridge_logs_only_errors_to_its_error_file(tmp_path, monk
     body = errors.read_bytes()
     assert body.startswith(b"(older lines removed)\nINFO line ") and body.endswith(b"INFO line 199999\n")
     assert len(body) <= cli.AUTOSTART_ERRORS_KEEP + 64
-    assert oct(errors.stat().st_mode & 0o777) == "0o600"
+    if sys.platform != "win32":                                      # POSIX file modes
+        assert oct(errors.stat().st_mode & 0o777) == "0o600"
 
 
 def test_a_small_error_file_is_left_alone(tmp_path, monkeypatch):
