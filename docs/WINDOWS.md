@@ -105,7 +105,8 @@ py -m garmin_intervals_bridge autostart
 The second line restarts the background bridge with the new version. A web
 page that is open (`ui`) is a process of its own: press Ctrl+C in its window and
 start it again, or it keeps showing the old version (it says so itself from
-0.11.4 on).
+0.11.4 on). From 0.12.21 on it also says when it comes from another install than
+the background bridge, with the command that starts it the way the bridge runs.
 
 ## If something goes wrong
 

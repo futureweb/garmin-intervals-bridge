@@ -22,10 +22,12 @@ from __future__ import annotations
 import errno
 import hmac
 import html
+import json
 import logging
 import os
 import re
 import secrets
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -45,7 +47,16 @@ import requests
 
 from . import __version__, alerts, autostart, hrvtrend, imready4, notices, polling
 from .charts import setup_charts
-from .config import GARMIN_SOURCES, Settings, effective_source, personal_expiry, poll_hours, source_label, trigger_token
+from .config import (
+    GARMIN_SOURCES,
+    Settings,
+    effective_source,
+    install,
+    personal_expiry,
+    poll_hours,
+    source_label,
+    trigger_token,
+)
 from .enrich import enrich_activity, resolve_one
 from .garmin import GarminBlocked, GarminSource, sign_in_problem
 from .gear import apply_plan as apply_gear_plan
@@ -58,7 +69,7 @@ from .intervals import IntervalsClient
 from .personal import AUTH_WAIT_KEY, KEY_ALONE_MISSING, PersonalGarminSource
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import garmin_source, remember_direct_profile, source_status
-from .store import InstanceBusy, Store, instance_running, single_instance
+from .store import BRIDGE_INSTALL, InstanceBusy, Store, instance_running, single_instance
 from .sync import kcal_balance, restore_intake
 from .wizard import command_name
 
@@ -173,6 +184,29 @@ def _home_short(path: str) -> str:
     return "~" + path[len(home):] if path.startswith(home + os.sep) else path
 
 
+def _typed(path: str) -> str:
+    """A path as it is typed into the terminal: ~ for the home folder where the shell takes it as is."""
+    if autostart.platform() == "windows":
+        return f'"{path}"' if " " in path else path
+    short = _home_short(path)
+    return short if re.fullmatch(r"[\w@%+=:,./~-]+", short) else shlex.quote(path)
+
+
+def install_commands(info: dict) -> tuple[str, str]:
+    """pip and the bridge exactly as the install `info` (config.install()) runs them: its own Python
+    and its settings file – so that an update reaches that copy, whichever this page is."""
+    python = str(info.get("python") or sys.executable)
+    if python.lower().endswith("pythonw.exe"):     # the Windows autostart's: no window, so no output either
+        python = python[:-len("pythonw.exe")] + "python.exe"
+    head = _typed(python)
+    if head.startswith('"'):
+        head = "& " + head                         # PowerShell runs a quoted program only with &
+    bridge = f"{head} -m garmin_intervals_bridge"
+    if info.get("env_file"):
+        bridge += f" --env-file {_typed(info['env_file'])}"
+    return f"{head} -m pip", bridge
+
+
 def esc(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
@@ -281,17 +315,78 @@ class UI:
             return None
         return session
 
-    def _how_to_update(self) -> str:
+    def _how_to_update(self, bridge: dict | None = None) -> str:
+        """`bridge`: the background bridge's install when this page comes from another one – the
+        update must reach the bridge's copy, not this page's (forum #207)."""
         if self.ingress:
             return "Update the app in Home Assistant (<i>Settings → Apps</i>)."
         if autostart.platform() == "container":
             return "Pull the new image and recreate the container."
         cmd = command_name()
         pip = "py -m pip" if autostart.platform() == "windows" else f"{_home_short(sys.executable)} -m pip"
+        if bridge is not None:
+            pip, cmd = install_commands(bridge)
         page = ("" if self.in_run else f" – and this page: Ctrl+C in the window where it runs, then "
                                        f"<code>{esc(cmd)} ui</code>")
         return (f"Update: <code>{esc(pip)} install --upgrade garmin-intervals-bridge</code>, then "
                 f"<code>{esc(cmd)} autostart</code> (restarts the background bridge){page}.")
+
+    def drift(self, settings: Settings) -> tuple[str, dict] | None:
+        """How this page differs from the background bridge that runs now: "install" – it comes from
+        another install (another venv, another Python); "page" – it is older, started before an update;
+        "bridge" – the bridge is older, not restarted after one. None when they match, when this page is
+        part of the bridge, when no bridge runs, or when it does not say what it runs (before 0.12.21)."""
+        if self.in_run or self.ingress:
+            return None
+        try:
+            if not instance_running(settings.data_dir):
+                return None
+            store = Store(settings.data_dir)
+            try:
+                raw = store.get_meta(BRIDGE_INSTALL)
+            finally:
+                store.close()
+            other = json.loads(raw) if raw else None
+        except Exception:                          # nothing to say: never stand in the way
+            return None
+        if not isinstance(other, dict) or not other.get("package"):
+            return None
+        if os.path.normcase(str(other["package"])) != os.path.normcase(install()["package"]):
+            return "install", other
+        theirs = str(other.get("version") or "")
+        if _newer(theirs, __version__):
+            return "page", other
+        if _newer(__version__, theirs):
+            return "bridge", other
+        return None
+
+    def drift_note(self, kind: str, other: dict) -> str:
+        _, bridge = install_commands(other)
+        theirs = esc(other.get("version") or "?")
+        if kind == "bridge":
+            return (f'<section><b class="warn">The background bridge still runs {theirs}</b> (this page: '
+                    f'{esc(__version__)}): it was not restarted after the update. <code>{esc(bridge)} autostart'
+                    f'</code> restarts the one autostart set up with the new version.</section>')
+        start = ("Close this page (Ctrl+C in the window where it runs) and start it the way the bridge runs: "
+                 f"<code>{esc(bridge)} ui</code>. Until then its buttons are locked.")
+        if kind == "page":
+            return (f'<section><b class="warn">This page still runs {esc(__version__)}</b>, the background bridge '
+                    f'{theirs}: the page was started before the update. {start}</section>')
+        return (f'<section><b class="warn">This page runs from another install than the background bridge</b>: '
+                f'this page {esc(__version__)} with <code>{esc(_typed(sys.executable))}</code>, the bridge '
+                f'{theirs} with <code>{esc(_typed(str(other.get("python") or "?")))}</code>. An update or a '
+                f"button here would reach only this page's copy. {start}</section>")
+
+    def locked(self, session: Session) -> str | None:
+        """The page to show instead of what a button does, while this page runs other code than the bridge."""
+        try:
+            drift = self.drift(self.settings())
+        except Exception:
+            return None
+        if drift is None or drift[0] == "bridge":     # a newer page than the bridge: its buttons are fine
+            return None
+        return self.page(session, "Locked", self.drift_note(*drift)
+                         + '<section><p><a href="/">Back to the status</a></p></section>')
 
     def update_available(self) -> str | None:
         """PyPI at most once a day, and only when the update check is on."""
@@ -335,7 +430,12 @@ class UI:
         parts: list[str] = [note] if note else []
         latest = self.update_available()
         installed = installed_version()
-        if installed and _newer(installed, __version__):
+        drift = self.drift(settings)
+        if drift is not None:
+            parts.append(self.drift_note(*drift))
+        if drift is not None and drift[0] == "page":
+            pass                                   # said above, with the way the bridge runs
+        elif installed and _newer(installed, __version__):
             # updated, but this page is the process started before: it still runs the old code
             how = ("restart the bridge, which serves it" if self.in_run else
                    f"press Ctrl+C in the window where it runs (or close that window), then "
@@ -344,7 +444,8 @@ class UI:
                          f'{esc(installed)} is installed: {how}.</section>')
         elif latest:
             parts.append(f'<section><b class="warn">Version {esc(latest)} is out</b> (this is '
-                         f'{esc(__version__)}). {self._how_to_update()}</section>')
+                         f'{esc(__version__)}). '
+                         f'{self._how_to_update(drift[1] if drift and drift[0] == "install" else None)}</section>')
         store = Store(settings.data_dir)
         try:
             now = time.time()
@@ -1441,6 +1542,10 @@ def handler_for(ui: UI) -> type[BaseHTTPRequestHandler]:
                 name = POST_PAGES.get(path)
                 if name is None:
                     raise Reply(404, "Not found")
+                if path != "/poll-now":                # "Check now" only wakes the bridge
+                    refused = ui.locked(session)
+                    if refused is not None:
+                        return refused
                 return getattr(ui, name)(session, query, form)
             name = GET_PAGES.get(path)
             if name is None:

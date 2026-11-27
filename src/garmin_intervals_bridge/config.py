@@ -5,6 +5,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -54,6 +55,20 @@ def env_file() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def install() -> dict[str, str]:
+    """What this process runs: its version, its Python, the folder this package was imported from
+    (one per install – a second venv, another Python with the bridge installed, an editable
+    checkout) and its settings file. The background bridge says this when it starts; the web page,
+    a process of its own, compares: a page from another install – or one started before an update –
+    runs other code than the bridge, and its update hint and buttons would reach that copy only
+    (forum #205/#207)."""
+    from . import __version__
+    settings = env_file()
+    return {"version": __version__, "python": sys.executable,
+            "package": str(Path(__file__).resolve().parent),
+            "env_file": str(settings.resolve()) if settings is not None else ""}
 
 
 def _path(name: str, default: str | None, base: Path) -> Path | None:

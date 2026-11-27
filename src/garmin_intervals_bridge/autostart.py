@@ -18,13 +18,14 @@ import getpass
 import os
 import plistlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape, unescape
 
 NAME = "Garmin Intervals Bridge"
 LABEL = "at.futureweb.garmin-intervals-bridge"
@@ -290,6 +291,36 @@ def install(env_file: Path, *, mode: str = "enrich", runner: Runner | None = Non
         else:
             run(cmd)
     return steps
+
+
+def registered(env_file: Path, *, home: Path | None = None, kind: str | None = None) -> dict | None:
+    """What the autostart this module wrote starts: its Python and settings file, read back from the
+    agent/unit/task file – None when there is none or it cannot be read. `autostart` again from another
+    install moves the background bridge to that one; it says so (forum #207: a page and a bridge from two
+    installs, unnoticed). Windows: only a task file next to these settings."""
+    steps = plan(env_file, home=home, kind=kind)
+    for path in steps.get("files", {}):
+        try:
+            if steps["kind"] == "macos":
+                with open(path, "rb") as fh:
+                    args = [str(a) for a in plistlib.load(fh).get("ProgramArguments") or []]
+            elif steps["kind"] == "linux":
+                line = next(x for x in Path(path).read_text(encoding="utf-8").splitlines()
+                            if x.startswith("ExecStart="))
+                args = shlex.split(line[len("ExecStart="):].replace("%%", "%"))
+            else:
+                text = Path(path).read_text(encoding="utf-16")
+                command = re.search(r"<Command>(.*?)</Command>", text, re.S)
+                arguments = re.search(r"<Arguments>(.*?)</Arguments>", text, re.S)
+                args = [unescape(command.group(1))] + [a.strip('"') for a in
+                                                       re.findall(r'"[^"]*"|\S+', unescape(arguments.group(1)))]
+        except (OSError, ValueError, AttributeError, StopIteration, UnicodeError, plistlib.InvalidFileException):
+            return None
+        if not args:
+            return None
+        settings = args[args.index("--env-file") + 1] if "--env-file" in args[:-1] else ""
+        return {"python": args[0], "env_file": settings}
+    return None
 
 
 def _bootstrap(run: Runner, cmd: list[str], attempts: int = 5, pause: float = 1.0) -> None:

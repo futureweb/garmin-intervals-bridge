@@ -471,6 +471,8 @@ def single_instance(data_dir: Path, scopes: tuple[str, ...] = ("activities", "we
 
 
 LOCK_GRACE_SECONDS = 2.0    # the background bridge waits this long for its "run" lock (see instance_running)
+# meta: what the background bridge (`run`) runs - config.install() at its start, read by the web page
+BRIDGE_INSTALL = "bridge:install"
 
 
 def instance_running(data_dir: Path, scope: str = "run") -> bool:

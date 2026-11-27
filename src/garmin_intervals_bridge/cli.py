@@ -15,7 +15,7 @@ from . import __version__, alerts, autostart, hrvtrend, imready4, notices, polli
 from .backup import backup_once, backup_range
 from .backup import describe as describe_backup
 from .charts import setup_charts
-from .config import Settings, _flag, configured_log_file, effective_source, load_env_file
+from .config import Settings, _flag, configured_log_file, effective_source, install, load_env_file
 from .enrich import enrich_activity, exact_match, gap_report, intervals_id_from, match_activity, resolve_one
 from .fit import compare_fit, extract_original_fit, sha256
 from .garmin import DAY_ENDPOINTS, GarminBlocked, GarminLoginNeeded, GarminSource, parse_endpoints
@@ -33,7 +33,7 @@ from .notify import notify
 from .personal import KEY_ALONE, PersonalGarminSource, PersonalKeyNeeded, validated_key
 from .personal import PAUSE_KEY as PERSONAL_PAUSE_KEY
 from .sources import activity_step, garmin_source, remember_direct_profile, source_status
-from .store import LOCK_GRACE_SECONDS, InstanceBusy, Store, single_instance
+from .store import BRIDGE_INSTALL, LOCK_GRACE_SECONDS, InstanceBusy, Store, single_instance
 from .sync import (
     backfill_intake,
     kcal_balance,
@@ -344,6 +344,7 @@ def run_loop(settings: Settings, store: Store, *, apply: bool, poll_seconds: int
     log.info("garmin-intervals-bridge %s running (%s mode): polls %s; full run every %d min, %s", __version__,
              mode, polling.schedule_text(settings, store, time.time(), poll_seconds), sync_minutes,
              "writing to Intervals" if apply else "DRY RUN (add --apply to write)")
+    store.set_meta(BRIDGE_INSTALL, json.dumps(install()))   # for a web page from another install (webui)
     source = getattr(settings, "timezone_source", "BRIDGE_TIMEZONE")
     (log.warning if source.startswith("fallback") else log.info)(
         "Day boundary: %s (%s)%s", settings.timezone.key, source,
@@ -649,6 +650,9 @@ def _autostart(args: argparse.Namespace, settings: Settings) -> int:
     if args.status:
         state = autostart.status(settings.env_file)
         print(f"Autostart ({state['kind']}): {'set up' if state['installed'] else 'not set up'}")
+        runs = autostart.registered(settings.env_file) if state["installed"] else None
+        if runs:
+            print(f"Starts: {runs['python']} with the settings {runs['env_file'] or '(none named)'}")
         if state["detail"] and state["installed"]:
             print(state["detail"])
         if settings.log_file:
@@ -662,8 +666,14 @@ def _autostart(args: argparse.Namespace, settings: Settings) -> int:
         autostart.remove(settings.env_file)
         print("Autostart removed; the bridge is stopped. Your settings and data stay where they are.")
         return 0
+    before = autostart.registered(settings.env_file)
     steps = autostart.install(settings.env_file, mode=args.mode or settings.mode)
     print("The bridge now runs in the background and starts by itself whenever you log in to this computer.")
+    after = autostart.registered(settings.env_file)
+    if before and after and before != after:
+        # another install or settings file than before: say it, a page or an update may still use the old one
+        print(f"Note: it ran {before['python']} with the settings {before['env_file'] or '(none named)'}; "
+              f"from now on {after['python']} with {after['env_file'] or '(none named)'}.")
     if settings.log_file:
         print(f"Log: {settings.log_file}")
     else:

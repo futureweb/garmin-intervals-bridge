@@ -11,6 +11,13 @@
   updating so the agent writes it.
 - **No traceback when the browser leaves early**: a page closed before the bridge answered (for example
   during a Garmin sign-in) printed a long "Broken pipe" traceback into the window; now it is ignored.
+- **The web page says when it runs other code than the background bridge** (thanks Lukasz_Pludowski): a
+  page from another install (a second venv, another Python with the bridge in it) or one started before an
+  update says so, with the exact command to start it the way the bridge runs; until then its buttons are
+  locked. When an update is out, the page names the bridge's own Python and settings file, so the update
+  reaches the copy that runs. A bridge that was not restarted after an update is named too.
+- **`autostart` says when it moves the bridge to another install**: run from another Python or with another
+  settings file than before, it names the old and the new one; `autostart --status` shows what it starts.
 
 ## 0.12.20 — 2026-11-25
 
