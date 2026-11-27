@@ -157,7 +157,8 @@ def test_registered_reads_python_and_settings_back(tmp_path, _empty_home, monkey
         autostart.install(env_file, runner=Runner(), home=_empty_home, kind="linux")
         assert autostart.registered(env_file, home=_empty_home, kind="linux") == expected
     autostart.install(env_file, runner=Runner(), home=_empty_home, kind="windows")
-    assert autostart.registered(env_file, home=_empty_home, kind="windows") == expected
+    windowless = autostart._python(windowless=True)                # the task runs pythonw.exe: no window
+    assert autostart.registered(env_file, home=_empty_home, kind="windows") == {**expected, "python": windowless}
 
 
 def test_autostart_from_another_install_says_it_moves_the_bridge(tmp_path, _empty_home, monkeypatch, capsys):
