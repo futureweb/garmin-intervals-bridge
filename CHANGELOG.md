@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.12.22 — 2026-11-28
+
+Blood pressure from Garmin into Intervals.
 
 ### Added
 
@@ -14,6 +16,12 @@
   counts with `--trust-old-archive` (if you know it was read after the days; days before 24 October
   2026); other days need `--endpoints blood_pressure --force-wellness` (one Garmin request per day).
   Reading it from Garmin needs the sign-in (the Personal API has no blood pressure).
+
+### Upgrading
+
+`pip install --upgrade garmin-intervals-bridge`, then `autostart` once (it restarts the background bridge with
+the new version). Or pull the new image, or update the Home Assistant app. Nothing to configure: blood pressure
+comes with the next final read of a day; for the past see the entry above.
 
 ## 0.12.21 — 2026-11-27
 
