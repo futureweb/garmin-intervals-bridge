@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Any
 
 
@@ -174,13 +174,86 @@ def _day_record(raw: Any, target: date) -> dict:
     return {}
 
 
-def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all") -> tuple[dict, dict]:
+BLOOD_PRESSURE_MODES = ("first", "average", "off")
+
+
+PAIRED_NATIVE = (("systolic", "diastolic"),)      # written together or not at all
+
+
+def final_read(snapshot: dict, name: str) -> bool:
+    """`name` came in with the day's final read: not kept from an earlier read after a failure."""
+    return (snapshot.get("final") is True and name not in (snapshot.get("errors") or {})
+            and ((snapshot.get("provenance") or {}).get(name) or {}).get("final") is True)
+
+
+def _parsed(text: Any) -> datetime | None:
+    """A Garmin timestamp with a time ("2026-11-27T07:12:00.0", one to three fraction digits; an offset,
+    if any, kept)."""
+    if not isinstance(text, str) or "T" not in text:
+        return None
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _instant(measurement: dict) -> datetime | None:
+    """When a reading was taken, as naive UTC: its GMT time, else a local time that carries an offset."""
+    gmt = _parsed(measurement.get("measurementTimestampGMT"))
+    if gmt is not None:
+        return gmt.astimezone(timezone.utc).replace(tzinfo=None) if gmt.tzinfo else gmt
+    local = _parsed(measurement.get("measurementTimestampLocal"))
+    return local.astimezone(timezone.utc).replace(tzinfo=None) if local is not None and local.tzinfo else None
+
+
+def blood_pressure(raw: Any, target: date, mode: str = "first") -> tuple[int, int] | None:
+    """The day's (systolic, diastolic) for Intervals: the first reading of the day (usually the morning
+    reading, comparable from day to day) or the average of the day's readings. Garmin answers
+    {"measurementSummaries": [{"measurements": [{"systolic", "diastolic", "pulse",
+    "measurementTimestampLocal", "measurementTimestampGMT", "sourceType" (MANUAL, or the Index BPM's
+    one averaged entry per session), ...}]}]}. A reading belongs to the day of its local time. The first
+    is the earliest instant when every reading's instant is known (a clock going back does not reorder
+    them), else by local time. A reading without a readable local time, outside plausible ranges, or with
+    diastolic not below systolic is left out."""
+    if mode == "off" or not isinstance(raw, dict) or not isinstance(raw.get("measurementSummaries"), list):
+        return None
+    readings = []
+    for summary in raw["measurementSummaries"]:
+        measurements = summary.get("measurements") if isinstance(summary, dict) else None
+        for measurement in measurements if isinstance(measurements, list) else []:
+            if not isinstance(measurement, dict):
+                continue
+            local = _parsed(measurement.get("measurementTimestampLocal"))
+            if local is None or local.date() != target:
+                continue
+            systolic = number(measurement.get("systolic"), low=50, high=300)
+            diastolic = number(measurement.get("diastolic"), low=20, high=200)
+            if systolic is not None and diastolic is not None and diastolic < systolic:
+                readings.append((local.replace(tzinfo=None), _instant(measurement), systolic, diastolic))
+    if not readings:
+        return None
+    order = 1 if all(r[1] is not None for r in readings) else 0
+    readings = [(r[order], r[2], r[3]) for r in readings]
+    if mode == "average":
+        pair = (round(sum(r[1] for r in readings) / len(readings)),
+                round(sum(r[2] for r in readings) / len(readings)))
+    else:
+        first = min(readings, key=lambda r: r[0])
+        pair = (round(first[1]), round(first[2]))
+    return pair if pair[1] < pair[0] else None         # rounding an average can make them equal
+
+
+def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all",
+                 blood_pressure_mode: str = "first", blood_pressure_final: bool | None = None) -> tuple[dict, dict]:
     """Return (native, custom) value dicts; absent/invalid values are omitted.
 
     Today's accumulating totals are excluded; their final values can be
     imported tomorrow. Sleep/HRV/Readiness may be imported today, and today's
     resting HR as the night's (PROVISIONAL_NATIVE).
     `profile` "recommended" drops the custom codes in RECOMMENDED_EXCLUDES.
+    `blood_pressure_mode`: which reading of a day goes into systolic/diastolic (BRIDGE_BLOOD_PRESSURE);
+    only from a read after the day ended, as the snapshot's provenance shows (final_read()), unless
+    `blood_pressure_final` is given (backfill --from-archive --trust-old-archive).
     """
     data = snapshot.get("data", {})
     stats = data.get("stats") or {}
@@ -312,6 +385,17 @@ def map_wellness(snapshot: dict, target: date, today: date, profile: str = "all"
     put(custom, "GarminHRVBaselineLow", choose(hrv, ("baseline", "balancedLow"), low=1, high=400), low=1, high=400)
     put(custom, "GarminHRVBaselineHigh", choose(hrv, ("baseline", "balancedUpper"), low=1, high=400),
         low=1, high=400)
+    # Blood pressure (typed into Garmin Connect, or from an Index BPM): only from a read after the day
+    # ended, as the per-endpoint provenance (0.12.0) shows - native fields are filled once and never
+    # replaced, so a midday read, or one kept from it after a failed or partial later read, would stay.
+    # A snapshot saved by 0.11 or older cannot show it: such days need the blood pressure read again, or
+    # the user vouches for the archive (backfill --from-archive --trust-old-archive, days before 0.12.0).
+    if blood_pressure_final is None:
+        blood_pressure_final = final_read(snapshot, "blood_pressure")
+    if target < today and blood_pressure_final:
+        reading = blood_pressure(data.get("blood_pressure"), target, blood_pressure_mode)
+        if reading is not None:
+            native["systolic"], native["diastolic"] = reading
     # Health Snapshots: the first of the day (a morning check is what is comparable from day to day)
     snapshots = [x for x in (data.get("health_snapshots") or []) if isinstance(x, dict)]
     if snapshots:
@@ -421,4 +505,8 @@ def merge_wellness(existing: dict, native: dict, custom: dict, rewrite: set[str]
     for key, value in {**native, **custom}.items():
         if existing.get(key) is None or (rewrite and key in rewrite and key in custom and existing.get(key) != value):
             patch[key] = value
+    for pair in PAIRED_NATIVE:          # one half there already (typed in): no other half that never went with it
+        if any(existing.get(key) is not None for key in pair):
+            for key in pair:
+                patch.pop(key, None)
     return patch

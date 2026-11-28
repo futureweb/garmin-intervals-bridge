@@ -48,6 +48,7 @@ The page's *Log* shows the bridge's log with date and time.
 | ImReady4 / HRV trend advice | the morning training advice into your wellness fields |
 | Poll hours / interval / quiet interval | look for new activities less often, only during the day, or slower at night |
 | Adaptive polling (beta) | learns when your activities usually end and checks often only then – fewer requests for Intervals.icu |
+| Blood pressure | which reading of a day goes into Intervals' systolic and diastolic: `first` (default, usually the morning's), `average` or `off` |
 | Alert e-mail / Push messages (ntfy) | when Garmin wants a new sign-in or something has been failing for a day |
 | Notify URL | tools that want to know about new activities and wellness data (several comma-separated), e.g. the Intervals Summits app: `http://<its hostname>:8766/sync` (hostname on its *Info* tab) |
 | Time zone | empty = Home Assistant's |

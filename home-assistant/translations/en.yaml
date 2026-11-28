@@ -62,6 +62,11 @@ configuration:
     description: >-
       adaptive – learn from the archive when your activities usually end and check at the poll interval only
       then, less often otherwise: fewer requests for Intervals.icu. fixed – always the poll interval.
+  blood_pressure:
+    name: Blood pressure
+    description: >-
+      Which reading of a day goes into Intervals' systolic and diastolic: first (default, the first reading
+      of the day, usually the morning's), average (of the day's readings) or off.
   backup_hours:
     name: Backup interval
     description: Backup mode – hours between runs (default 12).

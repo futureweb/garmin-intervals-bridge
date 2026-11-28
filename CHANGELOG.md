@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Blood pressure** (thanks Bernd_Vantyghem): readings typed into Garmin Connect, or measured with an
+  Index BPM, go into Intervals' `systolic` and `diastolic` with the day's final read – the official sync
+  does not bring them. With several readings on a day the first one counts (usually the morning's);
+  `BRIDGE_BLOOD_PRESSURE=average` takes the day's average, `off` leaves blood pressure out. Where the
+  bridge has read a day's blood pressure after the day ended since 0.12.0 (the scheduled runs do), it
+  comes from the archive without a Garmin request (`backfill --scope wellness --from … --from-archive
+  --apply`, or *Actions → The past → Wellness from the archive*); an archive saved by 0.11 or older
+  counts with `--trust-old-archive` (if you know it was read after the days; days before 24 October
+  2026); other days need `--endpoints blood_pressure --force-wellness` (one Garmin request per day).
+  Reading it from Garmin needs the sign-in (the Personal API has no blood pressure).
+
 ## 0.12.21 — 2026-11-27
 
 The web page says why the background bridge does not stay up – and when it runs other code than the bridge.

@@ -29,6 +29,7 @@ from .intervals import rate_limited, refused
 from .mapping import (
     PROVISIONAL_CODES,
     PROVISIONAL_NATIVE,
+    final_read,
     get,
     map_wellness,
     merge_wellness,
@@ -957,12 +958,15 @@ def _short(value: Any) -> str:
 
 def _write_wellness_day(day: date, raw: dict, current: date, settings: Settings, intervals: Any,
                         metrics: dict, *, apply: bool, rewrite: set[str] | None = None,
-                        night: dict | None = None, store: Store | None = None) -> bool:
+                        night: dict | None = None, store: Store | None = None,
+                        trust_old_archive: bool = False) -> bool:
     """Map one snapshot and add what Intervals lacks. False when the day is locked there.
 
     With `store`, the running day's provisional natives the bridge writes are remembered, and a
     finished day's are replaced by the day's values while Intervals still holds the bridge's."""
-    native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"))
+    old_trusted = (trust_old_archive and _old_archive(day, raw)) or None
+    native, custom = map_wellness(raw, day, current, getattr(settings, "wellness_profile", "recommended"),
+                                  getattr(settings, "blood_pressure", "first"), old_trusted)
     if not native and not custom:
         log.info("No supported Garmin scalar wellness data for %s", day)
         return True
@@ -1035,10 +1039,21 @@ def _save_provisional(store: Store, key: str, values: dict) -> None:
         store.delete_meta(key, time.time() + 1)
 
 
-def _final_dataset(raw: dict, name: str) -> bool:
-    """`name` came in with the day's final read: not kept from an earlier read after a failure."""
-    return (raw.get("final") is True and name not in (raw.get("errors") or {})
-            and ((raw.get("provenance") or {}).get(name) or {}).get("final") is True)
+_final_dataset = final_read             # `name` came in with the day's final read (mapping.final_read)
+
+
+# 0.12.0 (24 Oct 2026) records per-endpoint provenance; a day before it is in the past for every newer
+# version, so each of their reads of it marks it final - with provenance
+OLD_ARCHIVE_BEFORE = date(2026, 10, 24)
+
+
+def _old_archive(day: date, raw: dict) -> bool:
+    """backfill --from-archive --trust-old-archive: a snapshot of a day before 0.12.0 that records no
+    provenance, so an older version saved it last; the user vouches that its blood pressure was read
+    after the day ended. (A later day's direct read records provenance only from its final read on:
+    until then it looks the same, so later days never count.)"""
+    return (day < OLD_ARCHIVE_BEFORE and "provenance" not in raw and raw.get("final") is not False
+            and "blood_pressure" not in (raw.get("errors") or {}))
 
 
 def forget_foreign_provisional(store: Store, day: date, record: dict) -> None:
@@ -1054,7 +1069,7 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
                   today: date | None = None, days: list[date] | None = None,
                   pause_seconds: float = 0.0, endpoints: tuple[str, ...] | None = None,
                   from_archive: bool = False, rewrite: set[str] | None = None,
-                  now: datetime | None = None) -> dict:
+                  now: datetime | None = None, trust_old_archive: bool = False) -> dict:
     """Daily wellness.
 
     The scheduled run (no `days`, no `force`) goes through `wellness_check`: the
@@ -1064,7 +1079,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
     `pause_seconds` is slept between days because each day costs up to 30 Garmin
     requests. `from_archive` maps the locally archived snapshots instead of asking
     Garmin: after the mapping gained fields, the past is completed without a single
-    Garmin request.
+    Garmin request. `trust_old_archive` (with `from_archive`): blood pressure also from snapshots saved
+    before 0.12.0, which do not record whether it was read after the day ended.
     """
     if days is None and not force and endpoints is None and not from_archive and rewrite is None:
         return wellness_check(settings, garmin, intervals, store, apply=apply, now=now,
@@ -1116,7 +1132,8 @@ def sync_wellness(settings: Settings, garmin: Any, intervals: Any, store: Store,
             store.mark_wellness(day)                     # the throttle counts the read, not the write
         try:
             unlocked = _write_wellness_day(day, _with_files(store, day, raw), current, settings, intervals, metrics,
-                                           store=store, apply=apply, rewrite=rewrite)
+                                           store=store, apply=apply, rewrite=rewrite,
+                                           trust_old_archive=from_archive and trust_old_archive)
         except Exception as exc:                         # one day's Intervals trouble must not end the run
             if rate_limited(exc) is not None:          # Intervals asked for a break: the whole run pauses
                 raise

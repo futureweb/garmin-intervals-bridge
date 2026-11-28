@@ -189,6 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
     backfill.add_argument("--from-archive", action="store_true",
                           help="Wellness: map the locally archived snapshots instead of asking Garmin "
                                "(completes the past after the mapping gained fields; no Garmin requests)")
+    backfill.add_argument("--trust-old-archive", action="store_true",
+                          help="With --scope wellness --from-archive: take the blood pressure also from snapshots of "
+                               "days before 2026-10-24 that 0.11 or older saved, which do not record whether it was "
+                               "read after the day - for an archive you know was, e.g. by a backfill with "
+                               "--endpoints all")
     charts = sub.add_parser("setup-charts", help="Create private Intervals fitness charts for the synced "
                                                  "Garmin values (dry run unless --apply)")
     charts.add_argument("--apply", action="store_true")
@@ -711,7 +716,12 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("stdout", "stderr"):
         if getattr(sys, name) is None:
             setattr(sys, name, open(os.devnull, "w", encoding="utf-8"))
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.cmd == "backfill" and args.trust_old_archive and (
+            not args.from_archive or args.scope != "wellness" or args.wellness_files or args.archive_only):
+        # before any sign-in: everything else would ask Garmin
+        parser.error("--trust-old-archive goes with --scope wellness --from-archive only")
     level = logging.DEBUG if args.verbose else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s %(message)s")
     if os.environ.get("BRIDGE_AUTOSTARTED") == "1":
@@ -1097,7 +1107,7 @@ def main(argv: list[str] | None = None) -> int:
                                             force=args.force_wellness, days=days,
                                             pause_seconds=0 if args.from_archive else args.pause,
                                             endpoints=endpoints, from_archive=args.from_archive,
-                                            rewrite=rewrite or None)
+                                            rewrite=rewrite or None, trust_old_archive=args.trust_old_archive)
                     elif args.intake:
                         log.info("Backfill intake %s..%s from the archived summaries, no Garmin requests, "
                                  "%.1fs pause", start, end, args.pause)

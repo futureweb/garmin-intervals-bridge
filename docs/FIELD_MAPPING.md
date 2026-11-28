@@ -140,12 +140,13 @@ sign-in, and with both (hybrid) nothing is missing.
 | `GarminKcalBalance` (custom) | `kcalConsumed - GarminTotalCalories`, finished days with an intake – the one in Intervals, also from another app or typed in later: the daily run keeps the last 7 days in line, `kcal-balance` older ones | kcal; weekly / monthly totals in the energy-balance charts | ✓ |
 | `weight` | `body_composition.dateWeightList[].weight / 1000` | kg | ✓ |
 | `bodyFat` | `body_composition.dateWeightList[].bodyFat` | % | ✓ |
+| `systolic`, `diastolic` | `blood_pressure.measurementSummaries[].measurements[]` of the day: the first reading (`BRIDGE_BLOOD_PRESSURE=first`, default) or the average (`average`); only from a read after the day ended (usually the next morning), never one half next to a value typed in; a reading with systolic outside 50–300, diastolic outside 20–200 or diastolic not below systolic is left out | mmHg | – |
 
 Deliberately **not** mapped: Garmin stress 0–100 → Intervals `stress`
 (a 1–4 subjective scale); Garmin training load → Intervals CTL/ATL
 (different models); intraday series of any kind.
 
-### Private custom fields (`Garmin…`)
+### Private custom fields (`Garmin…`, `BodyBattery…`)
 
 Created as private numeric `INPUT_FIELD`s on first `--apply`; existing
 definitions with the same code are reused, never changed.

@@ -12,7 +12,7 @@ Findings that alert
   - a Garmin wellness endpoint erroring on each of the last 3 archived days
   - a wellness field Garmin delivered on most of the previous week but on none
     of the last 2 finished days (a changed response shape, a stopped sensor);
-    what the athlete logs or starts (weight, food, drink, Health Snapshots)
+    what the athlete logs or starts (weight, food, drink, blood pressure, Health Snapshots)
     is left out, a day without it is a day without logging
   - activities failed twice or more, or uploads pending reconciliation
 
@@ -46,9 +46,9 @@ DROPOUT_BASELINE_DAYS = 7
 DROPOUT_MIN_BASELINE = 5
 DROPOUT_MISSING_DAYS = 2
 GIVEN_UP = "activities given up"   # the list of those named before: information, not a warning
-# Raw sources that exist only when the athlete logs something (scale, food and drink log) or
-# starts it (Health Snapshot): their absence is no dropout.
-USER_LOGGED = ("body_composition", "nutrition", "hydration", "health_snapshots")
+# Raw sources that exist only when the athlete logs something (scale, food and drink log, blood
+# pressure) or starts it (Health Snapshot): their absence is no dropout.
+USER_LOGGED = ("body_composition", "nutrition", "hydration", "health_snapshots", "blood_pressure")
 
 
 def _today(settings: Any) -> date:

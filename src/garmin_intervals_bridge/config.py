@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .mapping import BLOOD_PRESSURE_MODES
+
 
 def _timezone() -> tuple[ZoneInfo, str]:
     """BRIDGE_TIMEZONE, else this computer's own zone (TZ, /etc/localtime, Windows' setting), else UTC.
@@ -178,6 +180,15 @@ def _swap_method() -> str:
     return method
 
 
+def _blood_pressure() -> str:
+    """BRIDGE_BLOOD_PRESSURE: which reading of a day goes into Intervals' systolic and diastolic –
+    first (default, the morning reading), average (of the day, once it is over) or off."""
+    mode = os.getenv("BRIDGE_BLOOD_PRESSURE", "").strip().lower() or "first"
+    if mode not in BLOOD_PRESSURE_MODES:
+        raise ValueError(f"BRIDGE_BLOOD_PRESSURE must be one of {', '.join(BLOOD_PRESSURE_MODES)}")
+    return mode
+
+
 def _mode() -> str:
     """BRIDGE_MODE: what `run` does without --mode – enrich (default), upload, or backup (Garmin only)."""
     mode = os.getenv("BRIDGE_MODE", "").strip().lower() or "enrich"
@@ -255,7 +266,7 @@ OPTIONS = {"garmin_source": "GARMIN_SOURCE", "garmin_personal_api_key": "GARMIN_
            "swap": "BRIDGE_SWAP", "swap_method": "BRIDGE_SWAP_METHOD",
            "poll_hours": "BRIDGE_POLL_HOURS", "poll_seconds": "BRIDGE_POLL_SECONDS",
            "backup_hours": "BRIDGE_BACKUP_HOURS", "poll_quiet_seconds": "BRIDGE_POLL_QUIET_SECONDS",
-           "poll_mode": "BRIDGE_POLL_MODE"}
+           "poll_mode": "BRIDGE_POLL_MODE", "blood_pressure": "BRIDGE_BLOOD_PRESSURE"}
 
 
 def load_options_file(path: Path | None = None) -> list[str]:
@@ -338,6 +349,7 @@ class Settings:
     wellness_refresh_hours: int
     garmin_request_delay: float
     wellness_profile: str = "recommended"
+    blood_pressure: str = "first"
     stale_hours: int = 24
     timezone_source: str = "BRIDGE_TIMEZONE"
     imready4: bool = False
@@ -405,6 +417,7 @@ class Settings:
             wellness_refresh_hours=_positive_int("BRIDGE_WELLNESS_REFRESH_HOURS", 4, 72),
             garmin_request_delay=delay,
             wellness_profile=profile,
+            blood_pressure=_blood_pressure(),
             stale_hours=_positive_int("BRIDGE_STALE_HOURS", 24, 24 * 30),
             timezone_source=tz_source,
             imready4=_flag("BRIDGE_IMREADY4_ENABLED"),

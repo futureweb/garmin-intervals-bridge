@@ -105,6 +105,7 @@ what you have; with both, each takes its part:
 | Nutrition | ✓ | ✓ | key |
 | Hydration (the sweat loss: sign-in only) | ✓ | ✓ | sign-in |
 | Weight and body fat; fitness age | ✓ | ✓ | sign-in |
+| Blood pressure | ✓ | – | sign-in |
 | Training Readiness, recovery time, acute and chronic load | ✓ | – | sign-in |
 | VO₂max (running, cycling), endurance and hill scores, race predictions | ✓ | – | sign-in |
 | Health Snapshots and the watch's own wellness files | ✓ | – | sign-in |
@@ -317,13 +318,30 @@ and a day that never sees a sync is read anyway at 20:00 the day after. A
 normal day costs about 80 Garmin requests, plus a few per new activity.
 
 Native Intervals fields filled when empty: `restingHR`, `hrv`, `sleepSecs`,
-`sleepScore`, `readiness`, `vo2max`, `steps`, `floorsClimbed`,
+`sleepScore`, `sleepQuality`, `readiness`, `vo2max`, `steps`, `floorsClimbed`,
 `hydrationVolume`, `spO2`, `respiration`, `avgSleepingHR`, `weight`,
-`bodyFat`, and from logged food `kcalConsumed`, `carbohydrates`, `protein`,
-`fatTotal`. Everything else goes to private custom fields named `Garmin…`,
-listed in [docs/FIELD_MAPPING.md](docs/FIELD_MAPPING.md).
-`BRIDGE_WELLNESS_PROFILE=recommended` (default) leaves out a handful of
-duplicates and goals; `all` keeps every code.
+`bodyFat`, `systolic` and `diastolic` (blood pressure), and from logged food `kcalConsumed`,
+`carbohydrates`, `protein`, `fatTotal`. Everything else goes to private custom fields, most named
+`Garmin…`, listed in [docs/FIELD_MAPPING.md](docs/FIELD_MAPPING.md).
+`BRIDGE_WELLNESS_PROFILE=recommended` (default) leaves out a handful of duplicates and
+goals; `all` keeps every code.
+
+Blood pressure typed into Garmin Connect, or measured with an Index BPM (one entry per
+measuring session), goes into `systolic` and `diastolic` with the day's final read,
+usually the next morning – the official sync does not bring it. With several readings on
+a day it takes the first one (usually the morning's); `BRIDGE_BLOOD_PRESSURE=average`
+takes the day's average, `off` leaves blood pressure out. Only a read after the day
+ended counts, and a half typed into Intervals by hand keeps the other half empty. Older
+days: where the bridge has read the blood pressure after the day ended since 0.12.0 (the
+scheduled runs do, and a backfill that included it), it comes from the archive without a
+Garmin request (`backfill --scope wellness --from 2026-10-24 --from-archive --apply`, or
+*Actions → The past → Wellness from the archive*). An archive saved by 0.11 or older
+does not record when it was read: if you know it was read after the days (a backfill
+with `--endpoints all`), add `--trust-old-archive` for the days before 24 October 2026,
+e.g. `backfill --scope wellness --from 2020-01-01 --to 2026-10-23 --from-archive
+--trust-old-archive --apply`. Otherwise `backfill --scope wellness --from 2026-01-01
+--endpoints blood_pressure --force-wellness --apply` asks Garmin once per day. Reading
+it from Garmin needs the sign-in: the Personal API has no blood pressure.
 
 Backfill the past when the official sync has gaps (on the reference account
 SpO₂ stopped arriving in mid-2025):
@@ -666,6 +684,7 @@ win. Relative paths in a settings file count from its folder.
 | `BRIDGE_WELLNESS_LOOKBACK_DAYS` | `3` | `sync` window for wellness (1–30); after a pause back to the last run, up to 14 days |
 | `BRIDGE_WELLNESS_REFRESH_HOURS` | `4` | Backfills only: how soon a backfill re-reads today or yesterday. The scheduled runs read on evidence instead (see [Wellness](#wellness)) |
 | `BRIDGE_WELLNESS_PROFILE` | `recommended` | `recommended` or `all` custom fields |
+| `BRIDGE_BLOOD_PRESSURE` | `first` | Which reading of a day goes into `systolic`/`diastolic`: `first` (usually the morning's), `average` (of the day, once it is over) or `off` |
 | `BRIDGE_GARMIN_REQUEST_DELAY` | `0.5` | Seconds between Garmin requests (minimum 0.25) |
 | `BRIDGE_STALE_HOURS` | `24` | `health` alerts once a service has failed this long |
 | `BRIDGE_IMREADY4_ENABLED` | `false` | `true`: write ImReady4's training advice into `TrainingAdvice` each morning (see [docs/IMREADY4.md](docs/IMREADY4.md)) |
